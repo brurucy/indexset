@@ -7,12 +7,15 @@ where
     T: PartialOrd + Clone,
 {
     pub inner: Vec<T>,
-    pub max: Option<T>
+    pub max: Option<T>,
 }
 
 impl<T: PartialOrd + Clone> Default for Node<T> {
     fn default() -> Self {
-        return Self { inner: Vec::with_capacity(INNER_SIZE), max: None };
+        return Self {
+            inner: Vec::with_capacity(INNER_SIZE),
+            max: None,
+        };
     }
 }
 
@@ -56,7 +59,7 @@ impl<T: Ord + Clone> Node<T> {
                 }
 
                 self.inner.insert(idx, value);
-            },
+            }
         }
 
         return true;
@@ -70,8 +73,8 @@ impl<T: Ord + Clone> Node<T> {
                 }
 
                 true
-            },
-            Err(_) => false,  // Not found
+            }
+            Err(_) => false, // Not found
         }
     }
     pub fn delete(&mut self, index: usize) -> T {
