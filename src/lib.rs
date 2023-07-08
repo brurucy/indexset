@@ -1632,6 +1632,7 @@ where
     }
 }
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 struct Pair<K, V>
 where
@@ -1678,6 +1679,110 @@ where
         return self.key.cmp(&other.key);
     }
 }
+
+pub struct VacantEntry<'a, K, V>
+where K: Clone + Ord,
+      V : Clone
+{
+    map: &'a mut BTreeMap<K, V>,
+    key: K,
+}
+
+pub struct OccupiedEntry<'a, K, V>
+    where K: Clone + Ord,
+          V : Clone
+{
+    map: &'a mut BTreeMap<K, V>,
+    key: K
+}
+
+pub enum Entry<'a, K, V>
+    where
+        K: 'a + Clone + Ord,
+        V: 'a + Clone,
+{
+    Vacant(VacantEntry<'a, K, V>),
+    Occupied(OccupiedEntry<'a, K, V>),
+}
+
+impl<'a, K, V> Entry<'a, K, V>
+    where
+        K: 'a + Clone + Ord,
+        V: 'a + Clone,
+{
+    pub fn or_insert(self, default: V) -> &'a mut V {
+        todo!()
+    }
+    pub fn or_insert_with<F>(self, default: F) -> &'a mut V
+    where
+        F : FnOnce() -> V
+    {
+        todo!()
+    }
+    pub fn or_insert_with_key<F>(self, default: F) -> &'a mut V
+    where
+    F : FnOnce(&K) -> V,
+    {
+        todo!()
+    }
+    pub fn key(&self) -> &K {
+        todo!()
+    }
+    pub fn and_modify<F>(self, f: F) -> Entry<'a, K, V>
+    where
+    F: FnOnce(&mut V),
+    {
+        todo!()
+    }
+    pub fn or_default(self) -> &'a mut V
+    {
+        todo!()
+    }
+}
+
+impl<'a, K, V> OccupiedEntry<'a, K, V>
+where K: Ord + Clone,
+      V : Clone
+{
+    pub fn key(&self) -> &K {
+        todo!()
+    }
+    pub fn remove_entry(self) -> (K, V) {
+        todo!()
+    }
+    pub fn get(&self) -> &V {
+        todo!()
+    }
+    pub fn get_mut(&mut self) -> &mut V {
+        todo!()
+    }
+    pub fn into_mut(self) -> &'a mut V {
+        todo!()
+    }
+    pub fn insert(&mut self, value: V) -> V {
+        todo!()
+    }
+    pub fn remove(self) -> V {
+        return self.map.remove(&self.key).unwrap()
+    }
+}
+
+impl <'a, K, V>VacantEntry<'a, K, V>
+    where K: Ord + Clone,
+          V: Clone
+{
+    pub fn key(&self) -> &K {
+        return &self.key
+    }
+    pub fn into_key(self) -> K {
+        return self.key
+    }
+    pub fn insert(self, value: V) -> &'a mut V {
+        todo!()
+    }
+}
+
+
 
 /// An ordered map based on a two-level [B-Tree].
 ///
@@ -1766,6 +1871,7 @@ where
 ///     ("Mars", 1.5),
 /// ]);
 /// ```
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct BTreeMap<K, V>
 where
