@@ -1,6 +1,10 @@
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 pub const INNER_SIZE: usize = 1024;
 const CUTOFF: usize = INNER_SIZE / 2;
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub(crate) struct Node<T>
 where

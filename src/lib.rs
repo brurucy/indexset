@@ -6,8 +6,10 @@ use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::Bound;
 use std::iter::FusedIterator;
-use std::ops::{Index, RangeBounds, RangeInclusive};
+use std::ops::{Index, RangeBounds};
 use std::vec;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 /// An ordered set based on a B-Tree.
 ///
@@ -64,6 +66,7 @@ use std::vec;
 ///
 /// let set = BTreeSet::from_iter([1, 2, 3]);
 /// ```
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct BTreeSet<T>
 where
