@@ -6,10 +6,12 @@ use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::Bound;
 use std::iter::FusedIterator;
+use std::mem::swap;
 use std::ops::{Index, RangeBounds};
 use std::vec;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use crate::Entry::{Occupied, Vacant};
 
 /// An ordered set based on a B-Tree.
 ///
@@ -331,8 +333,6 @@ impl<T: Clone + Ord> BTreeSet<T> {
             // I am not aware of any algorithm to add a new "slot" to the fenwick tree, but
             // there might be a way.
             self.index = FenwickTree::new(&self.inner, |sorted_set| sorted_set.len());
-            // [1 20 7 30 50 4]
-            // [1 20 3 4 30 50 4]
         } else {
             added = self.inner[node_idx].insert(value);
             if added {
@@ -1693,7 +1693,8 @@ pub struct OccupiedEntry<'a, K, V>
           V : Clone
 {
     map: &'a mut BTreeMap<K, V>,
-    key: K
+    key: K,
+    idx: usize,
 }
 
 pub enum Entry<'a, K, V>
@@ -1711,32 +1712,57 @@ impl<'a, K, V> Entry<'a, K, V>
         V: 'a + Clone,
 {
     pub fn or_insert(self, default: V) -> &'a mut V {
-        todo!()
+        match self {
+            Vacant(entry) => entry.insert(default),
+            Occupied(entry) => entry.into_mut(),
+        }
     }
     pub fn or_insert_with<F>(self, default: F) -> &'a mut V
     where
         F : FnOnce() -> V
     {
-        todo!()
+        match self {
+            Vacant(entry) => entry.insert(default()),
+            Occupied(entry) => entry.into_mut(),
+        }
     }
     pub fn or_insert_with_key<F>(self, default: F) -> &'a mut V
     where
     F : FnOnce(&K) -> V,
     {
-        todo!()
+        match self {
+            Vacant(entry) => {
+                let value = default(entry.key());
+                entry.insert(value)
+            },
+            Occupied(entry) => entry.into_mut()
+        }
     }
     pub fn key(&self) -> &K {
-        todo!()
+        match *self {
+            Occupied(ref entry) => entry.key(),
+            Vacant(ref entry) => entry.key(),
+        }
     }
-    pub fn and_modify<F>(self, f: F) -> Entry<'a, K, V>
+    pub fn and_modify<F>(self, f: F) -> Self
     where
     F: FnOnce(&mut V),
     {
-        todo!()
+        match self {
+            Occupied(mut entry) => {
+                f(entry.get_mut());
+                Occupied(entry)
+            },
+            Vacant(entry) => Vacant(entry)
+        }
     }
     pub fn or_default(self) -> &'a mut V
+    where V : Default
     {
-        todo!()
+        match self {
+            Occupied(entry) => entry.into_mut(),
+            Vacant(entry) => entry.insert(Default::default())
+        }
     }
 }
 
@@ -1745,25 +1771,29 @@ where K: Ord + Clone,
       V : Clone
 {
     pub fn key(&self) -> &K {
-        todo!()
+        return &self.key
     }
     pub fn remove_entry(self) -> (K, V) {
-        todo!()
+        self.map.pop_index(self.idx)
     }
     pub fn get(&self) -> &V {
-        todo!()
+        self.map.get_index(self.idx).unwrap().1
     }
     pub fn get_mut(&mut self) -> &mut V {
-        todo!()
+        self.map.get_mut_index(self.idx).unwrap()
     }
     pub fn into_mut(self) -> &'a mut V {
-        todo!()
+        self.map.get_mut_index(self.idx).unwrap()
     }
     pub fn insert(&mut self, value: V) -> V {
-        todo!()
+        let current_value = self.map.get_mut_index(self.idx).unwrap();
+        let mut previous_value = value;
+        swap(&mut previous_value, current_value);
+
+        return previous_value
     }
     pub fn remove(self) -> V {
-        return self.map.remove(&self.key).unwrap()
+        return self.map.pop_index(self.idx).1
     }
 }
 
@@ -1778,11 +1808,12 @@ impl <'a, K, V>VacantEntry<'a, K, V>
         return self.key
     }
     pub fn insert(self, value: V) -> &'a mut V {
-        todo!()
+        let (node_idx, position_within_node) = self.map.set.locate_value_cmp(|item| item.key < self.key);
+        let rank = self.map.set.rank((node_idx, position_within_node));
+        self.map.insert(self.key, value);
+        return self.map.get_mut_index(rank).unwrap();
     }
 }
-
-
 
 /// An ordered map based on a two-level [B-Tree].
 ///
@@ -2852,6 +2883,107 @@ where
         return ValuesMut {
             inner: self.iter_mut(),
         };
+    }
+    /// Gets the given key's corresponding entry in the map for in-place manipulation.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use std::collections::BTreeMap;
+    ///
+    /// let mut count: BTreeMap<&str, usize> = BTreeMap::new();
+    ///
+    /// // count the number of occurrences of letters in the vec
+    /// for x in ["a", "b", "a", "c", "a", "b"] {
+    ///     count.entry(x).and_modify(|curr| *curr += 1).or_insert(1);
+    /// }
+    ///
+    /// assert_eq!(count["a"], 3);
+    /// assert_eq!(count["b"], 2);
+    /// assert_eq!(count["c"], 1);
+    /// ```
+    pub fn entry(&mut self, key: K) -> Entry<'_, K, V>
+        where
+            K: Ord,
+    {
+        if self.contains_key(&key) {
+            let location = self.set.locate_value_cmp(|item| item.key < key);
+            let rank = self.set.rank(location);
+            return Occupied(OccupiedEntry { map: self, key: key, idx: rank })
+        }
+
+        return Vacant(VacantEntry { map: self, key})
+    }
+    /// Returns the first entry in the map for in-place manipulation.
+    /// The key of this entry is the minimum key in the map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::BTreeMap;
+    ///
+    /// let mut map = BTreeMap::new();
+    /// map.insert(1, "a");
+    /// map.insert(2, "b");
+    /// if let Some(mut entry) = map.first_entry() {
+    ///     if *entry.key() > 0 {
+    ///         entry.insert("first");
+    ///     }
+    /// }
+    /// assert_eq!(*map.get(&1).unwrap(), "first");
+    /// assert_eq!(*map.get(&2).unwrap(), "b");
+    /// ```
+    pub fn first_entry(&mut self) -> Option<OccupiedEntry<'_, K, V>>
+        where
+            K: Ord,
+    {
+        if self.len() > 0 {
+            let first_key = self.set.first().unwrap().key.clone();
+            return Some(OccupiedEntry {
+                map: self,
+                idx: 0,
+                key: first_key
+            })
+        }
+
+        return None
+    }
+    /// Returns the last entry in the map for in-place manipulation.
+    /// The key of this entry is the maximum key in the map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::BTreeMap;
+    ///
+    /// let mut map = BTreeMap::new();
+    /// map.insert(1, "a");
+    /// map.insert(2, "b");
+    /// if let Some(mut entry) = map.last_entry() {
+    ///     if *entry.key() > 0 {
+    ///         entry.insert("last");
+    ///     }
+    /// }
+    /// assert_eq!(*map.get(&1).unwrap(), "a");
+    /// assert_eq!(*map.get(&2).unwrap(), "last");
+    /// ```
+    pub fn last_entry(&mut self) -> Option<OccupiedEntry<'_, K, V>>
+        where
+            K: Ord,
+    {
+        let len = self.len();
+        if len > 0 {
+            let last_key = self.set.last().unwrap().key.clone();
+            return Some(OccupiedEntry {
+                map: self,
+                idx: len - 1,
+                key: last_key
+            })
+        }
+
+        return None
     }
 }
 

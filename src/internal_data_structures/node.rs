@@ -49,7 +49,6 @@ impl<T: Ord + Clone> Node<T> {
     pub fn len(&self) -> usize {
         return self.inner.len();
     }
-    #[inline]
     pub fn insert(&mut self, value: T) -> bool {
         match self.inner.binary_search(&value) {
             Ok(_) => return false, // Already present
@@ -67,6 +66,23 @@ impl<T: Ord + Clone> Node<T> {
         }
 
         return true;
+    }
+    pub fn insert_mut(&mut self, value: T) -> Option<&mut T> {
+        return match self.inner.binary_search(&value) {
+            Ok(_) => None, // Already present
+            Err(idx) => {
+                if let Some(max) = &self.max {
+                    if &value > max {
+                        self.max = Some(value.clone())
+                    }
+                } else {
+                    self.max = Some(value.clone())
+                }
+
+                self.inner.insert(idx, value);
+                self.inner.get_mut(idx)
+            }
+        }
     }
     pub fn remove(&mut self, value: &T) -> bool {
         match self.inner.binary_search(value) {
