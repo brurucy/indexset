@@ -14,6 +14,12 @@ readme = "README.md"
 criterion = { version = "0.5.1", features = ["html_reports"] }
 rand = "0.8.5"
 
+[dependencies]
+serde = { version = "1.0.151", optional = true, features = ["derive"] }
+
+[features]
+serde = ["dep:serde"]
+
 [[bench]]
 name = "stdlib"
 harness = false

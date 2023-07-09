@@ -6,8 +6,12 @@ use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::Bound;
 use std::iter::FusedIterator;
-use std::ops::{Index, RangeBounds, RangeInclusive};
+use std::mem::swap;
+use std::ops::{Index, RangeBounds};
 use std::vec;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+use crate::Entry::{Occupied, Vacant};
 
 /// An ordered set based on a B-Tree.
 ///
@@ -64,6 +68,7 @@ use std::vec;
 ///
 /// let set = BTreeSet::from_iter([1, 2, 3]);
 /// ```
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct BTreeSet<T>
 where
@@ -71,6 +76,7 @@ where
 {
     inner: Vec<Node<T>>,
     index: FenwickTree,
+    len: usize,
 }
 
 /// Makes a new, empty `BTreeSet`.
@@ -105,15 +111,16 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// ```
     pub fn clear(&mut self) {
         self.inner = vec![Node::new()];
-        self.index = FenwickTree::new(&self.inner, |sorted_set| sorted_set.len());
+        self.index = FenwickTree::new(&self.inner, |node| node.len());
+        self.len = 0;
     }
     fn locate_node<Q>(&self, value: &Q) -> usize
     where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        let mut node_idx = self.inner.partition_point(|sorted_set| {
-            if let Some(max) = sorted_set.max.as_ref() {
+        let mut node_idx = self.inner.partition_point(|node| {
+            if let Some(max) = node.max.as_ref() {
                 return max.borrow() < value;
             };
 
@@ -136,8 +143,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         Q: Ord + ?Sized,
         P: FnMut(&Q) -> bool,
     {
-        let mut node_idx = self.inner.partition_point(|sorted_set| {
-            if let Some(max) = sorted_set.max.as_ref() {
+        let mut node_idx = self.inner.partition_point(|node| {
+            if let Some(max) = node.max.as_ref() {
                 return cmp(max.borrow());
             }
 
@@ -234,8 +241,9 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert_eq!(set.get(&4), None);
     /// ```
     pub fn get<Q>(&self, value: &Q) -> Option<&T>
-    where T: Borrow<Q> + Ord,
-          Q: Ord + ?Sized,
+    where
+        T: Borrow<Q> + Ord,
+        Q: Ord + ?Sized,
     {
         let (node_idx, position_within_node) = self.locate_value(value);
         if let Some(candidate_vertebra) = self.inner.get(node_idx) {
@@ -285,7 +293,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert_eq!(v.len(), 1);
     /// ```
     pub fn len(&self) -> usize {
-        return self.inner.iter().map(|sorted_set| sorted_set.len()).sum();
+        return self.len
     }
     /// Adds a value to the set.
     ///
@@ -318,7 +326,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             let new_vertebra = self.inner[node_idx].halve();
             // Get the minimum
             let new_vertebra_min = new_vertebra.inner[0].clone();
-            // Insert the new sorted_set
+            // Insert the new node
             self.inner.insert(node_idx + 1, new_vertebra);
             if !(value < new_vertebra_min) {
                 node_idx += 1;
@@ -326,14 +334,16 @@ impl<T: Clone + Ord> BTreeSet<T> {
             added = self.inner[node_idx].insert(value);
             // I am not aware of any algorithm to add a new "slot" to the fenwick tree, but
             // there might be a way.
-            self.index = FenwickTree::new(&self.inner, |sorted_set| sorted_set.len());
-            // [1 20 7 30 50 4]
-            // [1 20 3 4 30 50 4]
+            self.index = FenwickTree::new(&self.inner, |node| node.len());
         } else {
             added = self.inner[node_idx].insert(value);
             if added {
                 self.index.increase_length(node_idx);
             }
+        }
+
+        if added {
+            self.len += 1;
         }
 
         return added;
@@ -358,7 +368,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         let replaced_element = self.take(&value);
         self.insert(value);
 
-        return replaced_element
+        return replaced_element;
     }
     /// Returns `true` if the set contains an element equal to the value.
     ///
@@ -406,16 +416,16 @@ impl<T: Clone + Ord> BTreeSet<T> {
         return false;
     }
     fn delete_at(&mut self, node_idx: usize, position_within_node: usize) -> T {
-        let removal = self.inner[node_idx]
-            .delete(position_within_node);
+        let removal = self.inner[node_idx].delete(position_within_node);
 
         let mut decrease_length = false;
-        // check whether the sorted_set has to be deleted
+        // check whether the node has to be deleted
         if self.inner[node_idx].len() == 0 {
-            // delete it as long as it is not the last remaining sorted_set
+            // delete it as long as it is not the last remaining node
             if self.inner.len() > 1 {
                 self.inner.remove(node_idx);
-                self.index = FenwickTree::new(&self.inner, |sorted_set| sorted_set.len());
+                self.len -= 1;
+                self.index = FenwickTree::new(&self.inner, |node| node.len());
             } else {
                 decrease_length = true;
             }
@@ -424,7 +434,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         }
 
         if decrease_length {
-            self.index.decrease_length(node_idx)
+            self.index.decrease_length(node_idx);
+            self.len -= 1;
         }
 
         return removal;
@@ -908,8 +919,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         F: FnMut(&Q) -> bool,
     {
         let mut positions_to_delete = vec![];
-        for (node_idx, sorted_set) in self.inner.iter().enumerate() {
-            for (position_within_node, item) in sorted_set.inner.iter().enumerate() {
+        for (node_idx, node) in self.inner.iter().enumerate() {
+            for (position_within_node, item) in node.inner.iter().enumerate() {
                 if !f(item.borrow()) {
                     positions_to_delete.push((node_idx, position_within_node));
                 }
@@ -931,15 +942,16 @@ impl<T: Clone + Ord> BTreeSet<T> {
     {
         let (node_idx, position_within_node) = self.locate_value_cmp(cmp);
         let first_vertebra = self.inner[node_idx].split_off(position_within_node);
-        let mut remaining_vertebrae = vec![];
+        let mut remaining_nodes = vec![];
         while self.inner.len() > node_idx + 1 {
-            remaining_vertebrae.push(self.inner.pop().unwrap());
+            remaining_nodes.push(self.inner.pop().unwrap());
         }
-        remaining_vertebrae.reverse();
-        remaining_vertebrae.insert(0, first_vertebra);
+        remaining_nodes.reverse();
+        remaining_nodes.insert(0, first_vertebra);
         let mut latter_half = BTreeSet::default();
-        latter_half.inner = remaining_vertebrae;
-        latter_half.index = FenwickTree::new(&latter_half.inner, |sorted_set| sorted_set.len());
+        latter_half.len = remaining_nodes.iter().map(|node| node.len()).sum();
+        latter_half.inner = remaining_nodes;
+        latter_half.index = FenwickTree::new(&latter_half.inner, |node| node.len());
 
         if self.inner[node_idx].len() == 0 {
             if self.inner.len() > 1 {
@@ -947,7 +959,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
         }
 
-        self.index = FenwickTree::new(&self.inner, |sorted_set| sorted_set.len());
+        self.index = FenwickTree::new(&self.inner, |node| node.len());
+        self.len = self.inner.iter().map(|node| node.len()).sum();
 
         return latter_half;
     }
@@ -987,15 +1000,16 @@ impl<T: Clone + Ord> BTreeSet<T> {
     {
         let (node_idx, position_within_node) = self.locate_value(value);
         let first_vertebra = self.inner[node_idx].split_off(position_within_node);
-        let mut remaining_vertebrae = vec![];
+        let mut remaining_nodes = vec![];
         while self.inner.len() > node_idx + 1 {
-            remaining_vertebrae.push(self.inner.pop().unwrap());
+            remaining_nodes.push(self.inner.pop().unwrap());
         }
-        remaining_vertebrae.reverse();
-        remaining_vertebrae.insert(0, first_vertebra);
+        remaining_nodes.reverse();
+        remaining_nodes.insert(0, first_vertebra);
         let mut latter_half = BTreeSet::default();
-        latter_half.inner = remaining_vertebrae;
-        latter_half.index = FenwickTree::new(&latter_half.inner, |sorted_set| sorted_set.len());
+        latter_half.len = remaining_nodes.iter().map(|node| node.len()).sum();
+        latter_half.inner = remaining_nodes;
+        latter_half.index = FenwickTree::new(&latter_half.inner, |node| node.len());
 
         if self.inner[node_idx].len() == 0 {
             if self.inner.len() > 1 {
@@ -1003,7 +1017,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
         }
 
-        self.index = FenwickTree::new(&self.inner, |sorted_set| sorted_set.len());
+        self.index = FenwickTree::new(&self.inner, |node| node.len());
+        self.len = self.inner.iter().map(|node| node.len()).sum();
 
         return latter_half;
     }
@@ -1110,34 +1125,26 @@ impl<T: Clone + Ord> BTreeSet<T> {
     where
         Q: Ord + ?Sized,
         T: Borrow<Q>,
-        R: RangeBounds<Q>
+        R: RangeBounds<Q>,
     {
         let start_idx = match range.start_bound() {
-            Bound::Included(bound) => {
-                self.rank(self.locate_value(bound))
-            }
-            Bound::Excluded(bound) => {
-                self.rank(self.locate_value(bound)) + 1
-            }
-            Bound::Unbounded => 0
+            Bound::Included(bound) => self.rank(self.locate_value(bound)),
+            Bound::Excluded(bound) => self.rank(self.locate_value(bound)) + 1,
+            Bound::Unbounded => 0,
         };
         let end_idx = match range.end_bound() {
-            Bound::Included(bound) => {
-                self.rank(self.locate_value(bound))
-            }
-            Bound::Excluded(bound) => {
-                self.rank(self.locate_value(bound)) - 1
-            }
-            Bound::Unbounded => self.len() - 1
+            Bound::Included(bound) => self.rank(self.locate_value(bound)),
+            Bound::Excluded(bound) => self.rank(self.locate_value(bound)) - 1,
+            Bound::Unbounded => self.len() - 1,
         };
 
         println!("{}..={}", start_idx, end_idx);
-        return self.range_idx(start_idx..=end_idx)
+        return self.range_idx(start_idx..=end_idx);
     }
     fn rank(&self, (node_idx, position_within_node): (usize, usize)) -> usize {
         let offset = self.index.prefix_sum(node_idx);
 
-        return offset + position_within_node
+        return offset + position_within_node;
     }
     fn range_idx<R>(&self, range: R) -> Range<'_, T>
     where
@@ -1188,19 +1195,17 @@ where
 }
 
 impl<T, const N: usize> From<[T; N]> for BTreeSet<T>
-    where
-        T: Ord + Clone
+where
+    T: Ord + Clone,
 {
     fn from(value: [T; N]) -> Self {
         let mut btree: BTreeSet<T> = Default::default();
 
-        value
-            .into_iter()
-            .for_each(|item| {
-                btree.insert(item);
-            });
+        value.into_iter().for_each(|item| {
+            btree.insert(item);
+        });
 
-        return btree
+        return btree;
     }
 }
 
@@ -1212,7 +1217,8 @@ where
         let v = vec![Node::new()];
         return Self {
             inner: v.clone(),
-            index: FenwickTree::new(v, |sorted_set| sorted_set.len()),
+            index: FenwickTree::new(v, |node| node.len()),
+            len: 0,
         };
     }
 }
@@ -1367,7 +1373,7 @@ where
     type IntoIter = IntoIter<T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        // This will never panic, since there always is at least one sorted_set in the btree
+        // This will never panic, since there always is at least one node in the btree
         return IntoIter { btree: self };
     }
 }
@@ -1455,7 +1461,7 @@ where
                 }
                 (Some(left), None) => Some(left),
                 (None, Some(right)) => Some(right),
-                (None, None) => None
+                (None, None) => None,
             };
         }
 
@@ -1639,6 +1645,7 @@ where
     }
 }
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 struct Pair<K, V>
 where
@@ -1683,6 +1690,141 @@ where
 {
     fn cmp(&self, other: &Self) -> Ordering {
         return self.key.cmp(&other.key);
+    }
+}
+
+pub struct VacantEntry<'a, K, V>
+where K: Clone + Ord,
+      V : Clone
+{
+    map: &'a mut BTreeMap<K, V>,
+    key: K,
+}
+
+pub struct OccupiedEntry<'a, K, V>
+    where K: Clone + Ord,
+          V : Clone
+{
+    map: &'a mut BTreeMap<K, V>,
+    key: K,
+    idx: usize,
+}
+
+pub enum Entry<'a, K, V>
+    where
+        K: 'a + Clone + Ord,
+        V: 'a + Clone,
+{
+    Vacant(VacantEntry<'a, K, V>),
+    Occupied(OccupiedEntry<'a, K, V>),
+}
+
+impl<'a, K, V> Entry<'a, K, V>
+    where
+        K: 'a + Clone + Ord,
+        V: 'a + Clone,
+{
+    pub fn or_insert(self, default: V) -> &'a mut V {
+        match self {
+            Vacant(entry) => entry.insert(default),
+            Occupied(entry) => entry.into_mut(),
+        }
+    }
+    pub fn or_insert_with<F>(self, default: F) -> &'a mut V
+    where
+        F : FnOnce() -> V
+    {
+        match self {
+            Vacant(entry) => entry.insert(default()),
+            Occupied(entry) => entry.into_mut(),
+        }
+    }
+    pub fn or_insert_with_key<F>(self, default: F) -> &'a mut V
+    where
+    F : FnOnce(&K) -> V,
+    {
+        match self {
+            Vacant(entry) => {
+                let value = default(entry.key());
+                entry.insert(value)
+            },
+            Occupied(entry) => entry.into_mut()
+        }
+    }
+    pub fn key(&self) -> &K {
+        match *self {
+            Occupied(ref entry) => entry.key(),
+            Vacant(ref entry) => entry.key(),
+        }
+    }
+    pub fn and_modify<F>(self, f: F) -> Self
+    where
+    F: FnOnce(&mut V),
+    {
+        match self {
+            Occupied(mut entry) => {
+                f(entry.get_mut());
+                Occupied(entry)
+            },
+            Vacant(entry) => Vacant(entry)
+        }
+    }
+    pub fn or_default(self) -> &'a mut V
+    where V : Default
+    {
+        match self {
+            Occupied(entry) => entry.into_mut(),
+            Vacant(entry) => entry.insert(Default::default())
+        }
+    }
+}
+
+impl<'a, K, V> OccupiedEntry<'a, K, V>
+where K: Ord + Clone,
+      V : Clone
+{
+    pub fn key(&self) -> &K {
+        return &self.key
+    }
+    pub fn remove_entry(self) -> (K, V) {
+        self.map.pop_index(self.idx)
+    }
+    pub fn get(&self) -> &V {
+        self.map.get_index(self.idx).unwrap().1
+    }
+    pub fn get_mut(&mut self) -> &mut V {
+        self.map.get_mut_index(self.idx).unwrap()
+    }
+    pub fn into_mut(self) -> &'a mut V {
+        self.map.get_mut_index(self.idx).unwrap()
+    }
+    pub fn insert(&mut self, value: V) -> V {
+        let current_value = self.map.get_mut_index(self.idx).unwrap();
+        let mut previous_value = value;
+        swap(&mut previous_value, current_value);
+
+        return previous_value
+    }
+    pub fn remove(self) -> V {
+        return self.map.pop_index(self.idx).1
+    }
+}
+
+impl <'a, K, V>VacantEntry<'a, K, V>
+    where K: Ord + Clone,
+          V: Clone
+{
+    pub fn key(&self) -> &K {
+        return &self.key
+    }
+    pub fn into_key(self) -> K {
+        return self.key
+    }
+    pub fn insert(self, value: V) -> &'a mut V {
+        let (node_idx, position_within_node) = self.map.set.locate_value_cmp(|item| item.key < self.key);
+        let rank = self.map.set.rank((node_idx, position_within_node));
+        self.map.insert(self.key, value);
+        return self.map.get_mut_index(rank).unwrap();
     }
 }
 
@@ -1773,6 +1915,7 @@ where
 ///     ("Mars", 1.5),
 /// ]);
 /// ```
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct BTreeMap<K, V>
 where
@@ -2022,10 +2165,7 @@ where
         let (node_idx, position_within_node) =
             self.set.locate_value_cmp(|item| item.key.borrow() < key);
         if let Some(_) = self.set.inner.get(node_idx) {
-            if let Some(_) = self.set.inner[node_idx]
-                .inner
-                .get(position_within_node)
-            {
+            if let Some(_) = self.set.inner[node_idx].inner.get(position_within_node) {
                 let entry = self.set.inner[node_idx]
                     .inner
                     .get_mut(position_within_node)
@@ -2053,14 +2193,10 @@ where
     /// }
     /// assert_eq!(map[&1], "b");
     /// ```
-    pub fn get_mut_index(&mut self, index: usize) -> Option<&mut V>
-    {
+    pub fn get_mut_index(&mut self, index: usize) -> Option<&mut V> {
         let (node_idx, position_within_node) = self.set.locate_ith(index);
         if let Some(_) = self.set.inner.get(node_idx) {
-            if let Some(_) = self.set.inner[node_idx]
-                .inner
-                .get(position_within_node)
-            {
+            if let Some(_) = self.set.inner[node_idx].inner.get(position_within_node) {
                 let entry = self.set.inner[node_idx]
                     .inner
                     .get_mut(position_within_node)
@@ -2435,59 +2571,47 @@ where
     /// assert_eq!(Some((&5, &"b")), map.range(4..).next());
     /// ```
     pub fn range<Q, R>(&self, range: R) -> RangeMap<K, V>
-        where
-            Q: Clone + Ord + ?Sized,
-            K: Borrow<Q>,
-            R: RangeBounds<Q>
+    where
+        Q: Clone + Ord + ?Sized,
+        K: Borrow<Q>,
+        R: RangeBounds<Q>,
     {
         let (start_idx, end_idx) = self.range_to_idx(range);
 
         return RangeMap {
-            inner: self.set.range_idx(start_idx..=end_idx)
+            inner: self.set.range_idx(start_idx..=end_idx),
         };
     }
     fn range_to_idx<Q, R>(&self, range: R) -> (usize, usize)
-        where
-            Q: Clone + Ord + ?Sized,
-            K: Borrow<Q>,
-            R: RangeBounds<Q>
+    where
+        Q: Clone + Ord + ?Sized,
+        K: Borrow<Q>,
+        R: RangeBounds<Q>,
     {
         let start_idx = match range.start_bound() {
-            Bound::Included(bound) => {
-                self.set.rank(
-                    self
-                        .set
-                        .locate_value_cmp(|item| item.key.borrow() < bound)
-                )
-            }
+            Bound::Included(bound) => self
+                .set
+                .rank(self.set.locate_value_cmp(|item| item.key.borrow() < bound)),
             Bound::Excluded(bound) => {
-                self.set.rank(
-                    self
-                        .set
-                        .locate_value_cmp(|item| item.key.borrow() < bound)
-                ) + 1
+                self.set
+                    .rank(self.set.locate_value_cmp(|item| item.key.borrow() < bound))
+                    + 1
             }
-            Bound::Unbounded => 0
+            Bound::Unbounded => 0,
         };
         let end_idx = match range.end_bound() {
-            Bound::Included(bound) => {
-                self.set.rank(
-                    self
-                        .set
-                        .locate_value_cmp(|item| item.key.borrow() < bound)
-                )
-            }
+            Bound::Included(bound) => self
+                .set
+                .rank(self.set.locate_value_cmp(|item| item.key.borrow() < bound)),
             Bound::Excluded(bound) => {
-                self.set.rank(
-                    self
-                        .set
-                        .locate_value_cmp(|item| item.key.borrow() < bound)
-                ) - 1
+                self.set
+                    .rank(self.set.locate_value_cmp(|item| item.key.borrow() < bound))
+                    - 1
             }
-            Bound::Unbounded => self.len() - 1
+            Bound::Unbounded => self.len() - 1,
         };
 
-        return (start_idx, end_idx)
+        return (start_idx, end_idx);
     }
     /// Constructs a mutable double-ended iterator over a sub-range of elements in the map.
     /// The simplest way is to use the range syntax `min..max`, thus `range(min..max)` will
@@ -2521,11 +2645,11 @@ where
     where
         Q: Clone + Ord + ?Sized,
         K: Borrow<Q>,
-        R: RangeBounds<Q>
+        R: RangeBounds<Q>,
     {
         let (start_idx, end_idx) = self.range_to_idx(range);
 
-        return self.range_mut_idx(start_idx..=end_idx)
+        return self.range_mut_idx(start_idx..=end_idx);
     }
     pub fn range_mut_idx<R>(&mut self, range: R) -> RangeMut<K, V>
     where
@@ -2672,8 +2796,8 @@ where
         F: FnMut(&Q, &mut V) -> bool,
     {
         let mut positions_to_delete = vec![];
-        for (node_idx, sorted_set) in self.set.inner.iter_mut().enumerate() {
-            for (position_within_node, item) in sorted_set.inner.iter_mut().enumerate() {
+        for (node_idx, node) in self.set.inner.iter_mut().enumerate() {
+            for (position_within_node, item) in node.inner.iter_mut().enumerate() {
                 if !f(item.key.borrow(), &mut item.value) {
                     positions_to_delete.push((node_idx, position_within_node));
                 }
@@ -2773,23 +2897,122 @@ where
             inner: self.iter_mut(),
         };
     }
+    /// Gets the given key's corresponding entry in the map for in-place manipulation.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use std::collections::BTreeMap;
+    ///
+    /// let mut count: BTreeMap<&str, usize> = BTreeMap::new();
+    ///
+    /// // count the number of occurrences of letters in the vec
+    /// for x in ["a", "b", "a", "c", "a", "b"] {
+    ///     count.entry(x).and_modify(|curr| *curr += 1).or_insert(1);
+    /// }
+    ///
+    /// assert_eq!(count["a"], 3);
+    /// assert_eq!(count["b"], 2);
+    /// assert_eq!(count["c"], 1);
+    /// ```
+    pub fn entry(&mut self, key: K) -> Entry<'_, K, V>
+        where
+            K: Ord,
+    {
+        if self.contains_key(&key) {
+            let location = self.set.locate_value_cmp(|item| item.key < key);
+            let rank = self.set.rank(location);
+            return Occupied(OccupiedEntry { map: self, key: key, idx: rank })
+        }
+
+        return Vacant(VacantEntry { map: self, key})
+    }
+    /// Returns the first entry in the map for in-place manipulation.
+    /// The key of this entry is the minimum key in the map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::BTreeMap;
+    ///
+    /// let mut map = BTreeMap::new();
+    /// map.insert(1, "a");
+    /// map.insert(2, "b");
+    /// if let Some(mut entry) = map.first_entry() {
+    ///     if *entry.key() > 0 {
+    ///         entry.insert("first");
+    ///     }
+    /// }
+    /// assert_eq!(*map.get(&1).unwrap(), "first");
+    /// assert_eq!(*map.get(&2).unwrap(), "b");
+    /// ```
+    pub fn first_entry(&mut self) -> Option<OccupiedEntry<'_, K, V>>
+        where
+            K: Ord,
+    {
+        if self.len() > 0 {
+            let first_key = self.set.first().unwrap().key.clone();
+            return Some(OccupiedEntry {
+                map: self,
+                idx: 0,
+                key: first_key
+            })
+        }
+
+        return None
+    }
+    /// Returns the last entry in the map for in-place manipulation.
+    /// The key of this entry is the maximum key in the map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::BTreeMap;
+    ///
+    /// let mut map = BTreeMap::new();
+    /// map.insert(1, "a");
+    /// map.insert(2, "b");
+    /// if let Some(mut entry) = map.last_entry() {
+    ///     if *entry.key() > 0 {
+    ///         entry.insert("last");
+    ///     }
+    /// }
+    /// assert_eq!(*map.get(&1).unwrap(), "a");
+    /// assert_eq!(*map.get(&2).unwrap(), "last");
+    /// ```
+    pub fn last_entry(&mut self) -> Option<OccupiedEntry<'_, K, V>>
+        where
+            K: Ord,
+    {
+        let len = self.len();
+        if len > 0 {
+            let last_key = self.set.last().unwrap().key.clone();
+            return Some(OccupiedEntry {
+                map: self,
+                idx: len - 1,
+                key: last_key
+            })
+        }
+
+        return None
+    }
 }
 
 impl<K, V, const N: usize> From<[(K, V); N]> for BTreeMap<K, V>
-    where
-        K: Ord + Clone,
-        V : Clone
+where
+    K: Ord + Clone,
+    V: Clone,
 {
     fn from(value: [(K, V); N]) -> Self {
         let mut btree: BTreeMap<K, V> = Default::default();
 
-        value
-            .into_iter()
-            .for_each(|(key, value)| {
-                btree.insert(key, value);
-            });
+        value.into_iter().for_each(|(key, value)| {
+            btree.insert(key, value);
+        });
 
-        return btree
+        return btree;
     }
 }
 
@@ -3405,7 +3628,7 @@ mod tests {
 
     #[test]
     fn test_insert() {
-        // This will cause the btree to have at least more than one sorted_set
+        // This will cause the btree to have at least more than one node
         let input: Vec<usize> = (0..(INNER_SIZE + 1)).into_iter().rev().collect();
         let expected_output: Vec<usize> = (0..(INNER_SIZE + 1)).collect();
 
@@ -3505,7 +3728,10 @@ mod tests {
 
         input.iter().rev().for_each(|item| {
             if *item > 0 {
-                assert_eq!(back_spine.get_index(back_spine.len() - 1), back_spine.last());
+                assert_eq!(
+                    back_spine.get_index(back_spine.len() - 1),
+                    back_spine.last()
+                );
                 assert_eq!(
                     back_spine.pop_last().unwrap() - 1,
                     *back_spine.last().unwrap()
@@ -3609,10 +3835,22 @@ mod tests {
             Vec::from_iter(btree.range_idx(..10).cloned()),
             Vec::from_iter(btree.iter().cloned())
         );
-        assert_eq!(Vec::from_iter(btree.range_idx(1..2).cloned()), first_to_second);
-        assert_eq!(Vec::from_iter(btree.range_idx(3..10).cloned()), three_til_end);
-        assert_eq!(Vec::from_iter(btree.range_idx(0..4).cloned()), start_til_four);
-        assert_eq!(Vec::from_iter(btree.range_idx(0..10).cloned()), start_til_end);
+        assert_eq!(
+            Vec::from_iter(btree.range_idx(1..2).cloned()),
+            first_to_second
+        );
+        assert_eq!(
+            Vec::from_iter(btree.range_idx(3..10).cloned()),
+            three_til_end
+        );
+        assert_eq!(
+            Vec::from_iter(btree.range_idx(0..4).cloned()),
+            start_til_four
+        );
+        assert_eq!(
+            Vec::from_iter(btree.range_idx(0..10).cloned()),
+            start_til_end
+        );
         assert_eq!(
             Vec::from_iter(btree.range_idx(5..=6).cloned()),
             five_til_six_included

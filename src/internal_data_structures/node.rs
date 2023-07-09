@@ -1,18 +1,25 @@
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 pub const INNER_SIZE: usize = 1024;
 const CUTOFF: usize = INNER_SIZE / 2;
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub(crate) struct Node<T>
 where
     T: PartialOrd + Clone,
 {
     pub inner: Vec<T>,
-    pub max: Option<T>
+    pub max: Option<T>,
 }
 
 impl<T: PartialOrd + Clone> Default for Node<T> {
     fn default() -> Self {
-        return Self { inner: Vec::with_capacity(INNER_SIZE), max: None };
+        return Self {
+            inner: Vec::with_capacity(INNER_SIZE),
+            max: None,
+        };
     }
 }
 
@@ -42,7 +49,6 @@ impl<T: Ord + Clone> Node<T> {
     pub fn len(&self) -> usize {
         return self.inner.len();
     }
-    #[inline]
     pub fn insert(&mut self, value: T) -> bool {
         match self.inner.binary_search(&value) {
             Ok(_) => return false, // Already present
@@ -56,10 +62,27 @@ impl<T: Ord + Clone> Node<T> {
                 }
 
                 self.inner.insert(idx, value);
-            },
+            }
         }
 
         return true;
+    }
+    pub fn insert_mut(&mut self, value: T) -> Option<&mut T> {
+        return match self.inner.binary_search(&value) {
+            Ok(_) => None, // Already present
+            Err(idx) => {
+                if let Some(max) = &self.max {
+                    if &value > max {
+                        self.max = Some(value.clone())
+                    }
+                } else {
+                    self.max = Some(value.clone())
+                }
+
+                self.inner.insert(idx, value);
+                self.inner.get_mut(idx)
+            }
+        }
     }
     pub fn remove(&mut self, value: &T) -> bool {
         match self.inner.binary_search(value) {
@@ -70,8 +93,8 @@ impl<T: Ord + Clone> Node<T> {
                 }
 
                 true
-            },
-            Err(_) => false,  // Not found
+            }
+            Err(_) => false, // Not found
         }
     }
     pub fn delete(&mut self, index: usize) -> T {

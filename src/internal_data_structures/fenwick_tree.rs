@@ -1,3 +1,6 @@
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 fn least_significant_bit(idx: isize) -> isize {
     return idx & -idx;
 }
@@ -15,6 +18,7 @@ fn most_significant_bit(idx: isize) -> isize {
     return result - (result >> 1);
 }
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct FenwickTree {
     inner: Vec<usize>,
