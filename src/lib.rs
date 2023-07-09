@@ -76,6 +76,7 @@ where
 {
     inner: Vec<Node<T>>,
     index: FenwickTree,
+    len: usize,
 }
 
 /// Makes a new, empty `BTreeSet`.
@@ -110,15 +111,16 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// ```
     pub fn clear(&mut self) {
         self.inner = vec![Node::new()];
-        self.index = FenwickTree::new(&self.inner, |sorted_set| sorted_set.len());
+        self.index = FenwickTree::new(&self.inner, |node| node.len());
+        self.len = 0;
     }
     fn locate_node<Q>(&self, value: &Q) -> usize
     where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        let mut node_idx = self.inner.partition_point(|sorted_set| {
-            if let Some(max) = sorted_set.max.as_ref() {
+        let mut node_idx = self.inner.partition_point(|node| {
+            if let Some(max) = node.max.as_ref() {
                 return max.borrow() < value;
             };
 
@@ -141,8 +143,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         Q: Ord + ?Sized,
         P: FnMut(&Q) -> bool,
     {
-        let mut node_idx = self.inner.partition_point(|sorted_set| {
-            if let Some(max) = sorted_set.max.as_ref() {
+        let mut node_idx = self.inner.partition_point(|node| {
+            if let Some(max) = node.max.as_ref() {
                 return cmp(max.borrow());
             }
 
@@ -291,7 +293,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert_eq!(v.len(), 1);
     /// ```
     pub fn len(&self) -> usize {
-        return self.inner.iter().map(|sorted_set| sorted_set.len()).sum();
+        return self.len
     }
     /// Adds a value to the set.
     ///
@@ -324,7 +326,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             let new_vertebra = self.inner[node_idx].halve();
             // Get the minimum
             let new_vertebra_min = new_vertebra.inner[0].clone();
-            // Insert the new sorted_set
+            // Insert the new node
             self.inner.insert(node_idx + 1, new_vertebra);
             if !(value < new_vertebra_min) {
                 node_idx += 1;
@@ -332,12 +334,16 @@ impl<T: Clone + Ord> BTreeSet<T> {
             added = self.inner[node_idx].insert(value);
             // I am not aware of any algorithm to add a new "slot" to the fenwick tree, but
             // there might be a way.
-            self.index = FenwickTree::new(&self.inner, |sorted_set| sorted_set.len());
+            self.index = FenwickTree::new(&self.inner, |node| node.len());
         } else {
             added = self.inner[node_idx].insert(value);
             if added {
                 self.index.increase_length(node_idx);
             }
+        }
+
+        if added {
+            self.len += 1;
         }
 
         return added;
@@ -413,12 +419,13 @@ impl<T: Clone + Ord> BTreeSet<T> {
         let removal = self.inner[node_idx].delete(position_within_node);
 
         let mut decrease_length = false;
-        // check whether the sorted_set has to be deleted
+        // check whether the node has to be deleted
         if self.inner[node_idx].len() == 0 {
-            // delete it as long as it is not the last remaining sorted_set
+            // delete it as long as it is not the last remaining node
             if self.inner.len() > 1 {
                 self.inner.remove(node_idx);
-                self.index = FenwickTree::new(&self.inner, |sorted_set| sorted_set.len());
+                self.len -= 1;
+                self.index = FenwickTree::new(&self.inner, |node| node.len());
             } else {
                 decrease_length = true;
             }
@@ -427,7 +434,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         }
 
         if decrease_length {
-            self.index.decrease_length(node_idx)
+            self.index.decrease_length(node_idx);
+            self.len -= 1;
         }
 
         return removal;
@@ -911,8 +919,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         F: FnMut(&Q) -> bool,
     {
         let mut positions_to_delete = vec![];
-        for (node_idx, sorted_set) in self.inner.iter().enumerate() {
-            for (position_within_node, item) in sorted_set.inner.iter().enumerate() {
+        for (node_idx, node) in self.inner.iter().enumerate() {
+            for (position_within_node, item) in node.inner.iter().enumerate() {
                 if !f(item.borrow()) {
                     positions_to_delete.push((node_idx, position_within_node));
                 }
@@ -934,15 +942,16 @@ impl<T: Clone + Ord> BTreeSet<T> {
     {
         let (node_idx, position_within_node) = self.locate_value_cmp(cmp);
         let first_vertebra = self.inner[node_idx].split_off(position_within_node);
-        let mut remaining_vertebrae = vec![];
+        let mut remaining_nodes = vec![];
         while self.inner.len() > node_idx + 1 {
-            remaining_vertebrae.push(self.inner.pop().unwrap());
+            remaining_nodes.push(self.inner.pop().unwrap());
         }
-        remaining_vertebrae.reverse();
-        remaining_vertebrae.insert(0, first_vertebra);
+        remaining_nodes.reverse();
+        remaining_nodes.insert(0, first_vertebra);
         let mut latter_half = BTreeSet::default();
-        latter_half.inner = remaining_vertebrae;
-        latter_half.index = FenwickTree::new(&latter_half.inner, |sorted_set| sorted_set.len());
+        latter_half.len = remaining_nodes.iter().map(|node| node.len()).sum();
+        latter_half.inner = remaining_nodes;
+        latter_half.index = FenwickTree::new(&latter_half.inner, |node| node.len());
 
         if self.inner[node_idx].len() == 0 {
             if self.inner.len() > 1 {
@@ -950,7 +959,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
         }
 
-        self.index = FenwickTree::new(&self.inner, |sorted_set| sorted_set.len());
+        self.index = FenwickTree::new(&self.inner, |node| node.len());
+        self.len = self.inner.iter().map(|node| node.len()).sum();
 
         return latter_half;
     }
@@ -990,15 +1000,16 @@ impl<T: Clone + Ord> BTreeSet<T> {
     {
         let (node_idx, position_within_node) = self.locate_value(value);
         let first_vertebra = self.inner[node_idx].split_off(position_within_node);
-        let mut remaining_vertebrae = vec![];
+        let mut remaining_nodes = vec![];
         while self.inner.len() > node_idx + 1 {
-            remaining_vertebrae.push(self.inner.pop().unwrap());
+            remaining_nodes.push(self.inner.pop().unwrap());
         }
-        remaining_vertebrae.reverse();
-        remaining_vertebrae.insert(0, first_vertebra);
+        remaining_nodes.reverse();
+        remaining_nodes.insert(0, first_vertebra);
         let mut latter_half = BTreeSet::default();
-        latter_half.inner = remaining_vertebrae;
-        latter_half.index = FenwickTree::new(&latter_half.inner, |sorted_set| sorted_set.len());
+        latter_half.len = remaining_nodes.iter().map(|node| node.len()).sum();
+        latter_half.inner = remaining_nodes;
+        latter_half.index = FenwickTree::new(&latter_half.inner, |node| node.len());
 
         if self.inner[node_idx].len() == 0 {
             if self.inner.len() > 1 {
@@ -1006,7 +1017,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
         }
 
-        self.index = FenwickTree::new(&self.inner, |sorted_set| sorted_set.len());
+        self.index = FenwickTree::new(&self.inner, |node| node.len());
+        self.len = self.inner.iter().map(|node| node.len()).sum();
 
         return latter_half;
     }
@@ -1205,7 +1217,8 @@ where
         let v = vec![Node::new()];
         return Self {
             inner: v.clone(),
-            index: FenwickTree::new(v, |sorted_set| sorted_set.len()),
+            index: FenwickTree::new(v, |node| node.len()),
+            len: 0,
         };
     }
 }
@@ -1360,7 +1373,7 @@ where
     type IntoIter = IntoIter<T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        // This will never panic, since there always is at least one sorted_set in the btree
+        // This will never panic, since there always is at least one node in the btree
         return IntoIter { btree: self };
     }
 }
@@ -2783,8 +2796,8 @@ where
         F: FnMut(&Q, &mut V) -> bool,
     {
         let mut positions_to_delete = vec![];
-        for (node_idx, sorted_set) in self.set.inner.iter_mut().enumerate() {
-            for (position_within_node, item) in sorted_set.inner.iter_mut().enumerate() {
+        for (node_idx, node) in self.set.inner.iter_mut().enumerate() {
+            for (position_within_node, item) in node.inner.iter_mut().enumerate() {
                 if !f(item.key.borrow(), &mut item.value) {
                     positions_to_delete.push((node_idx, position_within_node));
                 }
@@ -3615,7 +3628,7 @@ mod tests {
 
     #[test]
     fn test_insert() {
-        // This will cause the btree to have at least more than one sorted_set
+        // This will cause the btree to have at least more than one node
         let input: Vec<usize> = (0..(INNER_SIZE + 1)).into_iter().rev().collect();
         let expected_output: Vec<usize> = (0..(INNER_SIZE + 1)).collect();
 
