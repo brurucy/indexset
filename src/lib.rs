@@ -224,6 +224,14 @@ impl<T: Clone + Ord> BTreeSet<T> {
 
         return None;
     }
+    fn get_mut_index(&mut self, index: usize) -> Option<&mut T> {
+        let (node_idx, position_within_node) = self.locate_ith(index);
+        if let Some(_) = self.inner.get(node_idx) {
+            return self.inner[node_idx].inner.get_mut(position_within_node)
+        }
+
+        return None;
+    }
     /// Returns a reference to the element in the set, if any, that is equal to
     /// the value.
     ///
@@ -2194,16 +2202,8 @@ where
     /// assert_eq!(map[&1], "b");
     /// ```
     pub fn get_mut_index(&mut self, index: usize) -> Option<&mut V> {
-        let (node_idx, position_within_node) = self.set.locate_ith(index);
-        if let Some(_) = self.set.inner.get(node_idx) {
-            if let Some(_) = self.set.inner[node_idx].inner.get(position_within_node) {
-                let entry = self.set.inner[node_idx]
-                    .inner
-                    .get_mut(position_within_node)
-                    .unwrap();
-
-                return Some(&mut entry.value);
-            }
+        if let Some(entry) = self.set.get_mut_index(index) {
+            return Some(&mut entry.value)
         }
 
         return None;
@@ -2998,6 +2998,44 @@ where
 
         return None
     }
+    /// Returns a [`Cursor`] pointing at the first element that is above the
+    /// given bound.
+    ///
+    /// If no such element exists then a cursor pointing at the "ghost"
+    /// non-element is returned.
+    ///
+    /// Passing [`Bound::Unbounded`] will return a cursor pointing at the first
+    /// element of the map.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use indexset::BTreeMap;
+    /// use std::ops::Bound;
+    ///
+    /// let mut a = BTreeMap::new();
+    /// a.insert(1, "a");
+    /// a.insert(2, "b");
+    /// a.insert(3, "c");
+    /// a.insert(4, "c");
+    /// let cursor = a.lower_bound(Bound::Excluded(&2));
+    /// assert_eq!(cursor.key(), Some(&3));
+    /// ```
+    pub fn lower_bound<Q>(&self, bound: Bound<&Q>) -> CursorMap<'_, K, V>
+        where
+            K: Borrow<Q> + Ord,
+            Q: Ord,
+    {
+        let start_idx = match bound {
+            Bound::Included(start) => self.set.rank(self.set.locate_value_cmp(|item| item.key.borrow() < start)),
+            Bound::Excluded(start) => self.set.rank(self.set.locate_value_cmp(|item| item.key.borrow() < start)) + 1,
+            Bound::Unbounded => 0,
+        };
+
+        return CursorMap { cursor: Cursor { set: &self.set, idx: start_idx } }
+    }
 }
 
 impl<K, V, const N: usize> From<[(K, V); N]> for BTreeMap<K, V>
@@ -3617,6 +3655,114 @@ where
 
     fn index(&self, index: &Q) -> &Self::Output {
         return self.get(index).unwrap();
+    }
+}
+
+pub struct Cursor<'a, T>
+where T: Ord + Clone,
+{
+    set: &'a BTreeSet<T>,
+    idx: usize,
+}
+
+impl<'a, T: Ord + Clone> Cursor<'a, T> {
+    pub fn move_next(&mut self) {
+        if self.idx == self.set.len() {
+            self.idx = 0
+        } else {
+            self.idx += 1;
+        }
+    }
+    pub fn move_index(&mut self, index: usize) {
+        self.idx = index
+    }
+    pub fn move_prev(&mut self) {
+        if self.idx == 0 {
+            self.idx = self.set.len()
+        } else {
+            self.idx -= 1;
+        }
+    }
+    pub fn item(&self, i: usize) -> Option<&'a T> {
+        return self.set.get_index(self.idx);
+    }
+    pub fn peek_next(&self) -> Option<&'a T> {
+        if self.idx == self.set.len() {
+            return self.set.first()
+        }
+
+        return self.set.get_index(self.idx + 1);
+    }
+    pub fn peek_index(&self, index: usize) -> Option<&'a T> {
+        return self.set.get_index(index)
+    }
+    pub fn peek_prev(&self) -> Option<&'a T> {
+        if self.idx == 0 {
+            return None
+        }
+
+        return self.set.get_index(self.idx - 1)
+    }
+}
+
+pub struct CursorMap<'a, K, V>
+    where K: 'a + Ord + Clone,
+          V : 'a + Clone
+{
+    cursor: Cursor<'a, Pair<K, V>>,
+}
+
+impl<'a, K: Ord + Clone, V : Clone> CursorMap<'a, K, V> {
+    pub fn move_next(&mut self) {
+        self.cursor.move_next()
+    }
+    pub fn move_index(&mut self, index: usize) {
+        self.cursor.move_index(index)
+    }
+    pub fn move_prev(&mut self) {
+        self.cursor.move_prev()
+    }
+    pub fn key(&self) -> Option<&'a K> {
+        if let Some(entry) = self.cursor.item(self.cursor.idx) {
+            return Some(&entry.key)
+        }
+
+        return None
+    }
+    pub fn value(&self) -> Option<&'a V> {
+        if let Some(entry) = self.cursor.item(self.cursor.idx) {
+            return Some(&entry.value)
+        }
+
+        return None
+    }
+    pub fn key_value(&self) -> Option<(&'a K, &'a V)> {
+        if let Some(entry) = self.cursor.item(self.cursor.idx) {
+            return Some((&entry.key, &entry.value))
+        }
+
+        return None
+    }
+    pub fn peek_next(&self) -> Option<(&'a K, &'a V)> {
+        if let Some(entry) = self.cursor.peek_next() {
+            return Some((&entry.key, &entry.value))
+        }
+
+        return None
+    }
+    pub fn peek_index(&self, index: usize) -> Option<(&'a K, &'a V)> {
+        if let Some(entry) = self.cursor.peek_index(self.cursor.idx) {
+            return Some((&entry.key, &entry.value))
+        }
+
+        return None
+    }
+    pub fn peek_prev(&self) -> Option<(&'a K, &'a V)> {
+        if let Some(entry) = self.cursor.peek_prev() {
+            return Some((&entry.key, &entry.value))
+        }
+
+        return None
     }
 }
 
