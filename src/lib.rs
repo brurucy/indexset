@@ -328,34 +328,35 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert_eq!(set.len(), 1);
     /// ```
     pub fn insert(&mut self, value: T) -> bool {
-        let mut added = false;
-        let mut node_idx = self.locate_node(&value);
+        let node_idx = self.locate_node(&value);
         if self.inner[node_idx].len() == INNER_SIZE {
-            let new_vertebra = self.inner[node_idx].halve();
+            let new_node = self.inner[node_idx].halve();
             // Get the minimum
-            let new_vertebra_min = new_vertebra.inner[0].clone();
+            let new_node_min = new_node.inner[0].clone();
             // Insert the new node
-            self.inner.insert(node_idx + 1, new_vertebra);
-            if !(value < new_vertebra_min) {
-                node_idx += 1;
+            self.inner.insert(node_idx + 1, new_node);
+            let insert_node_idx = if value < new_node_min {
+                node_idx
+            } else {
+                node_idx + 1
+            };
+            if self.inner[insert_node_idx].insert(value) {
+                // Reconstruct the index after the new node insert.
+                self.index = FenwickTree::new(&self.inner, |node| node.len());
+                self.len += 1;
+                true
+            } else {
+                false
             }
-            added = self.inner[node_idx].insert(value);
-            // I am not aware of any algorithm to add a new "slot" to the fenwick tree, but
-            // there might be a way.
-            self.index = FenwickTree::new(&self.inner, |node| node.len());
-        } else {
-            added = self.inner[node_idx].insert(value);
-            if added {
-                self.index.increase_length(node_idx);
-            }
-        }
-
-        if added {
+        } else if self.inner[node_idx].insert(value) {
+            self.index.increase_length(node_idx);
             self.len += 1;
+            true
+        } else {
+            false
         }
-
-        return added;
     }
+
     /// Adds a value to the set, replacing the existing element, if any, that is
     /// equal to the value. Returns the replaced element.
     ///
@@ -3683,7 +3684,7 @@ impl<'a, T: Ord + Clone> Cursor<'a, T> {
             self.idx -= 1;
         }
     }
-    pub fn item(&self, i: usize) -> Option<&'a T> {
+    pub fn item(&self) -> Option<&'a T> {
         return self.set.get_index(self.idx);
     }
     pub fn peek_next(&self) -> Option<&'a T> {
@@ -3723,21 +3724,21 @@ impl<'a, K: Ord + Clone, V : Clone> CursorMap<'a, K, V> {
         self.cursor.move_prev()
     }
     pub fn key(&self) -> Option<&'a K> {
-        if let Some(entry) = self.cursor.item(self.cursor.idx) {
+        if let Some(entry) = self.cursor.item() {
             return Some(&entry.key)
         }
 
         return None
     }
     pub fn value(&self) -> Option<&'a V> {
-        if let Some(entry) = self.cursor.item(self.cursor.idx) {
+        if let Some(entry) = self.cursor.item() {
             return Some(&entry.value)
         }
 
         return None
     }
     pub fn key_value(&self) -> Option<(&'a K, &'a V)> {
-        if let Some(entry) = self.cursor.item(self.cursor.idx) {
+        if let Some(entry) = self.cursor.item() {
             return Some((&entry.key, &entry.value))
         }
 
@@ -3751,7 +3752,7 @@ impl<'a, K: Ord + Clone, V : Clone> CursorMap<'a, K, V> {
         return None
     }
     pub fn peek_index(&self, index: usize) -> Option<(&'a K, &'a V)> {
-        if let Some(entry) = self.cursor.peek_index(self.cursor.idx) {
+        if let Some(entry) = self.cursor.peek_index(index) {
             return Some((&entry.key, &entry.value))
         }
 

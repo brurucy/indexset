@@ -67,36 +67,6 @@ impl<T: Ord + Clone> Node<T> {
 
         return true;
     }
-    pub fn insert_mut(&mut self, value: T) -> Option<&mut T> {
-        return match self.inner.binary_search(&value) {
-            Ok(_) => None, // Already present
-            Err(idx) => {
-                if let Some(max) = &self.max {
-                    if &value > max {
-                        self.max = Some(value.clone())
-                    }
-                } else {
-                    self.max = Some(value.clone())
-                }
-
-                self.inner.insert(idx, value);
-                self.inner.get_mut(idx)
-            }
-        }
-    }
-    pub fn remove(&mut self, value: &T) -> bool {
-        match self.inner.binary_search(value) {
-            Ok(idx) => {
-                self.inner.remove(idx);
-                if Some(value) == self.max.as_ref() {
-                    self.max = self.inner.last().cloned();
-                }
-
-                true
-            }
-            Err(_) => false, // Not found
-        }
-    }
     pub fn delete(&mut self, index: usize) -> T {
         return self.inner.remove(index);
     }
@@ -121,26 +91,6 @@ mod tests {
 
         assert_eq!(expected_output, actual_output);
         assert_eq!(*actual_vertebra.max.unwrap(), 10);
-    }
-
-    #[test]
-    fn test_remove() {
-        let input: Vec<isize> = vec![1, 9, 2, 7, 6, 3, 5, 4, 10, 8];
-        let mut actual_vertebra = input.iter().fold(Node::new(), |mut acc, curr| {
-            acc.insert(curr.clone());
-            acc
-        });
-        let deletions: Vec<isize> = vec![1, 2, 4, 5, 10];
-        deletions.into_iter().for_each(|each| {
-            actual_vertebra.remove(&each);
-        });
-
-        let expected_output: Vec<isize> = vec![3, 6, 7, 8, 9];
-
-        let actual_output: Vec<isize> = actual_vertebra.inner.into_iter().collect();
-
-        assert_eq!(expected_output, actual_output);
-        assert_eq!(actual_vertebra.max.unwrap(), 9);
     }
 
     #[test]
