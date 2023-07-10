@@ -9,9 +9,9 @@ use std::iter::FusedIterator;
 use std::mem::swap;
 use std::ops::{Index, RangeBounds};
 use std::vec;
+use crate::Entry::{Occupied, Vacant};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use crate::Entry::{Occupied, Vacant};
 
 /// An ordered set based on a B-Tree.
 ///
