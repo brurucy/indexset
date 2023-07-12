@@ -1,7 +1,7 @@
-mod internal_data_structures;
+pub const INNER_SIZE: usize = 1024;
+const CUTOFF: usize = INNER_SIZE / 2;
 
-use crate::internal_data_structures::fenwick_tree::FenwickTree;
-use crate::internal_data_structures::node::{Node, INNER_SIZE};
+use ftree::FenwickTree;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::Bound;
@@ -12,6 +12,74 @@ use std::vec;
 use crate::Entry::{Occupied, Vacant};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub(crate) struct Node<T>
+    where
+        T: PartialOrd + Clone,
+{
+    pub inner: Vec<T>,
+    pub max: Option<T>,
+}
+
+impl<T: PartialOrd + Clone> Default for Node<T> {
+    fn default() -> Self {
+        return Self {
+            inner: Vec::with_capacity(INNER_SIZE),
+            max: None,
+        };
+    }
+}
+
+impl<T: Ord + Clone> Node<T> {
+    pub fn new() -> Self {
+        return Default::default();
+    }
+    pub fn get(&self, index: usize) -> Option<&T> {
+        return self.inner.get(index);
+    }
+    pub fn split_off(&mut self, cutoff: usize) -> Self {
+        // Split the vector at the cutoff point
+        let latter_inner = self.inner.split_off(cutoff);
+
+        // Update the max value in the current Node
+        self.max = self.inner.last().cloned();
+
+        // Create and return the new Node
+        Self {
+            inner: latter_inner,
+            max: self.inner.last().cloned(),
+        }
+    }
+    pub fn halve(&mut self) -> Self {
+        return self.split_off(CUTOFF);
+    }
+    pub fn len(&self) -> usize {
+        return self.inner.len();
+    }
+    pub fn insert(&mut self, value: T) -> bool {
+        match self.inner.binary_search(&value) {
+            Ok(_) => return false, // Already present
+            Err(idx) => {
+                if let Some(max) = &self.max {
+                    if &value > max {
+                        self.max = Some(value.clone())
+                    }
+                } else {
+                    self.max = Some(value.clone())
+                }
+
+                self.inner.insert(idx, value);
+            }
+        }
+
+        return true;
+    }
+    pub fn delete(&mut self, index: usize) -> T {
+        return self.inner.remove(index);
+    }
+}
 
 /// An ordered set based on a B-Tree.
 ///
@@ -349,7 +417,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
                 false
             }
         } else if self.inner[node_idx].insert(value) {
-            self.index.increase_length(node_idx);
+            self.index.update_index(node_idx, 1);
             self.len += 1;
             true
         } else {
@@ -443,7 +511,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         }
 
         if decrease_length {
-            self.index.decrease_length(node_idx);
+            self.index.update_index(node_idx, -1);
             self.len -= 1;
         }
 
@@ -3769,12 +3837,50 @@ impl<'a, K: Ord + Clone, V : Clone> CursorMap<'a, K, V> {
 
 #[cfg(test)]
 mod tests {
-    use super::BTreeSet;
-    use crate::internal_data_structures::node::INNER_SIZE;
-    use crate::BTreeMap;
+    use crate::{BTreeSet, BTreeMap, CUTOFF, INNER_SIZE, Node};
 
     #[test]
     fn test_insert() {
+        let input: Vec<isize> = vec![1, 9, 2, 7, 6, 3, 5, 4, 10, 8];
+
+        let expected_output: Vec<isize> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+        let actual_vertebra = input.iter().fold(Node::new(), |mut acc, curr| {
+            acc.insert(curr);
+            acc
+        });
+
+        let actual_output: Vec<isize> = actual_vertebra.inner.into_iter().cloned().collect();
+
+        assert_eq!(expected_output, actual_output);
+        assert_eq!(*actual_vertebra.max.unwrap(), 10);
+    }
+
+    #[test]
+    fn test_halve() {
+        let mut input: Vec<isize> = vec![];
+        for item in 0..INNER_SIZE {
+            input.push(item.clone() as isize);
+        }
+
+        let mut former_vertebra = Node::new();
+        input.iter().for_each(|item| {
+            former_vertebra.insert(item.clone());
+        });
+        let latter_vertebra = former_vertebra.halve();
+
+        let expected_former_output: Vec<isize> = input[0..CUTOFF].to_vec();
+        let expected_latter_output: Vec<isize> = input[CUTOFF..].to_vec();
+
+        let actual_former_output: Vec<isize> = former_vertebra.inner.iter().cloned().collect();
+        let actual_latter_output: Vec<isize> = latter_vertebra.inner.iter().cloned().collect();
+
+        assert_eq!(expected_former_output, actual_former_output);
+        assert_eq!(expected_latter_output, actual_latter_output);
+    }
+
+    #[test]
+    fn test_insert_btree() {
         // This will cause the btree to have at least more than one node
         let input: Vec<usize> = (0..(INNER_SIZE + 1)).into_iter().rev().collect();
         let expected_output: Vec<usize> = (0..(INNER_SIZE + 1)).collect();
