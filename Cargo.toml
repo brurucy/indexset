@@ -1,6 +1,6 @@
 [package]
 name = "indexset"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 documentation = "https://docs.rs/indexset/"
 repository = "https://github.com/brurucy/indexset"
@@ -16,7 +16,7 @@ rand = "0.8.5"
 
 [dependencies]
 serde = { version = "1.0.151", optional = true, features = ["derive"] }
-ftree = { version = "0.1.0", features = ["serde"] }
+ftree = { version = "0.1.1", features = ["serde"] }
 
 [features]
 serde = ["dep:serde"]

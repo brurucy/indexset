@@ -1,7 +1,10 @@
-pub const INNER_SIZE: usize = 1024;
+const INNER_SIZE: usize = 1024;
 const CUTOFF: usize = INNER_SIZE / 2;
 
+use crate::Entry::{Occupied, Vacant};
 use ftree::FenwickTree;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::Bound;
@@ -9,15 +12,12 @@ use std::iter::FusedIterator;
 use std::mem::swap;
 use std::ops::{Index, RangeBounds};
 use std::vec;
-use crate::Entry::{Occupied, Vacant};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub(crate) struct Node<T>
-    where
-        T: PartialOrd + Clone,
+where
+    T: PartialOrd + Clone,
 {
     pub inner: Vec<T>,
     pub max: Option<T>,
@@ -205,7 +205,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
 
         return node_idx;
     }
-    fn locate_vertebra_cmp<P, Q>(&self, mut cmp: P) -> usize
+    fn locate_node_cmp<P, Q>(&self, mut cmp: P) -> usize
     where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
@@ -243,7 +243,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         Q: Ord + ?Sized,
         P: FnMut(&Q) -> bool,
     {
-        let node_idx = self.locate_vertebra_cmp(&mut cmp);
+        let node_idx = self.locate_node_cmp(&mut cmp);
         let position_within_node = self.inner[node_idx]
             .inner
             .partition_point(|item| cmp(item.borrow()));
@@ -251,22 +251,22 @@ impl<T: Clone + Ord> BTreeSet<T> {
         return (node_idx, position_within_node);
     }
     fn locate_ith(&self, idx: usize) -> (usize, usize) {
-        let mut vertebra_index = self.index.index_of(idx);
+        let mut node_index = self.index.index_of(idx);
         let mut offset = 0;
 
-        if vertebra_index != 0 {
-            offset = self.index.prefix_sum(vertebra_index);
+        if node_index != 0 {
+            offset = self.index.prefix_sum(node_index);
         }
 
         let mut position_within_node = idx - offset;
-        if let Some(node) = self.inner.get(vertebra_index) {
+        if let Some(node) = self.inner.get(node_index) {
             if position_within_node > node.len() - 1 {
-                vertebra_index += 1;
+                node_index += 1;
                 position_within_node = 0;
             }
         }
 
-        return (vertebra_index, position_within_node);
+        return (node_index, position_within_node);
     }
     /// Returns a reference to the element in the i-th position of the set, if any.
     ///
@@ -286,8 +286,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// ```
     pub fn get_index(&self, idx: usize) -> Option<&T> {
         let (node_idx, position_within_node) = self.locate_ith(idx);
-        if let Some(candidate_vertebra) = self.inner.get(node_idx) {
-            return candidate_vertebra.get(position_within_node);
+        if let Some(candidate_node) = self.inner.get(node_idx) {
+            return candidate_node.get(position_within_node);
         }
 
         return None;
@@ -295,7 +295,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
     fn get_mut_index(&mut self, index: usize) -> Option<&mut T> {
         let (node_idx, position_within_node) = self.locate_ith(index);
         if let Some(_) = self.inner.get(node_idx) {
-            return self.inner[node_idx].inner.get_mut(position_within_node)
+            return self.inner[node_idx].inner.get_mut(position_within_node);
         }
 
         return None;
@@ -322,8 +322,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         Q: Ord + ?Sized,
     {
         let (node_idx, position_within_node) = self.locate_value(value);
-        if let Some(candidate_vertebra) = self.inner.get(node_idx) {
-            return candidate_vertebra.get(position_within_node);
+        if let Some(candidate_node) = self.inner.get(node_idx) {
+            return candidate_node.get(position_within_node);
         }
 
         return None;
@@ -350,8 +350,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         Q: Ord + ?Sized,
     {
         let (node_idx, position_within_node) = self.locate_value(value);
-        if let Some(candidate_vertebra) = self.inner.get(node_idx) {
-            return candidate_vertebra.get(position_within_node);
+        if let Some(candidate_node) = self.inner.get(node_idx) {
+            return candidate_node.get(position_within_node);
         }
 
         return None;
@@ -369,7 +369,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert_eq!(v.len(), 1);
     /// ```
     pub fn len(&self) -> usize {
-        return self.len
+        return self.len;
     }
     /// Adds a value to the set.
     ///
@@ -468,8 +468,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         Q: Ord + ?Sized,
     {
         let (node_idx, position_within_node) = self.locate_value(value);
-        if let Some(candidate_vertebra) = self.inner.get(node_idx) {
-            if let Some(candidate_value) = candidate_vertebra.get(position_within_node) {
+        if let Some(candidate_node) = self.inner.get(node_idx) {
+            if let Some(candidate_value) = candidate_node.get(position_within_node) {
                 return value == candidate_value.borrow();
             }
         }
@@ -484,8 +484,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         R: FnMut(&Q) -> bool,
     {
         let (node_idx, position_within_node) = self.locate_value_cmp(cmp);
-        if let Some(candidate_vertebra) = self.inner.get(node_idx) {
-            if let Some(candidate_value) = candidate_vertebra.get(position_within_node) {
+        if let Some(candidate_node) = self.inner.get(node_idx) {
+            if let Some(candidate_value) = candidate_node.get(position_within_node) {
                 return cmp2(candidate_value.borrow());
             }
         }
@@ -525,8 +525,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         let mut removed = false;
         let mut removal = None;
         let (node_idx, position_within_node) = self.locate_value(value);
-        if let Some(candidate_vertebra) = self.inner.get(node_idx) {
-            if let Some(candidate_value) = candidate_vertebra.get(position_within_node) {
+        if let Some(candidate_node) = self.inner.get(node_idx) {
+            if let Some(candidate_value) = candidate_node.get(position_within_node) {
                 if value == candidate_value.borrow() {
                     removal = Some(self.delete_at(node_idx, position_within_node));
                     removed = true;
@@ -546,8 +546,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         let mut removed = false;
         let mut removal = None;
         let (node_idx, position_within_node) = self.locate_value_cmp(cmp);
-        if let Some(candidate_vertebra) = self.inner.get(node_idx) {
-            if let Some(candidate_value) = candidate_vertebra.get(position_within_node) {
+        if let Some(candidate_node) = self.inner.get(node_idx) {
+            if let Some(candidate_value) = candidate_node.get(position_within_node) {
                 if cmp2(candidate_value.borrow()) {
                     removal = Some(self.delete_at(node_idx, position_within_node));
                     removed = true;
@@ -623,8 +623,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert_eq!(set.first(), Some(&1));
     /// ```
     pub fn first(&self) -> Option<&T> {
-        if let Some(candidate_vertebra) = self.inner.get(0) {
-            return candidate_vertebra.get(0);
+        if let Some(candidate_node) = self.inner.get(0) {
+            return candidate_node.get(0);
         }
 
         return None;
@@ -647,9 +647,9 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert_eq!(set.last(), Some(&2));
     /// ```
     pub fn last(&self) -> Option<&T> {
-        if let Some(candidate_vertebra) = self.inner.get(self.inner.len() - 1) {
-            if candidate_vertebra.len() > 0 {
-                return candidate_vertebra.get(candidate_vertebra.len() - 1);
+        if let Some(candidate_node) = self.inner.get(self.inner.len() - 1) {
+            if candidate_node.len() > 0 {
+                return candidate_node.get(candidate_node.len() - 1);
             }
         }
 
@@ -672,10 +672,10 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert!(set.is_empty());
     /// ```
     pub fn pop_first(&mut self) -> Option<T> {
-        let (first_vertebra_idx, first_position_within_vertebra) = (0, 0);
-        if let Some(candidate_vertebra) = self.inner.get(first_vertebra_idx) {
-            if let Some(_) = candidate_vertebra.get(first_position_within_vertebra) {
-                return Some(self.delete_at(first_vertebra_idx, first_position_within_vertebra));
+        let (first_node_idx, first_position_within_node) = (0, 0);
+        if let Some(candidate_node) = self.inner.get(first_node_idx) {
+            if let Some(_) = candidate_node.get(first_position_within_node) {
+                return Some(self.delete_at(first_node_idx, first_position_within_node));
             }
         }
 
@@ -717,15 +717,15 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert!(set.is_empty());
     /// ```
     pub fn pop_last(&mut self) -> Option<T> {
-        let last_vertebra_idx = self.inner.len() - 1;
-        let mut last_position_within_vertebra = self.inner[last_vertebra_idx].inner.len();
-        if last_position_within_vertebra > 0 {
-            last_position_within_vertebra -= 1;
+        let last_node_idx = self.inner.len() - 1;
+        let mut last_position_within_node = self.inner[last_node_idx].inner.len();
+        if last_position_within_node > 0 {
+            last_position_within_node -= 1;
         }
 
-        if let Some(candidate_vertebra) = self.inner.get(last_vertebra_idx) {
-            if let Some(_) = candidate_vertebra.get(last_position_within_vertebra) {
-                return Some(self.delete_at(last_vertebra_idx, last_position_within_vertebra));
+        if let Some(candidate_node) = self.inner.get(last_node_idx) {
+            if let Some(_) = candidate_node.get(last_position_within_node) {
+                return Some(self.delete_at(last_node_idx, last_position_within_node));
             }
         }
 
@@ -1018,13 +1018,13 @@ impl<T: Clone + Ord> BTreeSet<T> {
         P: FnMut(&Q) -> bool,
     {
         let (node_idx, position_within_node) = self.locate_value_cmp(cmp);
-        let first_vertebra = self.inner[node_idx].split_off(position_within_node);
+        let first_node = self.inner[node_idx].split_off(position_within_node);
         let mut remaining_nodes = vec![];
         while self.inner.len() > node_idx + 1 {
             remaining_nodes.push(self.inner.pop().unwrap());
         }
         remaining_nodes.reverse();
-        remaining_nodes.insert(0, first_vertebra);
+        remaining_nodes.insert(0, first_node);
         let mut latter_half = BTreeSet::default();
         latter_half.len = remaining_nodes.iter().map(|node| node.len()).sum();
         latter_half.inner = remaining_nodes;
@@ -1076,13 +1076,13 @@ impl<T: Clone + Ord> BTreeSet<T> {
         Q: Ord + ?Sized,
     {
         let (node_idx, position_within_node) = self.locate_value(value);
-        let first_vertebra = self.inner[node_idx].split_off(position_within_node);
+        let first_node = self.inner[node_idx].split_off(position_within_node);
         let mut remaining_nodes = vec![];
         while self.inner.len() > node_idx + 1 {
             remaining_nodes.push(self.inner.pop().unwrap());
         }
         remaining_nodes.reverse();
-        remaining_nodes.insert(0, first_vertebra);
+        remaining_nodes.insert(0, first_node);
         let mut latter_half = BTreeSet::default();
         latter_half.len = remaining_nodes.iter().map(|node| node.len()).sum();
         latter_half.inner = remaining_nodes;
@@ -1161,13 +1161,13 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
             Bound::Unbounded => (),
         }
-        // Figuring out vertebras
-        let (front_vertebra_idx, front_start_idx) = self.locate_ith(global_front_idx);
-        let (back_vertebra_idx, back_start_idx) = self.locate_ith(global_back_idx);
+        // Figuring out nodes
+        let (front_node_idx, front_start_idx) = self.locate_ith(global_front_idx);
+        let (back_node_idx, back_start_idx) = self.locate_ith(global_back_idx);
 
         return (
-            (global_front_idx, front_vertebra_idx, front_start_idx),
-            (global_back_idx, back_vertebra_idx, back_start_idx),
+            (global_front_idx, front_node_idx, front_start_idx),
+            (global_back_idx, back_node_idx, back_start_idx),
         );
     }
     /// Constructs a double-ended iterator over a sub-range of elements in the set.
@@ -1205,20 +1205,56 @@ impl<T: Clone + Ord> BTreeSet<T> {
         R: RangeBounds<Q>,
     {
         let start_idx = match range.start_bound() {
-            Bound::Included(bound) => self.rank(self.locate_value(bound)),
-            Bound::Excluded(bound) => self.rank(self.locate_value(bound)) + 1,
+            Bound::Included(bound) => self.rank(bound),
+            Bound::Excluded(bound) => self.rank(bound) + 1,
             Bound::Unbounded => 0,
         };
         let end_idx = match range.end_bound() {
-            Bound::Included(bound) => self.rank(self.locate_value(bound)),
-            Bound::Excluded(bound) => self.rank(self.locate_value(bound)) - 1,
+            Bound::Included(bound) => self.rank(bound),
+            Bound::Excluded(bound) => self.rank(bound) - 1,
             Bound::Unbounded => self.len() - 1,
         };
 
         println!("{}..={}", start_idx, end_idx);
         return self.range_idx(start_idx..=end_idx);
     }
-    fn rank(&self, (node_idx, position_within_node): (usize, usize)) -> usize {
+    /// Returns the position in which the given element would fall in the already-existing sorted
+    /// order.
+    ///
+    /// The value may be any borrowed form of the set's element type,
+    /// but the ordering on the borrowed form *must* match the
+    /// ordering on the element type.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use indexset::BTreeSet;
+    ///
+    /// let set = BTreeSet::from_iter([1, 2, 3]);
+    /// assert_eq!(set.rank(&1), 0);
+    /// assert_eq!(set.rank(&3), 2);
+    /// assert_eq!(set.rank(&4), 3);
+    /// assert_eq!(set.rank(&100), 3);
+    /// ```
+    pub fn rank<Q>(&self, value: &Q) -> usize
+    where
+        Q: Ord + ?Sized,
+        T: Borrow<Q>,
+    {
+        let (node_idx, position_within_node) = self.locate_value(value);
+
+        let offset = self.index.prefix_sum(node_idx);
+
+        return offset + position_within_node;
+    }
+    fn rank_cmp<Q, P>(&self, cmp: P) -> usize
+        where
+            T: Borrow<Q>,
+            Q: Ord + ?Sized,
+            P: FnMut(&Q) -> bool,
+    {
+        let (node_idx, position_within_node) = self.locate_value_cmp(cmp);
+
         let offset = self.index.prefix_sum(node_idx);
 
         return offset + position_within_node;
@@ -1228,27 +1264,27 @@ impl<T: Clone + Ord> BTreeSet<T> {
         R: RangeBounds<usize>,
     {
         let (
-            (global_front_idx, front_vertebra_idx, front_start_idx),
-            (global_back_idx, back_vertebra_idx, back_start_idx),
+            (global_front_idx, front_node_idx, front_start_idx),
+            (global_back_idx, back_node_idx, back_start_idx),
         ) = self.resolve_range(range);
 
         // Not the best way...advancing iterators until the correct starting point
-        let mut front_iter = self.inner[front_vertebra_idx].inner.iter();
+        let mut front_iter = self.inner[front_node_idx].inner.iter();
         for _ in 0..front_start_idx {
             front_iter.next();
         }
 
-        let mut back_iter = self.inner[back_vertebra_idx].inner.iter();
-        for _ in back_start_idx..self.inner[back_vertebra_idx].inner.len() {
+        let mut back_iter = self.inner[back_node_idx].inner.iter();
+        for _ in back_start_idx..self.inner[back_node_idx].inner.len() {
             back_iter.next_back();
         }
 
         return Range {
             spine_iter: Iter {
                 btree: self,
-                current_front_vertebra_idx: front_vertebra_idx,
+                current_front_node_idx: front_node_idx,
                 current_front_idx: global_front_idx,
-                current_back_vertebra_idx: back_vertebra_idx,
+                current_back_node_idx: back_node_idx,
                 current_back_idx: global_back_idx + 1,
                 current_front_iterator: front_iter,
                 current_back_iterator: back_iter,
@@ -1311,9 +1347,9 @@ where
     T: Clone + Ord,
 {
     btree: &'a BTreeSet<T>,
-    current_front_vertebra_idx: usize,
+    current_front_node_idx: usize,
     current_front_idx: usize,
-    current_back_vertebra_idx: usize,
+    current_back_node_idx: usize,
     current_back_idx: usize,
     current_front_iterator: std::slice::Iter<'a, T>,
     current_back_iterator: std::slice::Iter<'a, T>,
@@ -1326,9 +1362,9 @@ where
     pub fn new(btree: &'a BTreeSet<T>) -> Self {
         return Self {
             btree,
-            current_front_vertebra_idx: 0,
+            current_front_node_idx: 0,
             current_front_idx: 0,
-            current_back_vertebra_idx: btree.inner.len() - 1,
+            current_back_node_idx: btree.inner.len() - 1,
             current_back_idx: btree.len(),
             current_front_iterator: btree.inner[0].inner.iter(),
             current_back_iterator: btree.inner[btree.inner.len() - 1].inner.iter(),
@@ -1350,13 +1386,12 @@ where
             self.current_front_idx += 1;
             return Some(value);
         } else {
-            if self.current_front_vertebra_idx == self.btree.inner.len() - 1 {
+            if self.current_front_node_idx == self.btree.inner.len() - 1 {
                 return None;
             }
-            self.current_front_vertebra_idx += 1;
-            self.current_front_iterator = self.btree.inner[self.current_front_vertebra_idx]
-                .inner
-                .iter();
+            self.current_front_node_idx += 1;
+            self.current_front_iterator =
+                self.btree.inner[self.current_front_node_idx].inner.iter();
             if let Some(value) = self.current_front_iterator.next() {
                 return Some(value);
             }
@@ -1378,13 +1413,11 @@ where
             self.current_back_idx -= 1;
             return Some(value);
         } else {
-            if self.current_back_vertebra_idx == 0 {
+            if self.current_back_node_idx == 0 {
                 return None;
             };
-            self.current_back_vertebra_idx -= 1;
-            self.current_back_iterator = self.btree.inner[self.current_back_vertebra_idx]
-                .inner
-                .iter();
+            self.current_back_node_idx -= 1;
+            self.current_back_iterator = self.btree.inner[self.current_back_node_idx].inner.iter();
 
             return self.next_back();
         };
@@ -1771,16 +1804,18 @@ where
 }
 
 pub struct VacantEntry<'a, K, V>
-where K: Clone + Ord,
-      V : Clone
+where
+    K: Clone + Ord,
+    V: Clone,
 {
     map: &'a mut BTreeMap<K, V>,
     key: K,
 }
 
 pub struct OccupiedEntry<'a, K, V>
-    where K: Clone + Ord,
-          V : Clone
+where
+    K: Clone + Ord,
+    V: Clone,
 {
     map: &'a mut BTreeMap<K, V>,
     key: K,
@@ -1788,18 +1823,18 @@ pub struct OccupiedEntry<'a, K, V>
 }
 
 pub enum Entry<'a, K, V>
-    where
-        K: 'a + Clone + Ord,
-        V: 'a + Clone,
+where
+    K: 'a + Clone + Ord,
+    V: 'a + Clone,
 {
     Vacant(VacantEntry<'a, K, V>),
     Occupied(OccupiedEntry<'a, K, V>),
 }
 
 impl<'a, K, V> Entry<'a, K, V>
-    where
-        K: 'a + Clone + Ord,
-        V: 'a + Clone,
+where
+    K: 'a + Clone + Ord,
+    V: 'a + Clone,
 {
     pub fn or_insert(self, default: V) -> &'a mut V {
         match self {
@@ -1809,7 +1844,7 @@ impl<'a, K, V> Entry<'a, K, V>
     }
     pub fn or_insert_with<F>(self, default: F) -> &'a mut V
     where
-        F : FnOnce() -> V
+        F: FnOnce() -> V,
     {
         match self {
             Vacant(entry) => entry.insert(default()),
@@ -1818,14 +1853,14 @@ impl<'a, K, V> Entry<'a, K, V>
     }
     pub fn or_insert_with_key<F>(self, default: F) -> &'a mut V
     where
-    F : FnOnce(&K) -> V,
+        F: FnOnce(&K) -> V,
     {
         match self {
             Vacant(entry) => {
                 let value = default(entry.key());
                 entry.insert(value)
-            },
-            Occupied(entry) => entry.into_mut()
+            }
+            Occupied(entry) => entry.into_mut(),
         }
     }
     pub fn key(&self) -> &K {
@@ -1836,32 +1871,34 @@ impl<'a, K, V> Entry<'a, K, V>
     }
     pub fn and_modify<F>(self, f: F) -> Self
     where
-    F: FnOnce(&mut V),
+        F: FnOnce(&mut V),
     {
         match self {
             Occupied(mut entry) => {
                 f(entry.get_mut());
                 Occupied(entry)
-            },
-            Vacant(entry) => Vacant(entry)
+            }
+            Vacant(entry) => Vacant(entry),
         }
     }
     pub fn or_default(self) -> &'a mut V
-    where V : Default
+    where
+        V: Default,
     {
         match self {
             Occupied(entry) => entry.into_mut(),
-            Vacant(entry) => entry.insert(Default::default())
+            Vacant(entry) => entry.insert(Default::default()),
         }
     }
 }
 
 impl<'a, K, V> OccupiedEntry<'a, K, V>
-where K: Ord + Clone,
-      V : Clone
+where
+    K: Ord + Clone,
+    V: Clone,
 {
     pub fn key(&self) -> &K {
-        return &self.key
+        return &self.key;
     }
     pub fn remove_entry(self) -> (K, V) {
         self.map.pop_index(self.idx)
@@ -1880,26 +1917,26 @@ where K: Ord + Clone,
         let mut previous_value = value;
         swap(&mut previous_value, current_value);
 
-        return previous_value
+        return previous_value;
     }
     pub fn remove(self) -> V {
-        return self.map.pop_index(self.idx).1
+        return self.map.pop_index(self.idx).1;
     }
 }
 
-impl <'a, K, V>VacantEntry<'a, K, V>
-    where K: Ord + Clone,
-          V: Clone
+impl<'a, K, V> VacantEntry<'a, K, V>
+where
+    K: Ord + Clone,
+    V: Clone,
 {
     pub fn key(&self) -> &K {
-        return &self.key
+        return &self.key;
     }
     pub fn into_key(self) -> K {
-        return self.key
+        return self.key;
     }
     pub fn insert(self, value: V) -> &'a mut V {
-        let (node_idx, position_within_node) = self.map.set.locate_value_cmp(|item| item.key < self.key);
-        let rank = self.map.set.rank((node_idx, position_within_node));
+        let rank = self.map.set.rank_cmp(|item| &item.key < &self.key);
         self.map.insert(self.key, value);
         return self.map.get_mut_index(rank).unwrap();
     }
@@ -2207,8 +2244,8 @@ where
     {
         let (node_idx, position_within_node) =
             self.set.locate_value_cmp(|item| item.key.borrow() < key);
-        if let Some(candidate_vertebra) = self.set.inner.get(node_idx) {
-            if let Some(candidate_value) = candidate_vertebra.get(position_within_node) {
+        if let Some(candidate_node) = self.set.inner.get(node_idx) {
+            if let Some(candidate_value) = candidate_node.get(position_within_node) {
                 return Some((&candidate_value.key, &candidate_value.value));
             }
         }
@@ -2272,7 +2309,7 @@ where
     /// ```
     pub fn get_mut_index(&mut self, index: usize) -> Option<&mut V> {
         if let Some(entry) = self.set.get_mut_index(index) {
-            return Some(&mut entry.value)
+            return Some(&mut entry.value);
         }
 
         return None;
@@ -2428,7 +2465,7 @@ where
     /// }
     /// ```
     pub fn iter_mut(&mut self) -> IterMut<K, V> {
-        let last_vertebra_idx = self.set.inner.len() - 1;
+        let last_node_idx = self.set.inner.len() - 1;
         let len = self.set.len();
         let mut inner = self.set.inner.iter_mut();
         let front_iter = {
@@ -2448,9 +2485,9 @@ where
 
         return IterMut {
             inner,
-            current_front_vertebra_idx: 0,
+            current_front_node_idx: 0,
             current_front_idx: 0,
-            current_back_vertebra_idx: last_vertebra_idx,
+            current_back_node_idx: last_node_idx,
             current_back_idx: len - 1,
             current_front_iterator: front_iter,
             current_back_iterator: back_iter,
@@ -2660,10 +2697,10 @@ where
         let start_idx = match range.start_bound() {
             Bound::Included(bound) => self
                 .set
-                .rank(self.set.locate_value_cmp(|item| item.key.borrow() < bound)),
+                .rank_cmp(|item| item.key.borrow() < bound),
             Bound::Excluded(bound) => {
                 self.set
-                    .rank(self.set.locate_value_cmp(|item| item.key.borrow() < bound))
+                    .rank_cmp(|item| item.key.borrow() < bound)
                     + 1
             }
             Bound::Unbounded => 0,
@@ -2671,10 +2708,10 @@ where
         let end_idx = match range.end_bound() {
             Bound::Included(bound) => self
                 .set
-                .rank(self.set.locate_value_cmp(|item| item.key.borrow() < bound)),
+                .rank_cmp(|item| item.key.borrow() < bound),
             Bound::Excluded(bound) => {
                 self.set
-                    .rank(self.set.locate_value_cmp(|item| item.key.borrow() < bound))
+                    .rank_cmp(|item| item.key.borrow() < bound)
                     - 1
             }
             Bound::Unbounded => self.len() - 1,
@@ -2725,15 +2762,15 @@ where
         R: RangeBounds<usize>,
     {
         let (
-            (global_front_idx, front_vertebra_idx, front_start_idx),
-            (global_back_idx, back_vertebra_idx, back_start_idx),
+            (global_front_idx, front_node_idx, front_start_idx),
+            (global_back_idx, back_node_idx, back_start_idx),
         ) = self.set.resolve_range(range);
-        let end = self.set.inner[back_vertebra_idx].inner.len();
+        let end = self.set.inner[back_node_idx].inner.len();
 
         let mut inner = self.set.inner.iter_mut();
 
         let mut front_iter = {
-            if let Some(node) = inner.nth(front_vertebra_idx) {
+            if let Some(node) = inner.nth(front_node_idx) {
                 node.inner.iter_mut()
             } else {
                 ([]).iter_mut()
@@ -2741,7 +2778,7 @@ where
         };
 
         let mut back_iter = {
-            if let Some(node) = inner.nth(back_vertebra_idx - front_vertebra_idx) {
+            if let Some(node) = inner.nth(back_node_idx - front_node_idx) {
                 node.inner.iter_mut()
             } else {
                 ([]).iter_mut()
@@ -2751,7 +2788,7 @@ where
         for _ in 0..front_start_idx {
             front_iter.next();
         }
-        let offset = back_vertebra_idx - front_vertebra_idx;
+        let offset = back_node_idx - front_node_idx;
         if offset > 0 {
             for _ in back_start_idx..end {
                 back_iter.next_back();
@@ -2765,9 +2802,9 @@ where
         return RangeMut {
             inner: IterMut {
                 inner,
-                current_front_vertebra_idx: front_vertebra_idx,
+                current_front_node_idx: front_node_idx,
                 current_front_idx: global_front_idx,
-                current_back_vertebra_idx: back_vertebra_idx,
+                current_back_node_idx: back_node_idx,
                 current_back_idx: global_back_idx,
                 current_front_iterator: front_iter,
                 current_back_iterator: back_iter,
@@ -2987,16 +3024,19 @@ where
     /// assert_eq!(count["c"], 1);
     /// ```
     pub fn entry(&mut self, key: K) -> Entry<'_, K, V>
-        where
-            K: Ord,
+    where
+        K: Ord,
     {
         if self.contains_key(&key) {
-            let location = self.set.locate_value_cmp(|item| item.key < key);
-            let rank = self.set.rank(location);
-            return Occupied(OccupiedEntry { map: self, key: key, idx: rank })
+            let rank = self.set.rank_cmp(|item| item.key < key);
+            return Occupied(OccupiedEntry {
+                map: self,
+                key,
+                idx: rank,
+            });
         }
 
-        return Vacant(VacantEntry { map: self, key})
+        return Vacant(VacantEntry { map: self, key });
     }
     /// Returns the first entry in the map for in-place manipulation.
     /// The key of this entry is the minimum key in the map.
@@ -3018,19 +3058,19 @@ where
     /// assert_eq!(*map.get(&2).unwrap(), "b");
     /// ```
     pub fn first_entry(&mut self) -> Option<OccupiedEntry<'_, K, V>>
-        where
-            K: Ord,
+    where
+        K: Ord,
     {
         if self.len() > 0 {
             let first_key = self.set.first().unwrap().key.clone();
             return Some(OccupiedEntry {
                 map: self,
                 idx: 0,
-                key: first_key
-            })
+                key: first_key,
+            });
         }
 
-        return None
+        return None;
     }
     /// Returns the last entry in the map for in-place manipulation.
     /// The key of this entry is the maximum key in the map.
@@ -3052,8 +3092,8 @@ where
     /// assert_eq!(*map.get(&2).unwrap(), "last");
     /// ```
     pub fn last_entry(&mut self) -> Option<OccupiedEntry<'_, K, V>>
-        where
-            K: Ord,
+    where
+        K: Ord,
     {
         let len = self.len();
         if len > 0 {
@@ -3061,11 +3101,11 @@ where
             return Some(OccupiedEntry {
                 map: self,
                 idx: len - 1,
-                key: last_key
-            })
+                key: last_key,
+            });
         }
 
-        return None
+        return None;
     }
     /// Returns a [`Cursor`] pointing at the first element that is above the
     /// given bound.
@@ -3093,17 +3133,53 @@ where
     /// assert_eq!(cursor.key(), Some(&3));
     /// ```
     pub fn lower_bound<Q>(&self, bound: Bound<&Q>) -> CursorMap<'_, K, V>
-        where
-            K: Borrow<Q> + Ord,
-            Q: Ord,
+    where
+        K: Borrow<Q> + Ord,
+        Q: Ord,
     {
         let start_idx = match bound {
-            Bound::Included(start) => self.set.rank(self.set.locate_value_cmp(|item| item.key.borrow() < start)),
-            Bound::Excluded(start) => self.set.rank(self.set.locate_value_cmp(|item| item.key.borrow() < start)) + 1,
+            Bound::Included(start) => self
+                .set
+                .rank_cmp(|item| item.key.borrow() < start),
+            Bound::Excluded(start) => {
+                self.set
+                    .rank_cmp(|item| item.key.borrow() < start)
+                    + 1
+            }
             Bound::Unbounded => 0,
         };
 
-        return CursorMap { cursor: Cursor { set: &self.set, idx: start_idx } }
+        return CursorMap {
+            cursor: Cursor {
+                set: &self.set,
+                idx: start_idx,
+            },
+        };
+    }
+    /// Returns the position in which the given element would fall in the already-existing sorted
+    /// order.
+    ///
+    /// The value may be any borrowed form of the set's element type,
+    /// but the ordering on the borrowed form *must* match the
+    /// ordering on the element type.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use indexset::BTreeMap;
+    ///
+    /// let set = BTreeMap::from_iter([(1, "a"), (2, "b"), (3, "c")]);
+    /// assert_eq!(set.rank(&1), 0);
+    /// assert_eq!(set.rank(&3), 2);
+    /// assert_eq!(set.rank(&4), 3);
+    /// assert_eq!(set.rank(&100), 3);
+    /// ```
+    pub fn rank<Q>(&self, value: &Q) -> usize
+        where
+            Q: Ord + ?Sized,
+            K: Borrow<Q>,
+    {
+        return self.set.rank_cmp(|item| item.key.borrow() < value)
     }
 }
 
@@ -3523,9 +3599,9 @@ where
     V: Clone,
 {
     inner: std::slice::IterMut<'a, Node<Pair<K, V>>>,
-    current_front_vertebra_idx: usize,
+    current_front_node_idx: usize,
     current_front_idx: usize,
-    current_back_vertebra_idx: usize,
+    current_back_node_idx: usize,
     current_back_idx: usize,
     current_front_iterator: std::slice::IterMut<'a, Pair<K, V>>,
     current_back_iterator: std::slice::IterMut<'a, Pair<K, V>>,
@@ -3548,10 +3624,10 @@ where
         } else {
             // If the current iterator has been exhausted, we have to check whether there are any
             // iterators left
-            if self.current_front_vertebra_idx == self.inner.size_hint().0 {
+            if self.current_front_node_idx == self.inner.size_hint().0 {
                 return None;
             }
-            if self.current_front_vertebra_idx == self.current_back_vertebra_idx - 1 {
+            if self.current_front_node_idx == self.current_back_node_idx - 1 {
                 // take from the current back iter
                 if let Some(entry) = self.current_back_iterator.next() {
                     self.current_front_idx += 1;
@@ -3559,7 +3635,7 @@ where
                 }
             } else {
                 // advance front
-                self.current_front_vertebra_idx += 1;
+                self.current_front_node_idx += 1;
                 if let Some(node) = self.inner.next() {
                     self.current_front_iterator = node.inner.iter_mut();
                 }
@@ -3587,10 +3663,10 @@ where
         } else {
             // If the current iterator has been exhausted, we have to check whether there are any
             // iterators left
-            if self.current_back_vertebra_idx == 0 {
+            if self.current_back_node_idx == 0 {
                 return None;
             }
-            if self.current_front_vertebra_idx == self.current_back_vertebra_idx - 1 {
+            if self.current_front_node_idx == self.current_back_node_idx - 1 {
                 // take from the current front iter
                 if let Some(entry) = self.current_front_iterator.next_back() {
                     if self.current_back_idx > 0 {
@@ -3600,7 +3676,7 @@ where
                 }
             } else {
                 // advance back
-                self.current_back_vertebra_idx -= 1;
+                self.current_back_node_idx -= 1;
                 if let Some(node) = self.inner.next_back() {
                     self.current_back_iterator = node.inner.iter_mut();
                 }
@@ -3728,7 +3804,8 @@ where
 }
 
 pub struct Cursor<'a, T>
-where T: Ord + Clone,
+where
+    T: Ord + Clone,
 {
     set: &'a BTreeSet<T>,
     idx: usize,
@@ -3757,31 +3834,32 @@ impl<'a, T: Ord + Clone> Cursor<'a, T> {
     }
     pub fn peek_next(&self) -> Option<&'a T> {
         if self.idx == self.set.len() {
-            return self.set.first()
+            return self.set.first();
         }
 
         return self.set.get_index(self.idx + 1);
     }
     pub fn peek_index(&self, index: usize) -> Option<&'a T> {
-        return self.set.get_index(index)
+        return self.set.get_index(index);
     }
     pub fn peek_prev(&self) -> Option<&'a T> {
         if self.idx == 0 {
-            return None
+            return None;
         }
 
-        return self.set.get_index(self.idx - 1)
+        return self.set.get_index(self.idx - 1);
     }
 }
 
 pub struct CursorMap<'a, K, V>
-    where K: 'a + Ord + Clone,
-          V : 'a + Clone
+where
+    K: 'a + Ord + Clone,
+    V: 'a + Clone,
 {
     cursor: Cursor<'a, Pair<K, V>>,
 }
 
-impl<'a, K: Ord + Clone, V : Clone> CursorMap<'a, K, V> {
+impl<'a, K: Ord + Clone, V: Clone> CursorMap<'a, K, V> {
     pub fn move_next(&mut self) {
         self.cursor.move_next()
     }
@@ -3793,51 +3871,51 @@ impl<'a, K: Ord + Clone, V : Clone> CursorMap<'a, K, V> {
     }
     pub fn key(&self) -> Option<&'a K> {
         if let Some(entry) = self.cursor.item() {
-            return Some(&entry.key)
+            return Some(&entry.key);
         }
 
-        return None
+        return None;
     }
     pub fn value(&self) -> Option<&'a V> {
         if let Some(entry) = self.cursor.item() {
-            return Some(&entry.value)
+            return Some(&entry.value);
         }
 
-        return None
+        return None;
     }
     pub fn key_value(&self) -> Option<(&'a K, &'a V)> {
         if let Some(entry) = self.cursor.item() {
-            return Some((&entry.key, &entry.value))
+            return Some((&entry.key, &entry.value));
         }
 
-        return None
+        return None;
     }
     pub fn peek_next(&self) -> Option<(&'a K, &'a V)> {
         if let Some(entry) = self.cursor.peek_next() {
-            return Some((&entry.key, &entry.value))
+            return Some((&entry.key, &entry.value));
         }
 
-        return None
+        return None;
     }
     pub fn peek_index(&self, index: usize) -> Option<(&'a K, &'a V)> {
         if let Some(entry) = self.cursor.peek_index(index) {
-            return Some((&entry.key, &entry.value))
+            return Some((&entry.key, &entry.value));
         }
 
-        return None
+        return None;
     }
     pub fn peek_prev(&self) -> Option<(&'a K, &'a V)> {
         if let Some(entry) = self.cursor.peek_prev() {
-            return Some((&entry.key, &entry.value))
+            return Some((&entry.key, &entry.value));
         }
 
-        return None
+        return None;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{BTreeSet, BTreeMap, CUTOFF, INNER_SIZE, Node};
+    use crate::{BTreeMap, BTreeSet, Node, CUTOFF, INNER_SIZE};
 
     #[test]
     fn test_insert() {
@@ -3845,15 +3923,15 @@ mod tests {
 
         let expected_output: Vec<isize> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-        let actual_vertebra = input.iter().fold(Node::new(), |mut acc, curr| {
+        let actual_node = input.iter().fold(Node::new(), |mut acc, curr| {
             acc.insert(curr);
             acc
         });
 
-        let actual_output: Vec<isize> = actual_vertebra.inner.into_iter().cloned().collect();
+        let actual_output: Vec<isize> = actual_node.inner.into_iter().cloned().collect();
 
         assert_eq!(expected_output, actual_output);
-        assert_eq!(*actual_vertebra.max.unwrap(), 10);
+        assert_eq!(*actual_node.max.unwrap(), 10);
     }
 
     #[test]
@@ -3863,17 +3941,17 @@ mod tests {
             input.push(item.clone() as isize);
         }
 
-        let mut former_vertebra = Node::new();
+        let mut former_node = Node::new();
         input.iter().for_each(|item| {
-            former_vertebra.insert(item.clone());
+            former_node.insert(item.clone());
         });
-        let latter_vertebra = former_vertebra.halve();
+        let latter_node = former_node.halve();
 
         let expected_former_output: Vec<isize> = input[0..CUTOFF].to_vec();
         let expected_latter_output: Vec<isize> = input[CUTOFF..].to_vec();
 
-        let actual_former_output: Vec<isize> = former_vertebra.inner.iter().cloned().collect();
-        let actual_latter_output: Vec<isize> = latter_vertebra.inner.iter().cloned().collect();
+        let actual_former_output: Vec<isize> = former_node.inner.iter().cloned().collect();
+        let actual_latter_output: Vec<isize> = latter_node.inner.iter().cloned().collect();
 
         assert_eq!(expected_former_output, actual_former_output);
         assert_eq!(expected_latter_output, actual_latter_output);
