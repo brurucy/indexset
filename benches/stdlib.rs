@@ -1,8 +1,8 @@
-use std::hint::black_box;
 use criterion::{criterion_group, criterion_main, Criterion};
 use indexset::BTreeSet;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use std::hint::black_box;
 
 fn criterion_benchmark(c: &mut Criterion) {
     let mut input: Vec<usize> = (0..100000).collect();
@@ -43,7 +43,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("indexset get i-th 100k", |b| {
         b.iter(|| {
             input.iter().for_each(|item| {
-                indexset.get(black_box(item));
+                indexset.get_index(black_box(*item));
             })
         })
     });
