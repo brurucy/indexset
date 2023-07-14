@@ -143,7 +143,7 @@ where
     T: Clone + Ord,
 {
     inner: Vec<Node<T>>,
-    index: FenwickTree,
+    index: FenwickTree<usize>,
     len: usize,
 }
 
@@ -179,7 +179,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// ```
     pub fn clear(&mut self) {
         self.inner = vec![Node::new()];
-        self.index = FenwickTree::new(&self.inner, |node| node.len());
+        self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
         self.len = 0;
     }
     fn locate_node<Q>(&self, value: &Q) -> usize
@@ -255,7 +255,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         let mut offset = 0;
 
         if node_index != 0 {
-            offset = self.index.prefix_sum(node_index);
+            offset = self.index.prefix_sum(node_index, 0);
         }
 
         let mut position_within_node = idx - offset;
@@ -410,14 +410,14 @@ impl<T: Clone + Ord> BTreeSet<T> {
             };
             if self.inner[insert_node_idx].insert(value) {
                 // Reconstruct the index after the new node insert.
-                self.index = FenwickTree::new(&self.inner, |node| node.len());
+                self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
                 self.len += 1;
                 true
             } else {
                 false
             }
         } else if self.inner[node_idx].insert(value) {
-            self.index.update_index(node_idx, 1);
+            self.index.add_at(node_idx, 1);
             self.len += 1;
             true
         } else {
@@ -502,7 +502,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             if self.inner.len() > 1 {
                 self.inner.remove(node_idx);
                 self.len -= 1;
-                self.index = FenwickTree::new(&self.inner, |node| node.len());
+                self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
             } else {
                 decrease_length = true;
             }
@@ -511,7 +511,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         }
 
         if decrease_length {
-            self.index.update_index(node_idx, -1);
+            self.index.sub_at(node_idx, 1);
             self.len -= 1;
         }
 
@@ -1028,7 +1028,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         let mut latter_half = BTreeSet::default();
         latter_half.len = remaining_nodes.iter().map(|node| node.len()).sum();
         latter_half.inner = remaining_nodes;
-        latter_half.index = FenwickTree::new(&latter_half.inner, |node| node.len());
+        latter_half.index = FenwickTree::from_iter(latter_half.inner.iter().map(|node| node.len()));
 
         if self.inner[node_idx].len() == 0 {
             if self.inner.len() > 1 {
@@ -1036,7 +1036,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
         }
 
-        self.index = FenwickTree::new(&self.inner, |node| node.len());
+        self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
         self.len = self.inner.iter().map(|node| node.len()).sum();
 
         return latter_half;
@@ -1086,7 +1086,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         let mut latter_half = BTreeSet::default();
         latter_half.len = remaining_nodes.iter().map(|node| node.len()).sum();
         latter_half.inner = remaining_nodes;
-        latter_half.index = FenwickTree::new(&latter_half.inner, |node| node.len());
+        latter_half.index = FenwickTree::from_iter(latter_half.inner.iter().map(|node| node.len()));
 
         if self.inner[node_idx].len() == 0 {
             if self.inner.len() > 1 {
@@ -1094,7 +1094,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
         }
 
-        self.index = FenwickTree::new(&self.inner, |node| node.len());
+        self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
         self.len = self.inner.iter().map(|node| node.len()).sum();
 
         return latter_half;
@@ -1137,7 +1137,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         R: RangeBounds<usize>,
     {
         let mut global_front_idx: usize = 0;
-        let mut global_back_idx: usize = self.index.prefix_sum(self.inner.len()) - 1;
+        let mut global_back_idx: usize = self.index.prefix_sum(self.inner.len(), 0) - 1;
 
         // Solving global indexes
         let start = range.start_bound();
@@ -1243,7 +1243,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
     {
         let (node_idx, position_within_node) = self.locate_value(value);
 
-        let offset = self.index.prefix_sum(node_idx);
+        let offset = self.index.prefix_sum(node_idx, 0);
 
         return offset + position_within_node;
     }
@@ -1255,7 +1255,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
     {
         let (node_idx, position_within_node) = self.locate_value_cmp(cmp);
 
-        let offset = self.index.prefix_sum(node_idx);
+        let offset = self.index.prefix_sum(node_idx, 0);
 
         return offset + position_within_node;
     }
@@ -1327,10 +1327,9 @@ where
     T: Clone + Ord,
 {
     fn default() -> Self {
-        let v = vec![Node::new()];
         return Self {
-            inner: v.clone(),
-            index: FenwickTree::new(v, |node| node.len()),
+            inner: vec![Node::new()],
+            index: FenwickTree::from_iter(vec![0]),
             len: 0,
         };
     }
