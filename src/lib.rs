@@ -1,5 +1,6 @@
-const INNER_SIZE: usize = 1024;
-const CUTOFF: usize = INNER_SIZE / 2;
+const DEFAULT_INNER_SIZE: usize = 1024;
+const CUTOFF_RATIO: usize = 2;
+const DEFAULT_CUTOFF: usize = DEFAULT_INNER_SIZE / CUTOFF_RATIO;
 
 use crate::Entry::{Occupied, Vacant};
 use ftree::FenwickTree;
@@ -11,11 +12,10 @@ use std::collections::Bound;
 use std::iter::FusedIterator;
 use std::mem::swap;
 use std::ops::{Index, RangeBounds};
-use std::vec;
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub(crate) struct Node<T>
+struct Node<T>
 where
     T: PartialOrd + Clone,
 {
@@ -26,41 +26,42 @@ where
 impl<T: PartialOrd + Clone> Default for Node<T> {
     fn default() -> Self {
         return Self {
-            inner: Vec::with_capacity(INNER_SIZE),
+            inner: Vec::with_capacity(DEFAULT_INNER_SIZE),
             max: None,
         };
     }
 }
 
 impl<T: Ord + Clone> Node<T> {
-    pub fn new() -> Self {
-        return Default::default();
+    pub fn new(capacity: usize) -> Self {
+        return Self {
+            inner: Vec::with_capacity(capacity),
+            ..Default::default()
+        };
     }
     pub fn get(&self, index: usize) -> Option<&T> {
         return self.inner.get(index);
     }
     pub fn split_off(&mut self, cutoff: usize) -> Self {
-        // Split the vector at the cutoff point
         let latter_inner = self.inner.split_off(cutoff);
 
-        // Update the max value in the current Node
         self.max = self.inner.last().cloned();
 
-        // Create and return the new Node
+        let latter_inner_max = latter_inner.last().cloned();
         Self {
             inner: latter_inner,
-            max: self.inner.last().cloned(),
+            max: latter_inner_max,
         }
     }
     pub fn halve(&mut self) -> Self {
-        return self.split_off(CUTOFF);
+        return self.split_off(DEFAULT_CUTOFF);
     }
     pub fn len(&self) -> usize {
         return self.inner.len();
     }
     pub fn insert(&mut self, value: T) -> bool {
         match self.inner.binary_search(&value) {
-            Ok(_) => return false, // Already present
+            Ok(_) => return false,
             Err(idx) => {
                 if let Some(max) = &self.max {
                     if &value > max {
@@ -144,26 +145,46 @@ where
 {
     inner: Vec<Node<T>>,
     index: FenwickTree<usize>,
+    node_capacity: usize,
     len: usize,
 }
 
-/// Makes a new, empty `BTreeSet`.
-///
-/// Allocates one vec of size 1024.
-///
-/// # Examples
-///
-/// ```
-/// # #![allow(unused_mut)]
-/// use indexset::BTreeSet;
-///
-/// let mut set: BTreeSet<i32> = BTreeSet::new();
-/// ```
 impl<T: Clone + Ord> BTreeSet<T> {
+    /// Makes a new, empty `BTreeSet` with maximum node size 1024. Allocates one vec of capacity 1024.
+    ///
+    /// Note that this does not mean that the maximum number of items is 1024.
+    ///
+    /// In case you would like to make a tree with a different maximum node size, use the
+    /// `with_maximum_node_size` method.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #![allow(unused_mut)]
+    /// use indexset::BTreeSet;
+    ///
+    /// let mut set: BTreeSet<i32> = BTreeSet::new();
+    /// ```
     pub fn new() -> Self {
         return Self {
             ..Default::default()
         };
+    }
+    /// Makes a new, empty `BTreeSet` with the given maximum node size. Allocates one vec with
+    /// the capacity set to be the specified node size.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #![allow(unused_mut)]
+    /// use indexset::BTreeSet;
+    ///
+    /// let mut set: BTreeSet<i32> = BTreeSet::with_maximum_node_size(128);
+    pub fn with_maximum_node_size(maximum_node_size: usize) -> Self {
+        let mut new: Self = Default::default();
+        new.inner = vec![Node::new(maximum_node_size)];
+
+        return new
     }
     /// Clears the set, removing all elements.
     ///
@@ -178,8 +199,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert!(v.is_empty());
     /// ```
     pub fn clear(&mut self) {
-        self.inner = vec![Node::new()];
-        self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
+        self.inner = vec![Node::new(self.node_capacity)];
+        self.index = FenwickTree::from_iter(vec![0]);
         self.len = 0;
     }
     fn locate_node<Q>(&self, value: &Q) -> usize
@@ -397,7 +418,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// ```
     pub fn insert(&mut self, value: T) -> bool {
         let node_idx = self.locate_node(&value);
-        if self.inner[node_idx].len() == INNER_SIZE {
+        if self.inner[node_idx].len() == DEFAULT_INNER_SIZE {
             let new_node = self.inner[node_idx].halve();
             // Get the minimum
             let new_node_min = new_node.inner[0].clone();
@@ -1248,10 +1269,10 @@ impl<T: Clone + Ord> BTreeSet<T> {
         return offset + position_within_node;
     }
     fn rank_cmp<Q, P>(&self, cmp: P) -> usize
-        where
-            T: Borrow<Q>,
-            Q: Ord + ?Sized,
-            P: FnMut(&Q) -> bool,
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+        P: FnMut(&Q) -> bool,
     {
         let (node_idx, position_within_node) = self.locate_value_cmp(cmp);
 
@@ -1327,9 +1348,12 @@ where
     T: Clone + Ord,
 {
     fn default() -> Self {
+        let node_capacity = DEFAULT_INNER_SIZE;
+
         return Self {
-            inner: vec![Node::new()],
+            inner: vec![Node::new(node_capacity)],
             index: FenwickTree::from_iter(vec![0]),
+            node_capacity,
             len: 0,
         };
     }
@@ -2574,6 +2598,21 @@ where
             ..Default::default()
         };
     }
+    /// Makes a new, empty `BTreeSet` with the given maximum node size. Allocates one vec with
+    /// the capacity set to be the specified node size.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #![allow(unused_mut)]
+    /// use indexset::BTreeMap;
+    ///
+    /// let mut set: BTreeMap<usize, usize> = BTreeMap::with_maximum_node_size(128);
+    pub fn with_maximum_node_size(maximum_node_size: usize) -> Self {
+        return Self {
+            set: BTreeSet::with_maximum_node_size(maximum_node_size)
+        }
+    }
     /// Removes and returns the first element in the map.
     /// The key of this element is the minimum key that was in the map.
     ///
@@ -2694,25 +2733,13 @@ where
         R: RangeBounds<Q>,
     {
         let start_idx = match range.start_bound() {
-            Bound::Included(bound) => self
-                .set
-                .rank_cmp(|item| item.key.borrow() < bound),
-            Bound::Excluded(bound) => {
-                self.set
-                    .rank_cmp(|item| item.key.borrow() < bound)
-                    + 1
-            }
+            Bound::Included(bound) => self.set.rank_cmp(|item| item.key.borrow() < bound),
+            Bound::Excluded(bound) => self.set.rank_cmp(|item| item.key.borrow() < bound) + 1,
             Bound::Unbounded => 0,
         };
         let end_idx = match range.end_bound() {
-            Bound::Included(bound) => self
-                .set
-                .rank_cmp(|item| item.key.borrow() < bound),
-            Bound::Excluded(bound) => {
-                self.set
-                    .rank_cmp(|item| item.key.borrow() < bound)
-                    - 1
-            }
+            Bound::Included(bound) => self.set.rank_cmp(|item| item.key.borrow() < bound),
+            Bound::Excluded(bound) => self.set.rank_cmp(|item| item.key.borrow() < bound) - 1,
             Bound::Unbounded => self.len() - 1,
         };
 
@@ -3137,14 +3164,8 @@ where
         Q: Ord,
     {
         let start_idx = match bound {
-            Bound::Included(start) => self
-                .set
-                .rank_cmp(|item| item.key.borrow() < start),
-            Bound::Excluded(start) => {
-                self.set
-                    .rank_cmp(|item| item.key.borrow() < start)
-                    + 1
-            }
+            Bound::Included(start) => self.set.rank_cmp(|item| item.key.borrow() < start),
+            Bound::Excluded(start) => self.set.rank_cmp(|item| item.key.borrow() < start) + 1,
             Bound::Unbounded => 0,
         };
 
@@ -3174,11 +3195,11 @@ where
     /// assert_eq!(set.rank(&100), 3);
     /// ```
     pub fn rank<Q>(&self, value: &Q) -> usize
-        where
-            Q: Ord + ?Sized,
-            K: Borrow<Q>,
+    where
+        Q: Ord + ?Sized,
+        K: Borrow<Q>,
     {
-        return self.set.rank_cmp(|item| item.key.borrow() < value)
+        return self.set.rank_cmp(|item| item.key.borrow() < value);
     }
 }
 
@@ -3914,7 +3935,7 @@ impl<'a, K: Ord + Clone, V: Clone> CursorMap<'a, K, V> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BTreeMap, BTreeSet, Node, CUTOFF, INNER_SIZE};
+    use crate::{BTreeMap, BTreeSet, Node, DEFAULT_CUTOFF, DEFAULT_INNER_SIZE};
 
     #[test]
     fn test_insert() {
@@ -3922,7 +3943,7 @@ mod tests {
 
         let expected_output: Vec<isize> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-        let actual_node = input.iter().fold(Node::new(), |mut acc, curr| {
+        let actual_node = input.iter().fold(Node::new(DEFAULT_INNER_SIZE), |mut acc, curr| {
             acc.insert(curr);
             acc
         });
@@ -3936,18 +3957,18 @@ mod tests {
     #[test]
     fn test_halve() {
         let mut input: Vec<isize> = vec![];
-        for item in 0..INNER_SIZE {
+        for item in 0..DEFAULT_INNER_SIZE {
             input.push(item.clone() as isize);
         }
 
-        let mut former_node = Node::new();
+        let mut former_node = Node::new(DEFAULT_INNER_SIZE);
         input.iter().for_each(|item| {
             former_node.insert(item.clone());
         });
         let latter_node = former_node.halve();
 
-        let expected_former_output: Vec<isize> = input[0..CUTOFF].to_vec();
-        let expected_latter_output: Vec<isize> = input[CUTOFF..].to_vec();
+        let expected_former_output: Vec<isize> = input[0..DEFAULT_CUTOFF].to_vec();
+        let expected_latter_output: Vec<isize> = input[DEFAULT_CUTOFF..].to_vec();
 
         let actual_former_output: Vec<isize> = former_node.inner.iter().cloned().collect();
         let actual_latter_output: Vec<isize> = latter_node.inner.iter().cloned().collect();
@@ -3959,8 +3980,8 @@ mod tests {
     #[test]
     fn test_insert_btree() {
         // This will cause the btree to have at least more than one node
-        let input: Vec<usize> = (0..(INNER_SIZE + 1)).into_iter().rev().collect();
-        let expected_output: Vec<usize> = (0..(INNER_SIZE + 1)).collect();
+        let input: Vec<usize> = (0..(DEFAULT_INNER_SIZE + 1)).into_iter().rev().collect();
+        let expected_output: Vec<usize> = (0..(DEFAULT_INNER_SIZE + 1)).collect();
 
         let btree: BTreeSet<usize> = input.into_iter().fold(BTreeSet::new(), |mut acc, curr| {
             acc.insert(curr);
@@ -3975,13 +3996,13 @@ mod tests {
 
     #[test]
     fn test_insert_duplicates() {
-        let input: Vec<usize> = (0..(INNER_SIZE + 1))
+        let input: Vec<usize> = (0..(DEFAULT_INNER_SIZE + 1))
             .into_iter()
             .rev()
             .cycle()
-            .take(INNER_SIZE * 3)
+            .take(DEFAULT_INNER_SIZE * 3)
             .collect();
-        let expected_output: Vec<usize> = (0..(INNER_SIZE + 1)).collect();
+        let expected_output: Vec<usize> = (0..(DEFAULT_INNER_SIZE + 1)).collect();
 
         let btree: BTreeSet<usize> = input.into_iter().fold(BTreeSet::new(), |mut acc, curr| {
             acc.insert(curr);
@@ -3997,7 +4018,7 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        let input: Vec<usize> = (0..(INNER_SIZE + 1)).into_iter().collect();
+        let input: Vec<usize> = (0..(DEFAULT_INNER_SIZE + 1)).into_iter().collect();
 
         let mut btree: BTreeSet<usize> = input.iter().fold(BTreeSet::new(), |mut acc, curr| {
             acc.insert(curr.clone());
@@ -4015,7 +4036,7 @@ mod tests {
     }
     #[test]
     fn test_take() {
-        let input: Vec<usize> = (0..(INNER_SIZE + 1)).into_iter().collect();
+        let input: Vec<usize> = (0..(DEFAULT_INNER_SIZE + 1)).into_iter().collect();
 
         let mut btree: BTreeSet<usize> = input.iter().fold(BTreeSet::new(), |mut acc, curr| {
             acc.insert(curr.clone());
@@ -4034,7 +4055,7 @@ mod tests {
 
     #[test]
     fn test_first_last_with_pop() {
-        let input: Vec<usize> = (0..(INNER_SIZE + 1)).into_iter().collect();
+        let input: Vec<usize> = (0..(DEFAULT_INNER_SIZE + 1)).into_iter().collect();
 
         let btree: BTreeSet<usize> = input.iter().fold(BTreeSet::new(), |mut acc, curr| {
             acc.insert(curr.clone());
@@ -4044,14 +4065,14 @@ mod tests {
         let mut front_spine = btree.clone();
         let mut back_spine = btree.clone();
         btree.iter().for_each(|item| {
-            if *item < INNER_SIZE {
+            if *item < DEFAULT_INNER_SIZE {
                 assert_eq!(front_spine.get_index(0), front_spine.first());
                 assert_eq!(
                     front_spine.pop_first().unwrap() + 1,
                     *front_spine.first().unwrap()
                 );
             } else {
-                assert_eq!(front_spine.pop_first().unwrap(), INNER_SIZE);
+                assert_eq!(front_spine.pop_first().unwrap(), DEFAULT_INNER_SIZE);
                 assert_eq!(front_spine.first(), None);
             }
         });
@@ -4075,8 +4096,8 @@ mod tests {
 
     #[test]
     fn test_get_contains_lower_bound() {
-        let input: Vec<usize> = (0..(INNER_SIZE + 1)).into_iter().rev().collect();
-        let expected_output: Vec<usize> = (0..(INNER_SIZE + 1)).collect();
+        let input: Vec<usize> = (0..(DEFAULT_INNER_SIZE + 1)).into_iter().rev().collect();
+        let expected_output: Vec<usize> = (0..(DEFAULT_INNER_SIZE + 1)).collect();
 
         let btree: BTreeSet<usize> = input.iter().fold(BTreeSet::new(), |mut acc, curr| {
             acc.insert(curr.clone());
@@ -4095,20 +4116,20 @@ mod tests {
 
     #[test]
     fn test_iter() {
-        let btree = BTreeSet::from_iter((0..(INNER_SIZE * 10)).rev());
+        let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE * 10)).rev());
         assert_eq!(btree.inner.len(), 19);
-        let expected_forward = Vec::from_iter(0..(INNER_SIZE * 10));
+        let expected_forward = Vec::from_iter(0..(DEFAULT_INNER_SIZE * 10));
         let actual_forward = Vec::from_iter(btree.iter().cloned());
         assert_eq!(expected_forward, actual_forward);
-        let expected_backward = Vec::from_iter((0..(INNER_SIZE * 10)).rev());
+        let expected_backward = Vec::from_iter((0..(DEFAULT_INNER_SIZE * 10)).rev());
         let actual_backward = Vec::from_iter(btree.iter().cloned().rev());
         assert_eq!(expected_backward, actual_backward);
     }
     #[test]
     fn test_iter_mut() {
-        let btree = BTreeMap::from_iter((0..(INNER_SIZE * 10)).enumerate().rev());
+        let btree = BTreeMap::from_iter((0..(DEFAULT_INNER_SIZE * 10)).enumerate().rev());
         assert_eq!(btree.set.inner.len(), 19);
-        let expected_forward = Vec::from_iter((0..(INNER_SIZE * 10)).enumerate());
+        let expected_forward = Vec::from_iter((0..(DEFAULT_INNER_SIZE * 10)).enumerate());
         btree
             .clone()
             .iter_mut()
@@ -4118,7 +4139,7 @@ mod tests {
                 assert_eq!(*lhs.1, rhs.1);
             });
 
-        let expected_backward = Vec::from_iter((0..(INNER_SIZE * 10)).enumerate().rev());
+        let expected_backward = Vec::from_iter((0..(DEFAULT_INNER_SIZE * 10)).enumerate().rev());
         btree
             .clone()
             .iter_mut()
@@ -4131,12 +4152,12 @@ mod tests {
     }
     #[test]
     fn test_into_iter() {
-        let btree = BTreeSet::from_iter((0..(INNER_SIZE * 10)).rev());
+        let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE * 10)).rev());
         assert_eq!(btree.inner.len(), 19);
-        let expected_forward = Vec::from_iter(0..(INNER_SIZE * 10));
+        let expected_forward = Vec::from_iter(0..(DEFAULT_INNER_SIZE * 10));
         let actual_forward = Vec::from_iter(btree.clone().into_iter());
         assert_eq!(expected_forward, actual_forward);
-        let expected_backward = Vec::from_iter((0..(INNER_SIZE * 10)).rev());
+        let expected_backward = Vec::from_iter((0..(DEFAULT_INNER_SIZE * 10)).rev());
         let actual_backward = Vec::from_iter(btree.into_iter().rev());
         assert_eq!(expected_backward, actual_backward);
     }
@@ -4275,9 +4296,9 @@ mod tests {
 
     #[test]
     fn test_non_boolean_set_operations() {
-        let left_spine = BTreeSet::from_iter((0..(INNER_SIZE + 1)).into_iter());
+        let left_spine = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 1)).into_iter());
         let right_spine =
-            BTreeSet::from_iter(((INNER_SIZE - 1)..((INNER_SIZE + 1) * 2)).into_iter());
+            BTreeSet::from_iter(((DEFAULT_INNER_SIZE - 1)..((DEFAULT_INNER_SIZE + 1) * 2)).into_iter());
 
         let mut union = left_spine.clone();
         let mut temp_right_spine = right_spine.clone();
@@ -4292,8 +4313,8 @@ mod tests {
             Vec::from_iter(right_spine.union(&left_spine).cloned()),
         );
 
-        let left_diff = Vec::from_iter(0..(INNER_SIZE - 1));
-        let right_diff = Vec::from_iter((INNER_SIZE + 1)..((INNER_SIZE + 1) * 2));
+        let left_diff = Vec::from_iter(0..(DEFAULT_INNER_SIZE - 1));
+        let right_diff = Vec::from_iter((DEFAULT_INNER_SIZE + 1)..((DEFAULT_INNER_SIZE + 1) * 2));
 
         assert_eq!(
             left_diff,
@@ -4304,7 +4325,7 @@ mod tests {
             Vec::from_iter(right_spine.difference(&left_spine).cloned())
         );
 
-        let intersection = vec![INNER_SIZE - 1, INNER_SIZE];
+        let intersection = vec![DEFAULT_INNER_SIZE - 1, DEFAULT_INNER_SIZE];
         assert_eq!(
             intersection,
             Vec::from_iter(left_spine.intersection(&right_spine).cloned())
@@ -4326,9 +4347,9 @@ mod tests {
     fn test_boolean_set_operations() {
         let empty_set: BTreeSet<usize> = BTreeSet::new();
         assert!(empty_set.is_empty());
-        let a = BTreeSet::from_iter((0..(INNER_SIZE + 1)).into_iter());
-        let b = BTreeSet::from_iter((0..(INNER_SIZE + 2)).into_iter());
-        let c = BTreeSet::from_iter(((INNER_SIZE + 2)..(INNER_SIZE + 4)).into_iter());
+        let a = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 1)).into_iter());
+        let b = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 2)).into_iter());
+        let c = BTreeSet::from_iter(((DEFAULT_INNER_SIZE + 2)..(DEFAULT_INNER_SIZE + 4)).into_iter());
 
         assert!(a.is_subset(&a));
         assert!(a.is_superset(&a));
@@ -4343,20 +4364,20 @@ mod tests {
 
     #[test]
     fn test_split_off() {
-        let btree: BTreeSet<usize> = BTreeSet::from_iter(0..(INNER_SIZE * 10));
+        let btree: BTreeSet<usize> = BTreeSet::from_iter(0..(DEFAULT_INNER_SIZE * 10));
         for split in vec![
             1,
-            (INNER_SIZE * 3) - 6,
-            INNER_SIZE,
-            INNER_SIZE + 1,
-            ((INNER_SIZE * 10) - 1),
+            (DEFAULT_INNER_SIZE * 3) - 6,
+            DEFAULT_INNER_SIZE,
+            DEFAULT_INNER_SIZE + 1,
+            ((DEFAULT_INNER_SIZE * 10) - 1),
         ] {
             let mut left = btree.clone();
             let right = left.split_off(&split);
             assert!(left.is_disjoint(&right));
             assert!(Vec::from_iter(left.intersection(&right)).is_empty());
             let expected_left = Vec::from_iter(0..split);
-            let expected_right = Vec::from_iter(split..(INNER_SIZE * 10));
+            let expected_right = Vec::from_iter(split..(DEFAULT_INNER_SIZE * 10));
 
             assert_eq!(expected_left, Vec::from_iter(left));
             let actual_right = Vec::from_iter(right);
