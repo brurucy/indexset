@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/indexset.svg)](https://crates.io/crates/indexset)
 [![docs](https://docs.rs/indexset/badge.svg)](https://docs.rs/indexset)
 
-A pure-Rust(with zero dependencies) two-level dynamic order-statistics b-tree.
+A pure-Rust two-level dynamic order-statistic b-tree.
 
 This crate implements a compact set data structure that preserves its elements' sorted order and 
 allows lookups of entries by value or sorted order position.

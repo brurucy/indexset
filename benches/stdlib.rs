@@ -43,7 +43,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("indexset get i-th 100k", |b| {
         b.iter(|| {
             input.iter().for_each(|item| {
-                indexset.get_index(black_box(*item));
+                black_box(indexset.get_index(black_box(*item)));
             })
         })
     });

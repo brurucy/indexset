@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 
+## [0.3.5] - 2023-07-17
+### Added
+- new `with_maximum_node_size` method for `BTreeSet` and `BTreeMap`
+
 ## [0.3.4] - 2023-07-14
 ### Changed
 - upgraded `ftree` to 1.0.0
