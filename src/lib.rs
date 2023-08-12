@@ -14,33 +14,66 @@ use std::mem::swap;
 use std::ops::{Index, RangeBounds};
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq)]
 struct Node<T>
 where
     T: PartialOrd + Clone,
 {
     pub inner: Vec<T>,
     pub max: Option<T>,
+    pub iterations: usize,
+}
+
+impl<T: PartialOrd + Clone> PartialOrd for Node<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.max.partial_cmp(&other.max)
+    }
 }
 
 impl<T: PartialOrd + Clone> Default for Node<T> {
     fn default() -> Self {
-        return Self {
+        Self {
             inner: Vec::with_capacity(DEFAULT_INNER_SIZE),
             max: None,
-        };
+            iterations: 10,
+        }
     }
+}
+
+fn search<T: PartialOrd>(haystack: &[T], needle: &T, iterations: usize) -> Result<usize, usize> {
+    let mut left = 0;
+    let mut right = haystack.len();
+    for _ in 0..iterations {
+        if left >= right {
+            break;
+        }
+
+        let mid = left + (right - left) / 2;
+
+        let mid_value = unsafe { haystack.get_unchecked(mid) };
+
+        if mid_value < needle {
+            left = mid + 1;
+        } else if mid_value > needle {
+            right = mid;
+        } else {
+            return Ok(mid);
+        }
+    }
+
+    Err(left)
 }
 
 impl<T: Ord + Clone> Node<T> {
     pub fn new(capacity: usize) -> Self {
-        return Self {
+        Self {
             inner: Vec::with_capacity(capacity),
+            iterations: capacity.ilog2() as usize,
             ..Default::default()
-        };
+        }
     }
     pub fn get(&self, index: usize) -> Option<&T> {
-        return self.inner.get(index);
+        self.inner.get(index)
     }
     pub fn split_off(&mut self, cutoff: usize) -> Self {
         let latter_inner = self.inner.split_off(cutoff);
@@ -51,34 +84,32 @@ impl<T: Ord + Clone> Node<T> {
         Self {
             inner: latter_inner,
             max: latter_inner_max,
+            iterations: self.iterations,
         }
     }
     pub fn halve(&mut self) -> Self {
-        return self.split_off(DEFAULT_CUTOFF);
+        self.split_off(DEFAULT_CUTOFF)
     }
     pub fn len(&self) -> usize {
-        return self.inner.len();
+        self.inner.len()
     }
     pub fn insert(&mut self, value: T) -> bool {
-        match self.inner.binary_search(&value) {
+        match search(&self.inner, &value, self.iterations) {
             Ok(_) => return false,
             Err(idx) => {
-                if let Some(max) = &self.max {
-                    if &value > max {
-                        self.max = Some(value.clone())
-                    }
-                } else {
-                    self.max = Some(value.clone())
+                let some_value = Some(&value);
+                if some_value > self.max.as_ref() {
+                    self.max = some_value.cloned()
                 }
 
                 self.inner.insert(idx, value);
             }
         }
 
-        return true;
+        true
     }
     pub fn delete(&mut self, index: usize) -> T {
-        return self.inner.remove(index);
+        self.inner.remove(index)
     }
 }
 
@@ -166,9 +197,9 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// let mut set: BTreeSet<i32> = BTreeSet::new();
     /// ```
     pub fn new() -> Self {
-        return Self {
+        Self {
             ..Default::default()
-        };
+        }
     }
     /// Makes a new, empty `BTreeSet` with the given maximum node size. Allocates one vec with
     /// the capacity set to be the specified node size.
@@ -184,7 +215,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         let mut new: Self = Default::default();
         new.inner = vec![Node::new(maximum_node_size)];
 
-        return new
+        new
     }
     /// Clears the set, removing all elements.
     ///
@@ -213,18 +244,18 @@ impl<T: Clone + Ord> BTreeSet<T> {
                 return max.borrow() < value;
             };
 
-            return false;
+            false
         });
 
         // When value is greater than all elements inside inner[node_idx], then len
         // of inner[node_idx], which is not a valid place for insertion, is returned. It will
         // never return less than 0, so it is only necessary to check whether it is out of bounds
         // from the right
-        if let None = self.inner.get(node_idx) {
-            node_idx = node_idx - 1
+        if self.inner.get(node_idx).is_none() {
+            node_idx -= 1
         }
 
-        return node_idx;
+        node_idx
     }
     fn locate_node_cmp<P, Q>(&self, mut cmp: P) -> usize
     where
@@ -237,14 +268,14 @@ impl<T: Clone + Ord> BTreeSet<T> {
                 return cmp(max.borrow());
             }
 
-            return true;
+            true
         });
 
-        if let None = self.inner.get(node_idx) {
-            node_idx = node_idx - 1
+        if self.inner.get(node_idx).is_none() {
+            node_idx -= 1
         }
 
-        return node_idx;
+        node_idx
     }
     fn locate_value<Q>(&self, value: &Q) -> (usize, usize)
     where
@@ -256,7 +287,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             .inner
             .partition_point(|item| item.borrow() < value);
 
-        return (node_idx, position_within_node);
+        (node_idx, position_within_node)
     }
     fn locate_value_cmp<P, Q>(&self, mut cmp: P) -> (usize, usize)
     where
@@ -269,7 +300,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             .inner
             .partition_point(|item| cmp(item.borrow()));
 
-        return (node_idx, position_within_node);
+        (node_idx, position_within_node)
     }
     fn locate_ith(&self, idx: usize) -> (usize, usize) {
         let mut node_index = self.index.index_of(idx);
@@ -287,7 +318,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
         }
 
-        return (node_index, position_within_node);
+        (node_index, position_within_node)
     }
     /// Returns a reference to the element in the i-th position of the set, if any.
     ///
@@ -311,7 +342,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             return candidate_node.get(position_within_node);
         }
 
-        return None;
+        None
     }
     fn get_mut_index(&mut self, index: usize) -> Option<&mut T> {
         let (node_idx, position_within_node) = self.locate_ith(index);
@@ -319,7 +350,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             return self.inner[node_idx].inner.get_mut(position_within_node);
         }
 
-        return None;
+        None
     }
     /// Returns a reference to the element in the set, if any, that is equal to
     /// the value.
@@ -347,7 +378,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             return candidate_node.get(position_within_node);
         }
 
-        return None;
+        None
     }
     /// Returns a reference to the first element in the set, if any, that is not less than the
     /// input.
@@ -375,7 +406,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             return candidate_node.get(position_within_node);
         }
 
-        return None;
+        None
     }
     /// Returns the number of elements in the set.
     ///
@@ -390,7 +421,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert_eq!(v.len(), 1);
     /// ```
     pub fn len(&self) -> usize {
-        return self.len;
+        self.len
     }
     /// Adds a value to the set.
     ///
@@ -466,7 +497,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         let replaced_element = self.take(&value);
         self.insert(value);
 
-        return replaced_element;
+        replaced_element
     }
     /// Returns `true` if the set contains an element equal to the value.
     ///
@@ -495,7 +526,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
         }
 
-        return false;
+        false
     }
     fn contains_cmp<P, Q, R>(&self, cmp: P, mut cmp2: R) -> bool
     where
@@ -511,7 +542,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
         }
 
-        return false;
+        false
     }
     fn delete_at(&mut self, node_idx: usize, position_within_node: usize) -> T {
         let removal = self.inner[node_idx].delete(position_within_node);
@@ -536,7 +567,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             self.len -= 1;
         }
 
-        return removal;
+        removal
     }
     fn delete<Q>(&mut self, value: &Q) -> (Option<T>, bool)
     where
@@ -555,7 +586,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
         }
 
-        return (removal, removed);
+        (removal, removed)
     }
     fn delete_cmp<P, Q, R>(&mut self, cmp: P, mut cmp2: R) -> (Option<T>, bool)
     where
@@ -576,7 +607,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
         }
 
-        return (removal, removed);
+        (removal, removed)
     }
     /// If the set contains an element equal to the value, removes it from the
     /// set and drops it. Returns whether such an element was present.
@@ -601,7 +632,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         T: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        return self.delete(value).1;
+        self.delete(value).1
     }
     /// Removes and returns the element in the set, if any, that is equal to
     /// the value.
@@ -624,7 +655,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         T: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        return self.delete(value).0;
+        self.delete(value).0
     }
     /// Returns a reference to the first element in the set, if any.
     /// This element is always the minimum of all elements in the set.
@@ -648,7 +679,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             return candidate_node.get(0);
         }
 
-        return None;
+        None
     }
     /// Returns a reference to the last element in the set, if any.
     /// This element is always the maximum of all elements in the set.
@@ -674,7 +705,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             }
         }
 
-        return None;
+        None
     }
     /// Removes the first element from the set and returns it, if any.
     /// The first element is always the minimum element in the set.
@@ -695,12 +726,12 @@ impl<T: Clone + Ord> BTreeSet<T> {
     pub fn pop_first(&mut self) -> Option<T> {
         let (first_node_idx, first_position_within_node) = (0, 0);
         if let Some(candidate_node) = self.inner.get(first_node_idx) {
-            if let Some(_) = candidate_node.get(first_position_within_node) {
+            if candidate_node.get(first_position_within_node).is_some() {
                 return Some(self.delete_at(first_node_idx, first_position_within_node));
             }
         }
 
-        return None;
+        None
     }
     /// Removes the i-th element from the set and returns it, if any.
     ///
@@ -719,7 +750,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// ```
     pub fn pop_index(&mut self, idx: usize) -> T {
         let (node_idx, position_within_node) = self.locate_ith(idx);
-        return self.delete_at(node_idx, position_within_node);
+
+        self.delete_at(node_idx, position_within_node)
     }
     /// Removes the last element from the set and returns it, if any.
     /// The last element is always the maximum element in the set.
@@ -740,17 +772,15 @@ impl<T: Clone + Ord> BTreeSet<T> {
     pub fn pop_last(&mut self) -> Option<T> {
         let last_node_idx = self.inner.len() - 1;
         let mut last_position_within_node = self.inner[last_node_idx].inner.len();
-        if last_position_within_node > 0 {
-            last_position_within_node -= 1;
-        }
+        last_position_within_node = last_position_within_node.saturating_sub(1);
 
         if let Some(candidate_node) = self.inner.get(last_node_idx) {
-            if let Some(_) = candidate_node.get(last_position_within_node) {
+            if candidate_node.get(last_position_within_node).is_some() {
                 return Some(self.delete_at(last_node_idx, last_position_within_node));
             }
         }
 
-        return None;
+        None
     }
     /// Returns `true` if the set contains no elements.
     ///
@@ -765,7 +795,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert!(!v.is_empty());
     /// ```
     pub fn is_empty(&self) -> bool {
-        return self.len() == 0;
+        self.len() == 0
     }
     /// Returns `true` if the set is a subset of another,
     /// i.e., `other` contains at least all the elements in `self`.
@@ -785,11 +815,11 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert_eq!(set.is_subset(&sup), false);
     /// ```
     pub fn is_subset(&self, other: &Self) -> bool {
-        for _ in self.difference(other) {
+        if self.difference(other).next().is_some() {
             return false;
         }
 
-        return true;
+        true
     }
     /// Returns `true` if the set is a superset of another,
     /// i.e., `self` contains at least all the elements in `other`.
@@ -812,11 +842,11 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert_eq!(set.is_superset(&sub), true);
     /// ```
     pub fn is_superset(&self, other: &Self) -> bool {
-        for _ in other.difference(self) {
+        if other.difference(self).next().is_some() {
             return false;
         }
 
-        return true;
+        true
     }
     /// Returns `true` if `self` has no elements in common with `other`.
     /// This is equivalent to checking for an empty intersection.
@@ -836,11 +866,11 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// assert_eq!(a.is_disjoint(&b), false);
     /// ```
     pub fn is_disjoint(&self, other: &Self) -> bool {
-        for _ in self.intersection(other) {
+        if self.intersection(other).next().is_some() {
             return false;
         }
 
-        return true;
+        true
     }
     /// Gets an iterator that visits the elements in the `BTreeSet` in ascending
     /// order.
@@ -1051,16 +1081,14 @@ impl<T: Clone + Ord> BTreeSet<T> {
         latter_half.inner = remaining_nodes;
         latter_half.index = FenwickTree::from_iter(latter_half.inner.iter().map(|node| node.len()));
 
-        if self.inner[node_idx].len() == 0 {
-            if self.inner.len() > 1 {
-                self.inner.remove(node_idx);
-            }
+        if self.inner[node_idx].len() == 0 && self.inner.len() > 1 {
+            self.inner.remove(node_idx);
         }
 
         self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
         self.len = self.inner.iter().map(|node| node.len()).sum();
 
-        return latter_half;
+        latter_half
     }
     /// Splits the collection into two at the value. Returns a new collection
     /// with all elements greater than or equal to the value.
@@ -1109,16 +1137,14 @@ impl<T: Clone + Ord> BTreeSet<T> {
         latter_half.inner = remaining_nodes;
         latter_half.index = FenwickTree::from_iter(latter_half.inner.iter().map(|node| node.len()));
 
-        if self.inner[node_idx].len() == 0 {
-            if self.inner.len() > 1 {
-                self.inner.remove(node_idx);
-            }
+        if self.inner[node_idx].len() == 0 && self.inner.len() > 1 {
+            self.inner.remove(node_idx);
         }
 
         self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
         self.len = self.inner.iter().map(|node| node.len()).sum();
 
-        return latter_half;
+        latter_half
     }
     /// Moves all elements from `other` into `self`, leaving `other` empty.
     ///
@@ -1186,10 +1212,10 @@ impl<T: Clone + Ord> BTreeSet<T> {
         let (front_node_idx, front_start_idx) = self.locate_ith(global_front_idx);
         let (back_node_idx, back_start_idx) = self.locate_ith(global_back_idx);
 
-        return (
+        (
             (global_front_idx, front_node_idx, front_start_idx),
             (global_back_idx, back_node_idx, back_start_idx),
-        );
+        )
     }
     /// Constructs a double-ended iterator over a sub-range of elements in the set.
     /// The simplest way is to use the range syntax `min..max`, thus `range(min..max)` will
@@ -1213,7 +1239,6 @@ impl<T: Clone + Ord> BTreeSet<T> {
     /// set.insert(3);
     /// set.insert(5);
     /// set.insert(8);
-    /// println!("start");
     /// for &elem in set.range((Included(&4), Included(&8))) {
     ///     println!("{elem}");
     /// }
@@ -1236,8 +1261,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             Bound::Unbounded => self.len() - 1,
         };
 
-        println!("{}..={}", start_idx, end_idx);
-        return self.range_idx(start_idx..=end_idx);
+        self.range_idx(start_idx..=end_idx)
     }
     /// Returns the position in which the given element would fall in the already-existing sorted
     /// order.
@@ -1266,7 +1290,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
 
         let offset = self.index.prefix_sum(node_idx, 0);
 
-        return offset + position_within_node;
+        offset + position_within_node
     }
     fn rank_cmp<Q, P>(&self, cmp: P) -> usize
     where
@@ -1278,7 +1302,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
 
         let offset = self.index.prefix_sum(node_idx, 0);
 
-        return offset + position_within_node;
+        offset + position_within_node
     }
     fn range_idx<R>(&self, range: R) -> Range<'_, T>
     where
@@ -1300,7 +1324,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
             back_iter.next_back();
         }
 
-        return Range {
+        Range {
             spine_iter: Iter {
                 btree: self,
                 current_front_node_idx: front_node_idx,
@@ -1310,7 +1334,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
                 current_front_iterator: front_iter,
                 current_back_iterator: back_iter,
             },
-        };
+        }
     }
 }
 
@@ -1324,7 +1348,7 @@ where
             btree.insert(item);
         });
 
-        return btree;
+        btree
     }
 }
 
@@ -1339,7 +1363,7 @@ where
             btree.insert(item);
         });
 
-        return btree;
+        btree
     }
 }
 
@@ -1350,12 +1374,12 @@ where
     fn default() -> Self {
         let node_capacity = DEFAULT_INNER_SIZE;
 
-        return Self {
+        Self {
             inner: vec![Node::new(node_capacity)],
             index: FenwickTree::from_iter(vec![0]),
             node_capacity,
             len: 0,
-        };
+        }
     }
 }
 
@@ -1403,14 +1427,14 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx {
-            return None;
+            return None
         }
-        if let Some(value) = self.current_front_iterator.next() {
+        return if let Some(value) = self.current_front_iterator.next() {
             self.current_front_idx += 1;
-            return Some(value);
+            Some(value)
         } else {
             if self.current_front_node_idx == self.btree.inner.len() - 1 {
-                return None;
+                return None
             }
             self.current_front_node_idx += 1;
             self.current_front_iterator =
@@ -1419,7 +1443,7 @@ where
                 return Some(value);
             }
 
-            return None;
+            None
         };
     }
 }
@@ -1430,19 +1454,19 @@ where
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx {
-            return None;
+            return None
         }
-        if let Some(value) = self.current_back_iterator.next_back() {
+        return if let Some(value) = self.current_back_iterator.next_back() {
             self.current_back_idx -= 1;
-            return Some(value);
+            Some(value)
         } else {
             if self.current_back_node_idx == 0 {
-                return None;
+                return None
             };
             self.current_back_node_idx -= 1;
             self.current_back_iterator = self.btree.inner[self.current_back_node_idx].inner.iter();
 
-            return self.next_back();
+            self.next_back()
         };
     }
 }
@@ -1458,7 +1482,7 @@ where
     type IntoIter = Iter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        return Iter::new(self);
+        Iter::new(self)
     }
 }
 
@@ -1482,7 +1506,7 @@ where
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        return self.btree.pop_first();
+        self.btree.pop_first()
     }
 }
 
@@ -1491,7 +1515,7 @@ where
     T: Clone + Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
-        return self.btree.pop_last();
+        self.btree.pop_last()
     }
 }
 
@@ -1507,7 +1531,7 @@ where
 
     fn into_iter(self) -> Self::IntoIter {
         // This will never panic, since there always is at least one node in the btree
-        return IntoIter { btree: self };
+        IntoIter { btree: self }
     }
 }
 
@@ -1546,12 +1570,10 @@ where
                 } else {
                     self.current_left = self.left_iter.next();
                 }
+            } else if let Some(_) = self.current_right {
+                self.current_right = self.right_iter.next();
             } else {
-                if let Some(_) = self.current_right {
-                    self.current_right = self.right_iter.next();
-                } else {
-                    return None;
-                }
+                return None
             }
         } else {
             self.current_left = self.left_iter.next();
@@ -1559,7 +1581,7 @@ where
             self.start = false;
         }
 
-        return Some((self.current_left, self.current_right));
+        Some((self.current_left, self.current_right))
     }
 }
 
@@ -1598,7 +1620,7 @@ where
             };
         }
 
-        return None;
+        None
     }
 }
 
@@ -1724,7 +1746,7 @@ where
                     (None, _) | (_, None) => return None,
                 }
             } else {
-                return None;
+                return None
             }
         }
     }
@@ -1774,7 +1796,7 @@ where
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
-        return self.get_index(index).unwrap();
+      self.get_index(index).unwrap()
     }
 }
 
@@ -1802,7 +1824,7 @@ where
     V: Clone,
 {
     fn eq(&self, other: &Self) -> bool {
-        return self.key == other.key;
+        self.key == other.key
     }
 }
 
@@ -1812,7 +1834,7 @@ where
     V: Clone,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        return self.key.partial_cmp(&other.key);
+        self.key.partial_cmp(&other.key)
     }
 }
 
@@ -1822,7 +1844,7 @@ where
     V: Clone,
 {
     fn cmp(&self, other: &Self) -> Ordering {
-        return self.key.cmp(&other.key);
+        self.key.cmp(&other.key)
     }
 }
 
@@ -1921,7 +1943,7 @@ where
     V: Clone,
 {
     pub fn key(&self) -> &K {
-        return &self.key;
+        &self.key
     }
     pub fn remove_entry(self) -> (K, V) {
         self.map.pop_index(self.idx)
@@ -1940,10 +1962,10 @@ where
         let mut previous_value = value;
         swap(&mut previous_value, current_value);
 
-        return previous_value;
+        previous_value
     }
     pub fn remove(self) -> V {
-        return self.map.pop_index(self.idx).1;
+        self.map.pop_index(self.idx).1
     }
 }
 
@@ -1953,15 +1975,16 @@ where
     V: Clone,
 {
     pub fn key(&self) -> &K {
-        return &self.key;
+        &self.key
     }
     pub fn into_key(self) -> K {
-        return self.key;
+        self.key
     }
     pub fn insert(self, value: V) -> &'a mut V {
         let rank = self.map.set.rank_cmp(|item| &item.key < &self.key);
         self.map.insert(self.key, value);
-        return self.map.get_mut_index(rank).unwrap();
+
+        self.map.get_mut_index(rank).unwrap()
     }
 }
 
@@ -2068,9 +2091,9 @@ where
     V: Clone,
 {
     fn default() -> Self {
-        return Self {
+        Self {
             set: BTreeSet::default(),
-        };
+        }
     }
 }
 
@@ -2085,7 +2108,7 @@ where
             btree.insert(item.0, item.1);
         });
 
-        return btree;
+        btree
     }
 }
 
@@ -2167,10 +2190,10 @@ where
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        return self.set.contains_cmp(
+        self.set.contains_cmp(
             |item| item.key.borrow() < key,
             |item| item.key.borrow() == key,
-        );
+        )
     }
     /// Returns the first key-value pair in the map.
     /// The key in this pair is the minimum key in the map.
@@ -2194,7 +2217,7 @@ where
             return Some((&pop.key, &pop.value));
         }
 
-        return None;
+        None
     }
     /// Returns a reference to the value corresponding to the key.
     ///
@@ -2222,7 +2245,7 @@ where
             return Some(key_value.1);
         }
 
-        return None;
+        None
     }
     /// Returns the key-value pair currently residing at the given position.
     ///
@@ -2243,7 +2266,7 @@ where
             return Some((&entry.key, &entry.value));
         }
 
-        return None;
+        None
     }
     /// Returns the key-value pair corresponding to the supplied key.
     ///
@@ -2273,7 +2296,7 @@ where
             }
         }
 
-        return None;
+        None
     }
     /// Returns a mutable reference to the value corresponding to the key.
     ///
@@ -2301,18 +2324,16 @@ where
     {
         let (node_idx, position_within_node) =
             self.set.locate_value_cmp(|item| item.key.borrow() < key);
-        if let Some(_) = self.set.inner.get(node_idx) {
-            if let Some(_) = self.set.inner[node_idx].inner.get(position_within_node) {
-                let entry = self.set.inner[node_idx]
-                    .inner
-                    .get_mut(position_within_node)
-                    .unwrap();
+        if self.set.inner.get(node_idx).is_some() && self.set.inner[node_idx].inner.get(position_within_node).is_some() {
+            let entry = self.set.inner[node_idx]
+                .inner
+                .get_mut(position_within_node)
+                .unwrap();
 
-                return Some(&mut entry.value);
-            }
+            return Some(&mut entry.value);
         }
 
-        return None;
+        None
     }
     /// Returns a mutable reference to the value at the designated index
     ///
@@ -2335,7 +2356,7 @@ where
             return Some(&mut entry.value);
         }
 
-        return None;
+        None
     }
     /// Inserts a key-value pair into the map.
     ///
@@ -2377,7 +2398,7 @@ where
         } else {
             self.set.insert(Pair { key, value });
 
-            return None;
+            None
         }
     }
     /// Creates a consuming iterator visiting all the keys, in sorted order.
@@ -2397,9 +2418,9 @@ where
     /// assert_eq!(keys, [1, 2]);
     /// ```
     pub fn into_keys(self) -> IntoKeys<K, V> {
-        return IntoKeys {
+        IntoKeys {
             inner: self.into_iter(),
-        };
+        }
     }
     /// Creates a consuming iterator visiting all the values, in order by key.
     /// The map cannot be used after calling this.
@@ -2418,9 +2439,9 @@ where
     /// assert_eq!(values, ["hello", "goodbye"]);
     /// ```
     pub fn into_values(self) -> IntoValues<K, V> {
-        return IntoValues {
+        IntoValues {
             inner: self.into_iter(),
-        };
+        }
     }
     /// Returns `true` if the map contains no elements.
     ///
@@ -2437,7 +2458,7 @@ where
     /// assert!(!a.is_empty());
     /// ```
     pub fn is_empty(&self) -> bool {
-        return self.set.is_empty();
+        self.set.is_empty()
     }
     /// Gets an iterator over the entries of the map, sorted by key.
     ///
@@ -2461,9 +2482,9 @@ where
     /// assert_eq!((*first_key, *first_value), (1, "a"));
     /// ```
     pub fn iter(&self) -> IterMap<K, V> {
-        return IterMap {
+        IterMap {
             inner: self.set.iter(),
-        };
+        }
     }
     /// Gets a mutable iterator over the entries of the map, sorted by key.
     ///
@@ -2506,7 +2527,7 @@ where
             }
         };
 
-        return IterMut {
+        IterMut {
             inner,
             current_front_node_idx: 0,
             current_front_idx: 0,
@@ -2514,7 +2535,7 @@ where
             current_back_idx: len - 1,
             current_front_iterator: front_iter,
             current_back_iterator: back_iter,
-        };
+        }
     }
     /// Gets an iterator over the keys of the map, in sorted order.
     ///
@@ -2533,9 +2554,9 @@ where
     /// assert_eq!(keys, [1, 2]);
     /// ```
     pub fn keys(&self) -> Keys<K, V> {
-        return Keys {
+        Keys {
             inner: self.set.iter(),
-        };
+        }
     }
     /// Returns the last key-value pair in the map.
     /// The key in this pair is the maximum key in the map.
@@ -2558,7 +2579,7 @@ where
             return Some((&pop.key, &pop.value));
         }
 
-        return None;
+        None
     }
     /// Returns the number of elements in the map.
     ///
@@ -2575,7 +2596,7 @@ where
     /// assert_eq!(a.len(), 1);
     /// ```
     pub fn len(&self) -> usize {
-        return self.set.len();
+        self.set.len()
     }
     /// Makes a new, empty `BTreeMap`.
     ///
@@ -2594,9 +2615,9 @@ where
     /// map.insert(1, "a");
     /// ```
     pub fn new() -> Self {
-        return Self {
+        Self {
             ..Default::default()
-        };
+        }
     }
     /// Makes a new, empty `BTreeSet` with the given maximum node size. Allocates one vec with
     /// the capacity set to be the specified node size.
@@ -2609,8 +2630,8 @@ where
     ///
     /// let mut set: BTreeMap<usize, usize> = BTreeMap::with_maximum_node_size(128);
     pub fn with_maximum_node_size(maximum_node_size: usize) -> Self {
-        return Self {
-            set: BTreeSet::with_maximum_node_size(maximum_node_size)
+        Self {
+            set: BTreeSet::with_maximum_node_size(maximum_node_size),
         }
     }
     /// Removes and returns the first element in the map.
@@ -2637,7 +2658,7 @@ where
             return Some((pop.key, pop.value));
         }
 
-        return None;
+        None
     }
     /// Removes the i-th element from the map and returns it, if any.
     ///
@@ -2657,7 +2678,7 @@ where
     pub fn pop_index(&mut self, index: usize) -> (K, V) {
         let popping = self.set.pop_index(index);
 
-        return (popping.key, popping.value);
+        (popping.key, popping.value)
     }
     /// Removes and returns the last element in the map.
     /// The key of this element is the maximum key that was in the map.
@@ -2683,7 +2704,7 @@ where
             return Some((pop.key, pop.value));
         }
 
-        return None;
+        None
     }
     /// Constructs a double-ended iterator over a sub-range of elements in the map.
     /// The simplest way is to use the range syntax `min..max`, thus `range(min..max)` will
@@ -2722,9 +2743,9 @@ where
     {
         let (start_idx, end_idx) = self.range_to_idx(range);
 
-        return RangeMap {
+        RangeMap {
             inner: self.set.range_idx(start_idx..=end_idx),
-        };
+        }
     }
     fn range_to_idx<Q, R>(&self, range: R) -> (usize, usize)
     where
@@ -2743,7 +2764,7 @@ where
             Bound::Unbounded => self.len() - 1,
         };
 
-        return (start_idx, end_idx);
+        (start_idx, end_idx)
     }
     /// Constructs a mutable double-ended iterator over a sub-range of elements in the map.
     /// The simplest way is to use the range syntax `min..max`, thus `range(min..max)` will
@@ -2781,7 +2802,7 @@ where
     {
         let (start_idx, end_idx) = self.range_to_idx(range);
 
-        return self.range_mut_idx(start_idx..=end_idx);
+        self.range_mut_idx(start_idx..=end_idx)
     }
     pub fn range_mut_idx<R>(&mut self, range: R) -> RangeMut<K, V>
     where
@@ -2825,7 +2846,7 @@ where
             }
         }
 
-        return RangeMut {
+        RangeMut {
             inner: IterMut {
                 inner,
                 current_front_node_idx: front_node_idx,
@@ -2835,7 +2856,7 @@ where
                 current_front_iterator: front_iter,
                 current_back_iterator: back_iter,
             },
-        };
+        }
     }
     /// Removes a key from the map, returning the value at the key if the key
     /// was previously in the map.
@@ -2869,7 +2890,7 @@ where
             return Some(old_entry.0.unwrap().value);
         }
 
-        return None;
+        None
     }
     /// Removes a key from the map, returning the stored key and value if the key
     /// was previously in the map.
@@ -2904,7 +2925,7 @@ where
             return Some((key_value.key, key_value.value));
         }
 
-        return None;
+        None
     }
     /// Retains only the elements specified by the predicate.
     ///
@@ -2978,9 +2999,9 @@ where
         K: Borrow<Q> + Ord,
         Q: Ord,
     {
-        return BTreeMap {
+        BTreeMap {
             set: self.set.split_off_cmp(|item| item.key.borrow() < key),
-        };
+        }
     }
     /// Gets an iterator over the values of the map, in order by key.
     ///
@@ -3087,7 +3108,7 @@ where
     where
         K: Ord,
     {
-        if self.len() > 0 {
+        if !self.is_empty() {
             let first_key = self.set.first().unwrap().key.clone();
             return Some(OccupiedEntry {
                 map: self,
@@ -3096,7 +3117,7 @@ where
             });
         }
 
-        return None;
+        None
     }
     /// Returns the last entry in the map for in-place manipulation.
     /// The key of this entry is the maximum key in the map.
@@ -3131,7 +3152,7 @@ where
             });
         }
 
-        return None;
+        None
     }
     /// Returns a [`Cursor`] pointing at the first element that is above the
     /// given bound.
@@ -3169,12 +3190,12 @@ where
             Bound::Unbounded => 0,
         };
 
-        return CursorMap {
+        CursorMap {
             cursor: Cursor {
                 set: &self.set,
                 idx: start_idx,
             },
-        };
+        }
     }
     /// Returns the position in which the given element would fall in the already-existing sorted
     /// order.
@@ -3199,7 +3220,7 @@ where
         Q: Ord + ?Sized,
         K: Borrow<Q>,
     {
-        return self.set.rank_cmp(|item| item.key.borrow() < value);
+        self.set.rank_cmp(|item| item.key.borrow() < value)
     }
 }
 
@@ -3215,7 +3236,7 @@ where
             btree.insert(key, value);
         });
 
-        return btree;
+        btree
     }
 }
 
@@ -3228,9 +3249,9 @@ where
     type IntoIter = IntoIterMap<K, V>;
 
     fn into_iter(self) -> Self::IntoIter {
-        return IntoIterMap {
+        IntoIterMap {
             inner: self.set.into_iter(),
-        };
+        }
     }
 }
 
@@ -3276,7 +3297,7 @@ where
             return Some((&entry.key, &entry.value));
         }
 
-        return None;
+        None
     }
 }
 
@@ -3290,7 +3311,7 @@ where
             return Some((&entry.key, &entry.value));
         }
 
-        return None;
+        None
     }
 }
 
@@ -3327,7 +3348,7 @@ where
             return Some((entry.key, entry.value));
         }
 
-        return None;
+        None
     }
 }
 
@@ -3341,7 +3362,7 @@ where
             return Some((entry.key, entry.value));
         }
 
-        return None;
+        None
     }
 }
 
@@ -3378,7 +3399,7 @@ where
             return Some(entry.0);
         }
 
-        return None;
+        None
     }
 }
 
@@ -3392,7 +3413,7 @@ where
             return Some(entry.0);
         }
 
-        return None;
+        None
     }
 }
 
@@ -3429,7 +3450,7 @@ where
             return Some(entry.1);
         }
 
-        return None;
+        None
     }
 }
 
@@ -3443,7 +3464,7 @@ where
             return Some(entry.1);
         }
 
-        return None;
+        None
     }
 }
 
@@ -3480,7 +3501,7 @@ where
             return Some((&entry.key, &entry.value));
         }
 
-        return None;
+        None
     }
 }
 
@@ -3494,7 +3515,7 @@ where
             return Some((&entry.key, &entry.value));
         }
 
-        return None;
+        None
     }
 }
 
@@ -3531,7 +3552,7 @@ where
             return Some(&entry.value);
         }
 
-        return None;
+        None
     }
 }
 
@@ -3545,7 +3566,7 @@ where
             return Some(&entry.value);
         }
 
-        return None;
+        None
     }
 }
 
@@ -3582,7 +3603,7 @@ where
             return Some(&entry.key);
         }
 
-        return None;
+        None
     }
 }
 
@@ -3596,7 +3617,7 @@ where
             return Some(&entry.key);
         }
 
-        return None;
+        None
     }
 }
 
@@ -3636,7 +3657,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx + 1 {
-            return None;
+            return None
         }
         if let Some(entry) = self.current_front_iterator.next() {
             self.current_front_idx += 1;
@@ -3645,7 +3666,7 @@ where
             // If the current iterator has been exhausted, we have to check whether there are any
             // iterators left
             if self.current_front_node_idx == self.inner.size_hint().0 {
-                return None;
+                return None
             }
             if self.current_front_node_idx == self.current_back_node_idx - 1 {
                 // take from the current back iter
@@ -3664,7 +3685,7 @@ where
             }
         };
 
-        return None;
+        None
     }
 }
 
@@ -3675,7 +3696,7 @@ where
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx + 1 {
-            return None;
+            return None
         }
         if let Some(entry) = self.current_back_iterator.next_back() {
             self.current_back_idx -= 1;
@@ -3684,7 +3705,7 @@ where
             // If the current iterator has been exhausted, we have to check whether there are any
             // iterators left
             if self.current_back_node_idx == 0 {
-                return None;
+                return None
             }
             if self.current_front_node_idx == self.current_back_node_idx - 1 {
                 // take from the current front iter
@@ -3705,7 +3726,7 @@ where
             }
         };
 
-        return None;
+        None
     }
 }
 
@@ -3742,7 +3763,7 @@ where
             return Some(entry.1);
         }
 
-        return None;
+        None
     }
 }
 
@@ -3756,7 +3777,7 @@ where
             return Some(entry.1);
         }
 
-        return None;
+        None
     }
 }
 
@@ -3864,7 +3885,7 @@ impl<'a, T: Ord + Clone> Cursor<'a, T> {
     }
     pub fn peek_prev(&self) -> Option<&'a T> {
         if self.idx == 0 {
-            return None;
+            return None
         }
 
         return self.set.get_index(self.idx - 1);
@@ -3894,42 +3915,42 @@ impl<'a, K: Ord + Clone, V: Clone> CursorMap<'a, K, V> {
             return Some(&entry.key);
         }
 
-        return None;
+        None
     }
     pub fn value(&self) -> Option<&'a V> {
         if let Some(entry) = self.cursor.item() {
             return Some(&entry.value);
         }
 
-        return None;
+        None
     }
     pub fn key_value(&self) -> Option<(&'a K, &'a V)> {
         if let Some(entry) = self.cursor.item() {
             return Some((&entry.key, &entry.value));
         }
 
-        return None;
+        None
     }
     pub fn peek_next(&self) -> Option<(&'a K, &'a V)> {
         if let Some(entry) = self.cursor.peek_next() {
             return Some((&entry.key, &entry.value));
         }
 
-        return None;
+        None
     }
     pub fn peek_index(&self, index: usize) -> Option<(&'a K, &'a V)> {
         if let Some(entry) = self.cursor.peek_index(index) {
             return Some((&entry.key, &entry.value));
         }
 
-        return None;
+        None
     }
     pub fn peek_prev(&self) -> Option<(&'a K, &'a V)> {
         if let Some(entry) = self.cursor.peek_prev() {
             return Some((&entry.key, &entry.value));
         }
 
-        return None;
+        None
     }
 }
 
@@ -3943,10 +3964,12 @@ mod tests {
 
         let expected_output: Vec<isize> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-        let actual_node = input.iter().fold(Node::new(DEFAULT_INNER_SIZE), |mut acc, curr| {
-            acc.insert(curr);
-            acc
-        });
+        let actual_node = input
+            .iter()
+            .fold(Node::new(DEFAULT_INNER_SIZE), |mut acc, curr| {
+                acc.insert(curr);
+                acc
+            });
 
         let actual_output: Vec<isize> = actual_node.inner.into_iter().cloned().collect();
 
@@ -4297,8 +4320,9 @@ mod tests {
     #[test]
     fn test_non_boolean_set_operations() {
         let left_spine = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 1)).into_iter());
-        let right_spine =
-            BTreeSet::from_iter(((DEFAULT_INNER_SIZE - 1)..((DEFAULT_INNER_SIZE + 1) * 2)).into_iter());
+        let right_spine = BTreeSet::from_iter(
+            ((DEFAULT_INNER_SIZE - 1)..((DEFAULT_INNER_SIZE + 1) * 2)).into_iter(),
+        );
 
         let mut union = left_spine.clone();
         let mut temp_right_spine = right_spine.clone();
@@ -4349,7 +4373,8 @@ mod tests {
         assert!(empty_set.is_empty());
         let a = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 1)).into_iter());
         let b = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 2)).into_iter());
-        let c = BTreeSet::from_iter(((DEFAULT_INNER_SIZE + 2)..(DEFAULT_INNER_SIZE + 4)).into_iter());
+        let c =
+            BTreeSet::from_iter(((DEFAULT_INNER_SIZE + 2)..(DEFAULT_INNER_SIZE + 4)).into_iter());
 
         assert!(a.is_subset(&a));
         assert!(a.is_superset(&a));
