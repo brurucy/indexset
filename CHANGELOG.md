@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 
+## [0.3.6] - 2023-08-12
+### Changed
+- solved many clippy warnings
+- added a custom binary search with fixed iteration bound
+
 ## [0.3.5] - 2023-07-17
 ### Added
 - new `with_maximum_node_size` method for `BTreeSet` and `BTreeMap`
@@ -46,7 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeMap`
 
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/brurucy/indexset/releases/tag/v0.3.6
 [0.3.5]: https://github.com/brurucy/indexset/releases/tag/v0.3.5
 [0.3.4]: https://github.com/brurucy/indexset/releases/tag/v0.3.4
 [0.3.3]: https://github.com/brurucy/indexset/releases/tag/v0.3.3
