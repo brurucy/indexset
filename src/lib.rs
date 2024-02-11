@@ -3966,7 +3966,6 @@ impl<'a, K: Ord + Clone, V: Clone> CursorMap<'a, K, V> {
 mod tests {
     use crate::{BTreeMap, BTreeSet, Node, DEFAULT_CUTOFF, DEFAULT_INNER_SIZE};
     use std::collections::Bound::Included;
-    use std::ops::Bound::Excluded;
 
     #[test]
     fn test_insert() {
@@ -4453,6 +4452,20 @@ mod tests {
         );
         assert_eq!(
             btree.range(0..=DEFAULT_INNER_SIZE + 1).count(),
+            (0..=DEFAULT_INNER_SIZE + 1).count()
+        );
+
+        assert_eq!(btree.iter().rev().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
+        assert_eq!(
+            btree.range(0..DEFAULT_INNER_SIZE).rev().count(),
+            (0..DEFAULT_INNER_SIZE).count()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE).rev().count(),
+            (0..=DEFAULT_INNER_SIZE).count()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE + 1).rev().count(),
             (0..=DEFAULT_INNER_SIZE + 1).count()
         );
     }
