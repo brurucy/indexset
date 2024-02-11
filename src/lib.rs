@@ -1313,16 +1313,17 @@ impl<T: Clone + Ord> BTreeSet<T> {
             (global_back_idx, back_node_idx, back_start_idx),
         ) = self.resolve_range(range);
 
-        // Not the best way...advancing iterators until the correct starting point
-        let mut front_iter = self.inner[front_node_idx].inner.iter();
-        for _ in 0..front_start_idx {
-            front_iter.next();
-        }
+        let front_iter = if front_node_idx < self.inner.len() {
+            Some(self.inner[front_node_idx].inner[front_start_idx..].iter())
+        } else {
+            None
+        };
 
-        let mut back_iter = self.inner[back_node_idx].inner.iter();
-        for _ in back_start_idx..self.inner[back_node_idx].inner.len() {
-            back_iter.next_back();
-        }
+        let back_iter = if back_node_idx < self.inner.len() {
+            Some(self.inner[back_node_idx].inner[..=back_start_idx].iter())
+        } else {
+            None
+        };
 
         Range {
             spine_iter: Iter {
@@ -1398,8 +1399,8 @@ where
     current_front_idx: usize,
     current_back_node_idx: usize,
     current_back_idx: usize,
-    current_front_iterator: std::slice::Iter<'a, T>,
-    current_back_iterator: std::slice::Iter<'a, T>,
+    current_front_iterator: Option<std::slice::Iter<'a, T>>,
+    current_back_iterator: Option<std::slice::Iter<'a, T>>,
 }
 
 impl<'a, T> Iter<'a, T>
@@ -1413,8 +1414,8 @@ where
             current_front_idx: 0,
             current_back_node_idx: btree.inner.len() - 1,
             current_back_idx: btree.len(),
-            current_front_iterator: btree.inner[0].inner.iter(),
-            current_back_iterator: btree.inner[btree.inner.len() - 1].inner.iter(),
+            current_front_iterator: Some(btree.inner[0].inner.iter()),
+            current_back_iterator: Some(btree.inner[btree.inner.len() - 1].inner.iter()),
         };
     }
 }
@@ -1429,17 +1430,17 @@ where
         if self.current_front_idx == self.current_back_idx {
             return None
         }
-        return if let Some(value) = self.current_front_iterator.next() {
+        return if let Some(value) = self.current_front_iterator.as_mut().and_then(|mut i| i.next()) {
             self.current_front_idx += 1;
             Some(value)
         } else {
-            if self.current_front_node_idx == self.btree.inner.len() - 1 {
+            self.current_front_node_idx += 1;
+            if self.current_front_node_idx == self.btree.inner.len() {
                 return None
             }
-            self.current_front_node_idx += 1;
-            self.current_front_iterator =
-                self.btree.inner[self.current_front_node_idx].inner.iter();
-            if let Some(value) = self.current_front_iterator.next() {
+            self.current_front_iterator = Some(self.btree.inner[self.current_front_node_idx].inner.iter());
+
+            if let Some(value) = self.current_front_iterator.as_mut().and_then(|mut i| i.next()) {
                 return Some(value);
             }
 
@@ -1456,7 +1457,7 @@ where
         if self.current_front_idx == self.current_back_idx {
             return None
         }
-        return if let Some(value) = self.current_back_iterator.next_back() {
+        return if let Some(value) = self.current_back_iterator.as_mut().and_then(|mut i| i.next_back()) {
             self.current_back_idx -= 1;
             Some(value)
         } else {
@@ -1464,7 +1465,7 @@ where
                 return None
             };
             self.current_back_node_idx -= 1;
-            self.current_back_iterator = self.btree.inner[self.current_back_node_idx].inner.iter();
+            self.current_back_iterator = Some(self.btree.inner[self.current_back_node_idx].inner.iter());
 
             self.next_back()
         };
@@ -3956,6 +3957,7 @@ impl<'a, K: Ord + Clone, V: Clone> CursorMap<'a, K, V> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::Bound::Included;
     use crate::{BTreeMap, BTreeSet, Node, DEFAULT_CUTOFF, DEFAULT_INNER_SIZE};
 
     #[test]
@@ -4408,5 +4410,14 @@ mod tests {
             let actual_right = Vec::from_iter(right);
             assert_eq!(expected_right, actual_right)
         }
+    }
+
+    #[test]
+    fn test_out_of_bounds_range() {
+        let btree: BTreeSet<usize> = BTreeSet::from_iter(0..10);
+        assert_eq!(btree.range((Included(5), Included(11))).count(), 5);
+        assert_eq!(btree.range((Included(5), Included(16))).count(), 5);
+        assert_eq!(btree.range((Included(5), Included(10 + DEFAULT_INNER_SIZE))).count(), 5);
+        assert_eq!(btree.range((Included(0), Included(11))).count(), 10);
     }
 }
