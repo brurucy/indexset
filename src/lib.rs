@@ -1441,11 +1441,7 @@ impl<'a, T> Iterator for Iter<'a, T>
             self.current_front_iterator =
                 Some(self.btree.inner[self.current_front_node_idx].inner.iter());
 
-            if let Some(value) = self.current_front_iterator.as_mut().and_then(|i| i.next()) {
-                return Some(value);
-            }
-
-            None
+            self.next()
         };
     }
 }
@@ -4435,7 +4431,7 @@ mod tests {
     #[test]
     fn test_iterating_over_blocks() {
         let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 10)).into_iter());
-        assert!(btree.len() > DEFAULT_INNER_SIZE + 1);
+        assert_eq!(btree.iter().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
         assert_eq!(btree.range(0..DEFAULT_INNER_SIZE).count(), (0..DEFAULT_INNER_SIZE).count());
         assert_eq!(btree.range(0..=DEFAULT_INNER_SIZE).count(), (0..=DEFAULT_INNER_SIZE).count());
         assert_eq!(btree.range(0..=DEFAULT_INNER_SIZE + 1).count(), (0..=DEFAULT_INNER_SIZE + 1).count());
