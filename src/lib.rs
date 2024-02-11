@@ -4484,5 +4484,18 @@ mod tests {
         assert_eq!(btree.range(..).count(), 0);
         assert_eq!(btree.range(0..=0).count(), 0);
         assert_eq!(btree.range(..1).count(), 0);
+
+        assert_eq!(btree.iter().rev().count(), 0);
+        assert_eq!(btree.range(0..0).rev().count(), 0);
+        assert_eq!(btree.range(..).rev().count(), 0);
+        assert_eq!(btree.range(..1).rev().count(), 0);
+
+        assert_eq!(btree.range(..DEFAULT_INNER_SIZE).count(), 0);
+        assert_eq!(
+            btree
+                .range(DEFAULT_INNER_SIZE..DEFAULT_INNER_SIZE * 2)
+                .count(),
+            0
+        );
     }
 }
