@@ -312,7 +312,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
 
         let mut position_within_node = idx - offset;
         if let Some(node) = self.inner.get(node_index) {
-            if position_within_node > node.len() - 1 {
+            if position_within_node == node.len() {
                 node_index += 1;
                 position_within_node = 0;
             }
@@ -1184,7 +1184,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         R: RangeBounds<usize>,
     {
         let mut global_front_idx: usize = 0;
-        let mut global_back_idx: usize = self.index.prefix_sum(self.inner.len(), 0) - 1;
+        let mut global_back_idx: usize =
+            self.index.prefix_sum(self.inner.len(), 0).saturating_sub(1);
 
         // Solving global indexes
         let start = range.start_bound();
@@ -1257,8 +1258,8 @@ impl<T: Clone + Ord> BTreeSet<T> {
         };
         let end_idx = match range.end_bound() {
             Bound::Included(bound) => self.rank(bound),
-            Bound::Excluded(bound) => self.rank(bound) - 1,
-            Bound::Unbounded => self.len() - 1,
+            Bound::Excluded(bound) => self.rank(bound).saturating_sub(1),
+            Bound::Unbounded => self.len().saturating_sub(1),
         };
 
         self.range_idx(start_idx..=end_idx)
@@ -1435,7 +1436,7 @@ where
             Some(value)
         } else {
             self.current_front_node_idx += 1;
-            if self.current_front_node_idx == self.btree.inner.len() {
+            if self.current_front_node_idx >= self.btree.inner.len() {
                 return None;
             }
             self.current_front_iterator =
@@ -4455,7 +4456,10 @@ mod tests {
             (0..=DEFAULT_INNER_SIZE + 1).count()
         );
 
-        assert_eq!(btree.iter().rev().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
+        assert_eq!(
+            btree.iter().rev().count(),
+            (0..(DEFAULT_INNER_SIZE + 10)).count()
+        );
         assert_eq!(
             btree.range(0..DEFAULT_INNER_SIZE).rev().count(),
             (0..DEFAULT_INNER_SIZE).count()
@@ -4468,5 +4472,17 @@ mod tests {
             btree.range(0..=DEFAULT_INNER_SIZE + 1).rev().count(),
             (0..=DEFAULT_INNER_SIZE + 1).count()
         );
+    }
+
+    #[test]
+    fn test_empty_set() {
+        let btree: BTreeSet<usize> = BTreeSet::new();
+        assert_eq!(btree.iter().count(), 0);
+        assert_eq!(btree.range(0..0).count(), 0);
+        assert_eq!(btree.range(0..).count(), 0);
+        assert_eq!(btree.range(..0).count(), 0);
+        assert_eq!(btree.range(..).count(), 0);
+        assert_eq!(btree.range(0..=0).count(), 0);
+        assert_eq!(btree.range(..1).count(), 0);
     }
 }
