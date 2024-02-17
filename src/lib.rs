@@ -1313,16 +1313,17 @@ impl<T: Clone + Ord> BTreeSet<T> {
             (global_back_idx, back_node_idx, back_start_idx),
         ) = self.resolve_range(range);
 
-        // Not the best way...advancing iterators until the correct starting point
-        let mut front_iter = self.inner[front_node_idx].inner.iter();
-        for _ in 0..front_start_idx {
-            front_iter.next();
-        }
+        let front_iter = if front_node_idx < self.inner.len() {
+            Some(self.inner[front_node_idx].inner[front_start_idx..].iter())
+        } else {
+            None
+        };
 
-        let mut back_iter = self.inner[back_node_idx].inner.iter();
-        for _ in back_start_idx..self.inner[back_node_idx].inner.len() {
-            back_iter.next_back();
-        }
+        let back_iter = if back_node_idx < self.inner.len() {
+            Some(self.inner[back_node_idx].inner[..=back_start_idx].iter())
+        } else {
+            None
+        };
 
         Range {
             spine_iter: Iter {
@@ -1398,8 +1399,8 @@ where
     current_front_idx: usize,
     current_back_node_idx: usize,
     current_back_idx: usize,
-    current_front_iterator: std::slice::Iter<'a, T>,
-    current_back_iterator: std::slice::Iter<'a, T>,
+    current_front_iterator: Option<std::slice::Iter<'a, T>>,
+    current_back_iterator: Option<std::slice::Iter<'a, T>>,
 }
 
 impl<'a, T> Iter<'a, T>
@@ -1413,8 +1414,8 @@ where
             current_front_idx: 0,
             current_back_node_idx: btree.inner.len() - 1,
             current_back_idx: btree.len(),
-            current_front_iterator: btree.inner[0].inner.iter(),
-            current_back_iterator: btree.inner[btree.inner.len() - 1].inner.iter(),
+            current_front_iterator: Some(btree.inner[0].inner.iter()),
+            current_back_iterator: Some(btree.inner[btree.inner.len() - 1].inner.iter()),
         };
     }
 }
@@ -1427,19 +1428,20 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx {
-            return None
+            return None;
         }
-        return if let Some(value) = self.current_front_iterator.next() {
+        return if let Some(value) = self.current_front_iterator.as_mut().and_then(|i| i.next()) {
             self.current_front_idx += 1;
             Some(value)
         } else {
-            if self.current_front_node_idx == self.btree.inner.len() - 1 {
-                return None
-            }
             self.current_front_node_idx += 1;
+            if self.current_front_node_idx == self.btree.inner.len() {
+                return None;
+            }
             self.current_front_iterator =
-                self.btree.inner[self.current_front_node_idx].inner.iter();
-            if let Some(value) = self.current_front_iterator.next() {
+                Some(self.btree.inner[self.current_front_node_idx].inner.iter());
+
+            if let Some(value) = self.current_front_iterator.as_mut().and_then(|i| i.next()) {
                 return Some(value);
             }
 
@@ -1454,17 +1456,22 @@ where
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx {
-            return None
+            return None;
         }
-        return if let Some(value) = self.current_back_iterator.next_back() {
+        return if let Some(value) = self
+            .current_back_iterator
+            .as_mut()
+            .and_then(|i| i.next_back())
+        {
             self.current_back_idx -= 1;
             Some(value)
         } else {
             if self.current_back_node_idx == 0 {
-                return None
+                return None;
             };
             self.current_back_node_idx -= 1;
-            self.current_back_iterator = self.btree.inner[self.current_back_node_idx].inner.iter();
+            self.current_back_iterator =
+                Some(self.btree.inner[self.current_back_node_idx].inner.iter());
 
             self.next_back()
         };
@@ -1573,7 +1580,7 @@ where
             } else if let Some(_) = self.current_right {
                 self.current_right = self.right_iter.next();
             } else {
-                return None
+                return None;
             }
         } else {
             self.current_left = self.left_iter.next();
@@ -1746,7 +1753,7 @@ where
                     (None, _) | (_, None) => return None,
                 }
             } else {
-                return None
+                return None;
             }
         }
     }
@@ -1796,7 +1803,7 @@ where
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
-      self.get_index(index).unwrap()
+        self.get_index(index).unwrap()
     }
 }
 
@@ -2324,7 +2331,12 @@ where
     {
         let (node_idx, position_within_node) =
             self.set.locate_value_cmp(|item| item.key.borrow() < key);
-        if self.set.inner.get(node_idx).is_some() && self.set.inner[node_idx].inner.get(position_within_node).is_some() {
+        if self.set.inner.get(node_idx).is_some()
+            && self.set.inner[node_idx]
+                .inner
+                .get(position_within_node)
+                .is_some()
+        {
             let entry = self.set.inner[node_idx]
                 .inner
                 .get_mut(position_within_node)
@@ -3657,7 +3669,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx + 1 {
-            return None
+            return None;
         }
         if let Some(entry) = self.current_front_iterator.next() {
             self.current_front_idx += 1;
@@ -3666,7 +3678,7 @@ where
             // If the current iterator has been exhausted, we have to check whether there are any
             // iterators left
             if self.current_front_node_idx == self.inner.size_hint().0 {
-                return None
+                return None;
             }
             if self.current_front_node_idx == self.current_back_node_idx - 1 {
                 // take from the current back iter
@@ -3696,7 +3708,7 @@ where
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx + 1 {
-            return None
+            return None;
         }
         if let Some(entry) = self.current_back_iterator.next_back() {
             self.current_back_idx -= 1;
@@ -3705,7 +3717,7 @@ where
             // If the current iterator has been exhausted, we have to check whether there are any
             // iterators left
             if self.current_back_node_idx == 0 {
-                return None
+                return None;
             }
             if self.current_front_node_idx == self.current_back_node_idx - 1 {
                 // take from the current front iter
@@ -3885,7 +3897,7 @@ impl<'a, T: Ord + Clone> Cursor<'a, T> {
     }
     pub fn peek_prev(&self) -> Option<&'a T> {
         if self.idx == 0 {
-            return None
+            return None;
         }
 
         return self.set.get_index(self.idx - 1);
@@ -3957,6 +3969,7 @@ impl<'a, K: Ord + Clone, V: Clone> CursorMap<'a, K, V> {
 #[cfg(test)]
 mod tests {
     use crate::{BTreeMap, BTreeSet, Node, DEFAULT_CUTOFF, DEFAULT_INNER_SIZE};
+    use std::collections::Bound::Included;
 
     #[test]
     fn test_insert() {
@@ -4408,5 +4421,19 @@ mod tests {
             let actual_right = Vec::from_iter(right);
             assert_eq!(expected_right, actual_right)
         }
+    }
+
+    #[test]
+    fn test_out_of_bounds_range() {
+        let btree: BTreeSet<usize> = BTreeSet::from_iter(0..10);
+        assert_eq!(btree.range((Included(5), Included(11))).count(), 5);
+        assert_eq!(btree.range((Included(5), Included(16))).count(), 5);
+        assert_eq!(
+            btree
+                .range((Included(5), Included(10 + DEFAULT_INNER_SIZE)))
+                .count(),
+            5
+        );
+        assert_eq!(btree.range((Included(0), Included(11))).count(), 10);
     }
 }
