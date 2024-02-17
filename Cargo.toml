@@ -16,7 +16,7 @@ rand = "0.8.5"
 
 [dependencies]
 serde = { version = "1.0.151", optional = true, features = ["derive"] }
-ftree = { version = "1.0.0", features = ["serde"] }
+ftree = { version = "1.0.1", features = ["serde"] }
 
 [features]
 serde = ["dep:serde"]

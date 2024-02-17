@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 
+## [0.3.8] - 2024-02-18
+### Changed
+- Bumped `ftree` crate
+
 ## [0.3.7] - 2024-02-18
 ### Fixed
 - Many overflows relating to range bounds thanks to @Cydhra
