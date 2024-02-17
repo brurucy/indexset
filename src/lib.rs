@@ -1441,11 +1441,7 @@ where
             self.current_front_iterator =
                 Some(self.btree.inner[self.current_front_node_idx].inner.iter());
 
-            if let Some(value) = self.current_front_iterator.as_mut().and_then(|i| i.next()) {
-                return Some(value);
-            }
-
-            None
+            self.next()
         };
     }
 }
@@ -4070,6 +4066,7 @@ mod tests {
 
         assert_eq!(expected_output, actual_output);
     }
+
     #[test]
     fn test_take() {
         let input: Vec<usize> = (0..(DEFAULT_INNER_SIZE + 1)).into_iter().collect();
@@ -4161,6 +4158,7 @@ mod tests {
         let actual_backward = Vec::from_iter(btree.iter().cloned().rev());
         assert_eq!(expected_backward, actual_backward);
     }
+
     #[test]
     fn test_iter_mut() {
         let btree = BTreeMap::from_iter((0..(DEFAULT_INNER_SIZE * 10)).enumerate().rev());
@@ -4186,6 +4184,7 @@ mod tests {
                 assert_eq!(*lhs.1, rhs.1);
             });
     }
+
     #[test]
     fn test_into_iter() {
         let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE * 10)).rev());
@@ -4197,6 +4196,7 @@ mod tests {
         let actual_backward = Vec::from_iter(btree.into_iter().rev());
         assert_eq!(expected_backward, actual_backward);
     }
+
     #[test]
     fn test_range() {
         let btree = BTreeSet::from_iter(0..10);
@@ -4247,6 +4247,7 @@ mod tests {
             start_til_seven_included
         );
     }
+
     #[test]
     fn test_range_mut() {
         let btree = BTreeMap::from_iter((0..10).into_iter().enumerate());
@@ -4426,8 +4427,8 @@ mod tests {
     #[test]
     fn test_out_of_bounds_range() {
         let btree: BTreeSet<usize> = BTreeSet::from_iter(0..10);
+        assert_eq!(btree.range((Included(5), Included(10))).count(), 5);
         assert_eq!(btree.range((Included(5), Included(11))).count(), 5);
-        assert_eq!(btree.range((Included(5), Included(16))).count(), 5);
         assert_eq!(
             btree
                 .range((Included(5), Included(10 + DEFAULT_INNER_SIZE)))
@@ -4435,5 +4436,37 @@ mod tests {
             5
         );
         assert_eq!(btree.range((Included(0), Included(11))).count(), 10);
+    }
+
+    #[test]
+    fn test_iterating_over_blocks() {
+        let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 10)).into_iter());
+        assert_eq!(btree.iter().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
+        assert_eq!(
+            btree.range(0..DEFAULT_INNER_SIZE).count(),
+            (0..DEFAULT_INNER_SIZE).count()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE).count(),
+            (0..=DEFAULT_INNER_SIZE).count()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE + 1).count(),
+            (0..=DEFAULT_INNER_SIZE + 1).count()
+        );
+
+        assert_eq!(btree.iter().rev().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
+        assert_eq!(
+            btree.range(0..DEFAULT_INNER_SIZE).rev().count(),
+            (0..DEFAULT_INNER_SIZE).count()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE).rev().count(),
+            (0..=DEFAULT_INNER_SIZE).count()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE + 1).rev().count(),
+            (0..=DEFAULT_INNER_SIZE + 1).count()
+        );
     }
 }
