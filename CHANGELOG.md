@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 
+## [0.3.7] - 2024-02-18
+### Fixed
+- Many overflows relating to range bounds thanks to @Cydhra
+
 ## [0.3.6] - 2023-08-12
 ### Changed
 - solved many clippy warnings
@@ -51,7 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeMap`
 
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.3.7...HEAD
+[0.3.7]: https://github.com/brurucy/indexset/releases/tag/v0.3.7
 [0.3.6]: https://github.com/brurucy/indexset/releases/tag/v0.3.6
 [0.3.5]: https://github.com/brurucy/indexset/releases/tag/v0.3.5
 [0.3.4]: https://github.com/brurucy/indexset/releases/tag/v0.3.4
