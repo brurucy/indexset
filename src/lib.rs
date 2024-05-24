@@ -14,100 +14,97 @@ use std::mem::swap;
 use std::ops::{Index, RangeBounds};
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Ord, Hash)]
 struct Node<T>
 where
-    T: PartialOrd + Clone,
+    T: Ord,
 {
     pub inner: Vec<T>,
-    pub max: Option<T>,
-    pub iterations: usize,
 }
 
-impl<T: PartialOrd + Clone> PartialOrd for Node<T> {
+impl<T: Ord> PartialOrd for Node<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.max.partial_cmp(&other.max)
+        self.last().partial_cmp(&other.last())
     }
 }
 
-impl<T: PartialOrd + Clone> Default for Node<T> {
+impl<T: Ord> Default for Node<T> {
     fn default() -> Self {
         Self {
             inner: Vec::with_capacity(DEFAULT_INNER_SIZE),
-            max: None,
-            iterations: 10,
         }
     }
 }
 
-fn search<T: PartialOrd>(haystack: &[T], needle: &T, iterations: usize) -> Result<usize, usize> {
-    let mut left = 0;
-    let mut right = haystack.len();
-    for _ in 0..iterations {
-        if left >= right {
-            break;
+#[inline]
+fn search<T: Ord>(haystack: &[T], needle: &T) -> Result<usize, usize> {
+    let mut j = haystack.len();
+
+    unsafe {
+        let mut i = 0;
+        let p = haystack.as_ptr().cast::<T>();
+        let mut m = j >> 1;
+        while i != j {
+            match (*p.add(m)).borrow().cmp(needle) {
+                Ordering::Equal => return Ok(m),
+                Ordering::Less => {
+                    i = m + 1;
+                    m = (i + j) >> 1;
+                }
+                Ordering::Greater => {
+                    j = m;
+                    m = (i + j) >> 1;
+                }
+            }
         }
-
-        let mid = left + (right - left) / 2;
-
-        let mid_value = unsafe { haystack.get_unchecked(mid) };
-
-        if mid_value < needle {
-            left = mid + 1;
-        } else if mid_value > needle {
-            right = mid;
-        } else {
-            return Ok(mid);
-        }
+        Err(i)
     }
-
-    Err(left)
 }
 
-impl<T: Ord + Clone> Node<T> {
+impl<T: Ord> Node<T> {
+    #[inline]
     pub fn new(capacity: usize) -> Self {
         Self {
             inner: Vec::with_capacity(capacity),
-            iterations: capacity.ilog2() as usize,
             ..Default::default()
         }
     }
+    #[inline]
     pub fn get(&self, index: usize) -> Option<&T> {
         self.inner.get(index)
     }
+    #[inline]
     pub fn split_off(&mut self, cutoff: usize) -> Self {
         let latter_inner = self.inner.split_off(cutoff);
 
-        self.max = self.inner.last().cloned();
-
-        let latter_inner_max = latter_inner.last().cloned();
         Self {
             inner: latter_inner,
-            max: latter_inner_max,
-            iterations: self.iterations,
         }
     }
+    #[inline]
     pub fn halve(&mut self) -> Self {
         self.split_off(DEFAULT_CUTOFF)
     }
+    #[inline]
     pub fn len(&self) -> usize {
         self.inner.len()
     }
+    #[inline]
     pub fn insert(&mut self, value: T) -> bool {
-        match search(&self.inner, &value, self.iterations) {
+        match search(&self.inner, &value) {
             Ok(_) => return false,
             Err(idx) => {
-                let some_value = Some(&value);
-                if some_value > self.max.as_ref() {
-                    self.max = some_value.cloned()
-                }
-
                 self.inner.insert(idx, value);
             }
         }
 
         true
     }
+    #[inline]
+    pub fn last(&self) -> Option<&T> {
+        self.inner.last()
+    }
+    #[inline]
     pub fn delete(&mut self, index: usize) -> T {
         self.inner.remove(index)
     }
@@ -169,10 +166,10 @@ impl<T: Ord + Clone> Node<T> {
 /// let set = BTreeSet::from_iter([1, 2, 3]);
 /// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct BTreeSet<T>
 where
-    T: Clone + Ord,
+    T: Ord,
 {
     inner: Vec<Node<T>>,
     index: FenwickTree<usize>,
@@ -180,7 +177,7 @@ where
     len: usize,
 }
 
-impl<T: Clone + Ord> BTreeSet<T> {
+impl<T: Ord> BTreeSet<T> {
     /// Makes a new, empty `BTreeSet` with maximum node size 1024. Allocates one vec of capacity 1024.
     ///
     /// Note that this does not mean that the maximum number of items is 1024.
@@ -240,7 +237,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         Q: Ord + ?Sized,
     {
         let mut node_idx = self.inner.partition_point(|node| {
-            if let Some(max) = node.max.as_ref() {
+            if let Some(&max) = node.last().as_ref() {
                 return max.borrow() < value;
             };
 
@@ -264,7 +261,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         P: FnMut(&Q) -> bool,
     {
         let mut node_idx = self.inner.partition_point(|node| {
-            if let Some(max) = node.max.as_ref() {
+            if let Some(max) = node.last() {
                 return cmp(max.borrow());
             }
 
@@ -451,19 +448,17 @@ impl<T: Clone + Ord> BTreeSet<T> {
         let node_idx = self.locate_node(&value);
         if self.inner[node_idx].len() == DEFAULT_INNER_SIZE {
             let new_node = self.inner[node_idx].halve();
-            // Get the minimum
-            let new_node_min = new_node.inner[0].clone();
-            // Insert the new node
+            let mut insert_node_idx = node_idx;
+            if value >= new_node.inner[0] {
+                insert_node_idx += 1;
+            }
+
             self.inner.insert(node_idx + 1, new_node);
-            let insert_node_idx = if value < new_node_min {
-                node_idx
-            } else {
-                node_idx + 1
-            };
             if self.inner[insert_node_idx].insert(value) {
                 // Reconstruct the index after the new node insert.
                 self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
                 self.len += 1;
+
                 true
             } else {
                 false
@@ -471,6 +466,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
         } else if self.inner[node_idx].insert(value) {
             self.index.add_at(node_idx, 1);
             self.len += 1;
+
             true
         } else {
             false
@@ -1342,7 +1338,7 @@ impl<T: Clone + Ord> BTreeSet<T> {
 
 impl<T> FromIterator<T> for BTreeSet<T>
 where
-    T: Ord + Clone,
+    T: Ord,
 {
     fn from_iter<K: IntoIterator<Item = T>>(iter: K) -> Self {
         let mut btree = BTreeSet::new();
@@ -1356,7 +1352,7 @@ where
 
 impl<T, const N: usize> From<[T; N]> for BTreeSet<T>
 where
-    T: Ord + Clone,
+    T: Ord ,
 {
     fn from(value: [T; N]) -> Self {
         let mut btree: BTreeSet<T> = Default::default();
@@ -1371,7 +1367,7 @@ where
 
 impl<T> Default for BTreeSet<T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     fn default() -> Self {
         let node_capacity = DEFAULT_INNER_SIZE;
@@ -1393,7 +1389,7 @@ where
 /// [`iter`]: BTreeSet::iter
 pub struct Iter<'a, T>
 where
-    T: Clone + Ord,
+    T: Ord,
 {
     btree: &'a BTreeSet<T>,
     current_front_node_idx: usize,
@@ -1406,7 +1402,7 @@ where
 
 impl<'a, T> Iter<'a, T>
 where
-    T: Clone + Ord,
+    T: Ord,
 {
     pub fn new(btree: &'a BTreeSet<T>) -> Self {
         return Self {
@@ -1423,7 +1419,7 @@ where
 
 impl<'a, T> Iterator for Iter<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     type Item = &'a T;
 
@@ -1449,7 +1445,7 @@ where
 
 impl<'a, T> DoubleEndedIterator for Iter<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx {
@@ -1475,11 +1471,11 @@ where
     }
 }
 
-impl<'a, T> FusedIterator for Iter<'a, T> where T: Clone + Ord {}
+impl<'a, T> FusedIterator for Iter<'a, T> where T:  Ord {}
 
 impl<'a, T> IntoIterator for &'a BTreeSet<T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     type Item = &'a T;
 
@@ -1498,14 +1494,14 @@ where
 /// [`into_iter`]: BTreeSet#method.into_iter
 pub struct IntoIter<T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     btree: BTreeSet<T>,
 }
 
 impl<T> Iterator for IntoIter<T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     type Item = T;
 
@@ -1516,18 +1512,18 @@ where
 
 impl<T> DoubleEndedIterator for IntoIter<T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.btree.pop_last()
     }
 }
 
-impl<T> FusedIterator for IntoIter<T> where T: Clone + Ord {}
+impl<T> FusedIterator for IntoIter<T> where T:  Ord {}
 
 impl<T> IntoIterator for BTreeSet<T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     type Item = T;
 
@@ -1541,7 +1537,7 @@ where
 
 struct MergeIter<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     start: bool,
     left_iter: Iter<'a, T>,
@@ -1552,7 +1548,7 @@ where
 
 impl<'a, T> Iterator for MergeIter<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     type Item = (Option<&'a T>, Option<&'a T>);
     fn next(&mut self) -> Option<Self::Item> {
@@ -1597,14 +1593,14 @@ where
 /// [`union`]: BTreeSet::union
 pub struct Union<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     merge_iter: MergeIter<'a, T>,
 }
 
 impl<'a, T> Iterator for Union<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     type Item = &'a T;
 
@@ -1628,7 +1624,7 @@ where
     }
 }
 
-impl<'a, T> FusedIterator for Union<'a, T> where T: Clone + Ord {}
+impl<'a, T> FusedIterator for Union<'a, T> where T:  Ord {}
 
 /// A lazy iterator producing elements in the difference of `BTreeSet`s.
 ///
@@ -1638,14 +1634,14 @@ impl<'a, T> FusedIterator for Union<'a, T> where T: Clone + Ord {}
 /// [`difference`]: BTreeSet::difference
 pub struct Difference<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     merge_iter: MergeIter<'a, T>,
 }
 
 impl<'a, T> Iterator for Difference<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     type Item = &'a T;
 
@@ -1670,7 +1666,7 @@ where
     }
 }
 
-impl<'a, T> FusedIterator for Difference<'a, T> where T: Clone + Ord {}
+impl<'a, T> FusedIterator for Difference<'a, T> where T:  Ord {}
 
 /// A lazy iterator producing elements in the symmetric difference of `BTreeSet`s.
 ///
@@ -1680,14 +1676,14 @@ impl<'a, T> FusedIterator for Difference<'a, T> where T: Clone + Ord {}
 /// [`symmetric_difference`]: BTreeSet::symmetric_difference
 pub struct SymmetricDifference<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     merge_iter: MergeIter<'a, T>,
 }
 
 impl<'a, T> Iterator for SymmetricDifference<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     type Item = &'a T;
 
@@ -1715,7 +1711,7 @@ where
     }
 }
 
-impl<'a, T> FusedIterator for SymmetricDifference<'a, T> where T: Clone + Ord {}
+impl<'a, T> FusedIterator for SymmetricDifference<'a, T> where T:  Ord {}
 
 /// A lazy iterator producing elements in the intersection of `BTreeSet`s.
 ///
@@ -1725,14 +1721,14 @@ impl<'a, T> FusedIterator for SymmetricDifference<'a, T> where T: Clone + Ord {}
 /// [`intersection`]: BTreeSet::intersection
 pub struct Intersection<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     merge_iter: MergeIter<'a, T>,
 }
 
 impl<'a, T> Iterator for Intersection<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     type Item = &'a T;
 
@@ -1756,7 +1752,7 @@ where
     }
 }
 
-impl<'a, T> FusedIterator for Intersection<'a, T> where T: Clone + Ord {}
+impl<'a, T> FusedIterator for Intersection<'a, T> where T:  Ord {}
 
 /// An iterator over a sub-range of items in a `BTreeSet`.
 ///
@@ -1766,14 +1762,14 @@ impl<'a, T> FusedIterator for Intersection<'a, T> where T: Clone + Ord {}
 /// [`range`]: BTreeSet::range
 pub struct Range<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     spine_iter: Iter<'a, T>,
 }
 
 impl<'a, T> Iterator for Range<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     type Item = &'a T;
 
@@ -1784,18 +1780,18 @@ where
 
 impl<'a, T> DoubleEndedIterator for Range<'a, T>
 where
-    T: Clone + Ord,
+    T:  Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.spine_iter.next_back()
     }
 }
 
-impl<'a, T> FusedIterator for Range<'a, T> where T: Clone + Ord {}
+impl<'a, T> FusedIterator for Range<'a, T> where T:  Ord {}
 
 impl<T> Index<usize> for BTreeSet<T>
 where
-    T: Ord + Clone,
+    T: Ord ,
 {
     type Output = T;
 
@@ -1805,11 +1801,11 @@ where
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash)]
 struct Pair<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     key: K,
     value: V,
@@ -1817,15 +1813,15 @@ where
 
 impl<K, V> Eq for Pair<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
 }
 
 impl<K, V> PartialEq<Self> for Pair<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     fn eq(&self, other: &Self) -> bool {
         self.key == other.key
@@ -1834,8 +1830,8 @@ where
 
 impl<K, V> PartialOrd<Self> for Pair<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.key.partial_cmp(&other.key)
@@ -1844,8 +1840,8 @@ where
 
 impl<K, V> Ord for Pair<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     fn cmp(&self, other: &Self) -> Ordering {
         self.key.cmp(&other.key)
@@ -1854,8 +1850,8 @@ where
 
 pub struct VacantEntry<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     map: &'a mut BTreeMap<K, V>,
     key: K,
@@ -1863,18 +1859,16 @@ where
 
 pub struct OccupiedEntry<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
 {
     map: &'a mut BTreeMap<K, V>,
-    key: K,
     idx: usize,
 }
 
 pub enum Entry<'a, K, V>
 where
-    K: 'a + Clone + Ord,
-    V: 'a + Clone,
+    K: 'a  + Ord,
+    V: 'a,
 {
     Vacant(VacantEntry<'a, K, V>),
     Occupied(OccupiedEntry<'a, K, V>),
@@ -1882,8 +1876,8 @@ where
 
 impl<'a, K, V> Entry<'a, K, V>
 where
-    K: 'a + Clone + Ord,
-    V: 'a + Clone,
+    K: 'a  + Ord,
+    V: 'a,
 {
     pub fn or_insert(self, default: V) -> &'a mut V {
         match self {
@@ -1943,11 +1937,11 @@ where
 
 impl<'a, K, V> OccupiedEntry<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     pub fn key(&self) -> &K {
-        &self.key
+        &self.map.set.get_index(self.idx).unwrap().key
     }
     pub fn remove_entry(self) -> (K, V) {
         self.map.pop_index(self.idx)
@@ -1975,8 +1969,7 @@ where
 
 impl<'a, K, V> VacantEntry<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord,
 {
     pub fn key(&self) -> &K {
         &self.key
@@ -2080,19 +2073,17 @@ where
 /// ]);
 /// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BTreeMap<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
 {
     set: BTreeSet<Pair<K, V>>,
 }
 
-impl<K: Clone + Ord, V> Default for BTreeMap<K, V>
+impl<K:  Ord, V> Default for BTreeMap<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
 {
     fn default() -> Self {
         Self {
@@ -2103,8 +2094,8 @@ where
 
 impl<K, V> FromIterator<(K, V)> for BTreeMap<K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
         let mut btree = BTreeMap::new();
@@ -2116,10 +2107,10 @@ where
     }
 }
 
-impl<K: Clone + Ord, V> BTreeMap<K, V>
+impl<K:  Ord, V> BTreeMap<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     /// Moves all elements from `other` into `self`, leaving `other` empty.
     ///
@@ -2746,7 +2737,7 @@ where
     /// ```
     pub fn range<Q, R>(&self, range: R) -> RangeMap<K, V>
     where
-        Q: Clone + Ord + ?Sized,
+        Q:  Ord + ?Sized,
         K: Borrow<Q>,
         R: RangeBounds<Q>,
     {
@@ -2758,7 +2749,7 @@ where
     }
     fn range_to_idx<Q, R>(&self, range: R) -> (usize, usize)
     where
-        Q: Clone + Ord + ?Sized,
+        Q:  Ord + ?Sized,
         K: Borrow<Q>,
         R: RangeBounds<Q>,
     {
@@ -2805,7 +2796,7 @@ where
     /// ```
     pub fn range_mut<Q, R>(&mut self, range: R) -> RangeMut<K, V>
     where
-        Q: Clone + Ord + ?Sized,
+        Q:  Ord + ?Sized,
         K: Borrow<Q>,
         R: RangeBounds<Q>,
     {
@@ -3084,11 +3075,10 @@ where
         K: Ord,
     {
         if self.contains_key(&key) {
-            let rank = self.set.rank_cmp(|item| item.key < key);
+            let idx = self.set.rank_cmp(|item| item.key < key);
             return Occupied(OccupiedEntry {
                 map: self,
-                key,
-                idx: rank,
+                idx,
             });
         }
 
@@ -3118,11 +3108,9 @@ where
         K: Ord,
     {
         if !self.is_empty() {
-            let first_key = self.set.first().unwrap().key.clone();
             return Some(OccupiedEntry {
                 map: self,
                 idx: 0,
-                key: first_key,
             });
         }
 
@@ -3153,11 +3141,9 @@ where
     {
         let len = self.len();
         if len > 0 {
-            let last_key = self.set.last().unwrap().key.clone();
             return Some(OccupiedEntry {
                 map: self,
                 idx: len - 1,
-                key: last_key,
             });
         }
 
@@ -3235,8 +3221,8 @@ where
 
 impl<K, V, const N: usize> From<[(K, V); N]> for BTreeMap<K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     fn from(value: [(K, V); N]) -> Self {
         let mut btree: BTreeMap<K, V> = Default::default();
@@ -3251,8 +3237,8 @@ where
 
 impl<K, V> IntoIterator for BTreeMap<K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     type Item = (K, V);
     type IntoIter = IntoIterMap<K, V>;
@@ -3266,8 +3252,8 @@ where
 
 impl<'a, K, V> IntoIterator for &'a BTreeMap<K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     type Item = (&'a K, &'a V);
 
@@ -3288,16 +3274,16 @@ where
 /// [`iter`]: BTreeMap::iter
 pub struct IterMap<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     inner: Iter<'a, Pair<K, V>>,
 }
 
 impl<'a, K, V> Iterator for IterMap<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     type Item = (&'a K, &'a V);
 
@@ -3312,8 +3298,8 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for IterMap<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3326,8 +3312,8 @@ where
 
 impl<'a, K, V> FusedIterator for IterMap<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
 }
 
@@ -3339,16 +3325,16 @@ where
 /// [`into_iter`]: IntoIterator::into_iter
 pub struct IntoIterMap<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     inner: IntoIter<Pair<K, V>>,
 }
 
 impl<K, V> Iterator for IntoIterMap<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     type Item = (K, V);
 
@@ -3363,8 +3349,8 @@ where
 
 impl<K, V> DoubleEndedIterator for IntoIterMap<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3377,8 +3363,8 @@ where
 
 impl<K, V> FusedIterator for IntoIterMap<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
 }
 
@@ -3390,16 +3376,16 @@ where
 /// [`into_keys`]: BTreeMap::into_keys
 pub struct IntoKeys<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     inner: IntoIterMap<K, V>,
 }
 
 impl<K, V> Iterator for IntoKeys<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     type Item = K;
 
@@ -3414,8 +3400,8 @@ where
 
 impl<K, V> DoubleEndedIterator for IntoKeys<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3428,8 +3414,8 @@ where
 
 impl<K, V> FusedIterator for IntoKeys<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
 }
 
@@ -3441,16 +3427,16 @@ where
 /// [`into_values`]: BTreeMap::into_values
 pub struct IntoValues<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     inner: IntoIterMap<K, V>,
 }
 
 impl<K, V> Iterator for IntoValues<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     type Item = V;
 
@@ -3465,8 +3451,8 @@ where
 
 impl<K, V> DoubleEndedIterator for IntoValues<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3479,8 +3465,8 @@ where
 
 impl<K, V> FusedIterator for IntoValues<K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
 }
 
@@ -3492,16 +3478,16 @@ where
 /// [`range`]: BTreeMap::range
 pub struct RangeMap<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     inner: Range<'a, Pair<K, V>>,
 }
 
 impl<'a, K, V> Iterator for RangeMap<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     type Item = (&'a K, &'a V);
 
@@ -3516,8 +3502,8 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for RangeMap<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3530,8 +3516,8 @@ where
 
 impl<'a, K, V> FusedIterator for RangeMap<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
 }
 
@@ -3543,16 +3529,16 @@ where
 /// [`values`]: BTreeMap::values
 pub struct Values<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     inner: Iter<'a, Pair<K, V>>,
 }
 
 impl<'a, K, V> Iterator for Values<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     type Item = &'a V;
 
@@ -3567,8 +3553,8 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for Values<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3581,8 +3567,8 @@ where
 
 impl<'a, K, V> FusedIterator for Values<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
 }
 
@@ -3594,16 +3580,16 @@ where
 /// [`keys`]: BTreeMap::keys
 pub struct Keys<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     inner: Iter<'a, Pair<K, V>>,
 }
 
 impl<'a, K, V> Iterator for Keys<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     type Item = &'a K;
 
@@ -3618,8 +3604,8 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for Keys<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3632,8 +3618,8 @@ where
 
 impl<'a, K, V> FusedIterator for Keys<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
 }
 
@@ -3645,8 +3631,8 @@ where
 /// [`iter_mut`]: BTreeMap::iter_mut
 pub struct IterMut<'a, K: 'a, V: 'a>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     inner: std::slice::IterMut<'a, Node<Pair<K, V>>>,
     current_front_node_idx: usize,
@@ -3659,8 +3645,8 @@ where
 
 impl<'a, K, V> Iterator for IterMut<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     type Item = (&'a K, &'a mut V);
 
@@ -3700,8 +3686,8 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for IterMut<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx + 1 {
@@ -3741,8 +3727,8 @@ where
 
 impl<'a, K, V> FusedIterator for IterMut<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
 }
 
@@ -3754,16 +3740,16 @@ where
 /// [`values_mut`]: BTreeMap::values_mut
 pub struct ValuesMut<'a, K: 'a, V: 'a>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     inner: IterMut<'a, K, V>,
 }
 
 impl<'a, K, V> Iterator for ValuesMut<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     type Item = &'a mut V;
 
@@ -3778,8 +3764,8 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for ValuesMut<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3792,8 +3778,8 @@ where
 
 impl<'a, K, V> FusedIterator for ValuesMut<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
 }
 
@@ -3805,16 +3791,16 @@ where
 /// [`range_mut`]: BTreeMap::range_mut
 pub struct RangeMut<'a, K: 'a, V: 'a>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     inner: IterMut<'a, K, V>,
 }
 
 impl<'a, K, V> Iterator for RangeMut<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     type Item = (&'a K, &'a mut V);
 
@@ -3825,8 +3811,8 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for RangeMut<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Ord ,
+    
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         return self.inner.next_back();
@@ -3835,15 +3821,15 @@ where
 
 impl<'a, K, V> FusedIterator for RangeMut<'a, K, V>
 where
-    K: Clone + Ord,
-    V: Clone,
+    K:  Ord,
+    
 {
 }
 
 impl<K, Q, V> Index<&Q> for BTreeMap<K, V>
 where
-    K: Borrow<Q> + Ord + Clone,
-    V: Clone,
+    K: Borrow<Q> + Ord ,
+    
     Q: Ord + ?Sized,
 {
     type Output = V;
@@ -3855,13 +3841,13 @@ where
 
 pub struct Cursor<'a, T>
 where
-    T: Ord + Clone,
+    T: Ord ,
 {
     set: &'a BTreeSet<T>,
     idx: usize,
 }
 
-impl<'a, T: Ord + Clone> Cursor<'a, T> {
+impl<'a, T: Ord > Cursor<'a, T> {
     pub fn move_next(&mut self) {
         if self.idx == self.set.len() {
             self.idx = 0
@@ -3903,13 +3889,13 @@ impl<'a, T: Ord + Clone> Cursor<'a, T> {
 
 pub struct CursorMap<'a, K, V>
 where
-    K: 'a + Ord + Clone,
-    V: 'a + Clone,
+    K: 'a + Ord ,
+    V: 'a ,
 {
     cursor: Cursor<'a, Pair<K, V>>,
 }
 
-impl<'a, K: Ord + Clone, V: Clone> CursorMap<'a, K, V> {
+impl<'a, K: Ord , V> CursorMap<'a, K, V> {
     pub fn move_next(&mut self) {
         self.cursor.move_next()
     }
@@ -3977,14 +3963,14 @@ mod tests {
         let actual_node = input
             .iter()
             .fold(Node::new(DEFAULT_INNER_SIZE), |mut acc, curr| {
-                acc.insert(curr);
+                acc.insert(*curr);
                 acc
             });
 
-        let actual_output: Vec<isize> = actual_node.inner.into_iter().cloned().collect();
+        let actual_output: Vec<isize> = actual_node.inner.iter().cloned().collect();
 
         assert_eq!(expected_output, actual_output);
-        assert_eq!(*actual_node.max.unwrap(), 10);
+        assert_eq!(*actual_node.last().unwrap(), 10);
     }
 
     #[test]

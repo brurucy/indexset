@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 
+## [0.4.0] - 2024-05-24
+### Added
+- Implementations of `PartialEq`, `Eq`, `Ord`, `Hash` for `BTreeSet` and `BTreeMap`
+
+### Changed
+- Bumped `ftree` crate
+
+### Removed
+- Requirement for `T` to implement `Clone`
+
 ## [0.3.8] - 2024-02-18
 ### Changed
 - Bumped `ftree` crate
@@ -59,7 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeMap`
 
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.3.8...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/brurucy/indexset/releases/tag/v0.4.0
 [0.3.8]: https://github.com/brurucy/indexset/releases/tag/v0.3.8
 [0.3.7]: https://github.com/brurucy/indexset/releases/tag/v0.3.7
 [0.3.6]: https://github.com/brurucy/indexset/releases/tag/v0.3.6
