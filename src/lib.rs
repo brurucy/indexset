@@ -455,12 +455,14 @@ impl<T: Ord> BTreeSet<T> {
 
             self.inner.insert(node_idx + 1, new_node);
             if self.inner[insert_node_idx].insert(value) {
-                // Reconstruct the index after the new node insert.
+                // Reconstruct the index after the new node and inner value inserts.
                 self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
                 self.len += 1;
 
                 true
             } else {
+                // Reconstruct the index after the new node insert even if the new value wasn't added.
+                self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
                 false
             }
         } else if self.inner[node_idx].insert(value) {
