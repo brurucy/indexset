@@ -14,7 +14,7 @@ use std::mem::swap;
 use std::ops::{Index, RangeBounds};
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Clone, Debug, PartialEq, Eq, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Node<T>
 where
     T: Ord,
@@ -22,9 +22,18 @@ where
     pub inner: Vec<T>,
 }
 
+impl<T: Ord> Ord for Node<T>
+where
+    T: Ord,
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.last().cmp(&other.last())
+    }
+}
+
 impl<T: Ord> PartialOrd for Node<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.last().partial_cmp(&other.last())
+        Some(self.cmp(other))
     }
 }
 
