@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 
+## [0.4.1] - 2024-08-19
+### Fixed
+- Inconsistent index after many duplicated items are inserted thanks to @michaelsutton 
+
 ## [0.4.0] - 2024-05-24
 ### Added
 - Implementations of `PartialEq`, `Eq`, `Ord`, `Hash` for `BTreeSet` and `BTreeMap`
@@ -69,7 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeMap`
 
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/brurucy/indexset/releases/tag/v0.4.1
 [0.4.0]: https://github.com/brurucy/indexset/releases/tag/v0.4.0
 [0.3.8]: https://github.com/brurucy/indexset/releases/tag/v0.3.8
 [0.3.7]: https://github.com/brurucy/indexset/releases/tag/v0.3.7
