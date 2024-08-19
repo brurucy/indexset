@@ -14,7 +14,7 @@ use std::mem::swap;
 use std::ops::{Index, RangeBounds};
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Clone, Debug, PartialEq, Eq, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Node<T>
 where
     T: Ord,
@@ -22,9 +22,18 @@ where
     pub inner: Vec<T>,
 }
 
+impl<T: Ord> Ord for Node<T>
+where
+    T: Ord,
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.last().cmp(&other.last())
+    }
+}
+
 impl<T: Ord> PartialOrd for Node<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.last().partial_cmp(&other.last())
+        Some(self.cmp(other))
     }
 }
 
@@ -455,12 +464,14 @@ impl<T: Ord> BTreeSet<T> {
 
             self.inner.insert(node_idx + 1, new_node);
             if self.inner[insert_node_idx].insert(value) {
-                // Reconstruct the index after the new node insert.
+                // Reconstruct the index after the new node and inner value inserts.
                 self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
                 self.len += 1;
 
                 true
             } else {
+                // Reconstruct the index after the new node insert even if the new value wasn't added.
+                self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
                 false
             }
         } else if self.inner[node_idx].insert(value) {
@@ -3952,6 +3963,7 @@ impl<'a, K: Ord , V> CursorMap<'a, K, V> {
 #[cfg(test)]
 mod tests {
     use crate::{BTreeMap, BTreeSet, Node, DEFAULT_CUTOFF, DEFAULT_INNER_SIZE};
+    use rand::{Rng, SeedableRng};
     use std::collections::Bound::Included;
 
     #[test]
@@ -4483,5 +4495,33 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn test_many_fuzzy_duplicates() {
+        // The below seed reproduces a previous bug
+        let mut rng = rand::rngs::StdRng::from_seed([41u8; 32]);
+        let mut btree = BTreeSet::new();
+        let n = 100_000;
+        for _ in 0..n {
+            let value: u64 = rng.gen_range(1..10000);
+            let lower: u64 = 1650;
+            let len_before = btree.len();
+            // Use max to increase the number of duplicates
+            if btree.insert(value.max(lower)) {
+                assert_eq!(btree.len(), len_before + 1)
+            } else {
+                assert_eq!(btree.len(), len_before);
+            }
+        }
+        let expected = btree.iter().cloned().collect::<Vec<_>>();
+        assert_eq!(expected.len(), btree.len());
+        for (i, expected_item) in expected.iter().enumerate() {
+            if let Some(item) = btree.get_index(i) {
+                assert_eq!(expected_item, item, "mismatch on index {i}");
+            } else {
+                panic!("missing index {i}")
+            }
+        }
     }
 }
