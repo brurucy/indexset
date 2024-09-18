@@ -1,8 +1,10 @@
-const DEFAULT_INNER_SIZE: usize = 1024;
-const CUTOFF_RATIO: usize = 2;
-const DEFAULT_CUTOFF: usize = DEFAULT_INNER_SIZE / CUTOFF_RATIO;
+#[cfg(feature = "concurrent")]
+pub mod concurrent;
+mod core;
 
 use crate::Entry::{Occupied, Vacant};
+use core::constants::{DEFAULT_CUTOFF, DEFAULT_INNER_SIZE};
+use core::pair::Pair;
 use ftree::FenwickTree;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -908,7 +910,7 @@ impl<T: Ord> BTreeSet<T> {
     /// assert_eq!(set_iter.next(), None);
     /// ```
     pub fn iter(&self) -> Iter<T> {
-        return Iter::new(self);
+        Iter::new(self)
     }
     /// Visits the elements representing the union,
     /// i.e., all the elements in `self` or `other`, without duplicates,
@@ -929,7 +931,7 @@ impl<T: Ord> BTreeSet<T> {
     /// assert_eq!(union, [1, 2]);
     /// ```
     pub fn union<'a>(&'a self, other: &'a Self) -> Union<T> {
-        return Union {
+        Union {
             merge_iter: MergeIter {
                 start: true,
                 left_iter: self.iter(),
@@ -937,7 +939,7 @@ impl<T: Ord> BTreeSet<T> {
                 right_iter: other.iter(),
                 current_right: None,
             },
-        };
+        }
     }
     /// Visits the elements representing the difference,
     /// i.e., the elements that are in `self` but not in `other`,
@@ -960,7 +962,7 @@ impl<T: Ord> BTreeSet<T> {
     /// assert_eq!(diff, [1]);
     /// ```
     pub fn difference<'a>(&'a self, other: &'a Self) -> Difference<T> {
-        return Difference {
+        Difference {
             merge_iter: MergeIter {
                 start: true,
                 left_iter: self.iter(),
@@ -968,7 +970,7 @@ impl<T: Ord> BTreeSet<T> {
                 right_iter: other.iter(),
                 current_right: None,
             },
-        };
+        }
     }
     /// Visits the elements representing the symmetric difference,
     /// i.e., the elements that are in `self` or in `other` but not in both,
@@ -991,7 +993,7 @@ impl<T: Ord> BTreeSet<T> {
     /// assert_eq!(sym_diff, [1, 3]);
     /// ```
     pub fn symmetric_difference<'a>(&'a self, other: &'a Self) -> SymmetricDifference<T> {
-        return SymmetricDifference {
+        SymmetricDifference {
             merge_iter: MergeIter {
                 start: true,
                 left_iter: self.iter(),
@@ -999,7 +1001,7 @@ impl<T: Ord> BTreeSet<T> {
                 right_iter: other.iter(),
                 current_right: None,
             },
-        };
+        }
     }
     /// Visits the elements representing the intersection,
     /// i.e., the elements that are both in `self` and `other`,
@@ -1022,7 +1024,7 @@ impl<T: Ord> BTreeSet<T> {
     /// assert_eq!(intersection, [2]);
     /// ```
     pub fn intersection<'a>(&'a self, other: &'a Self) -> Intersection<T> {
-        return Intersection {
+        Intersection {
             merge_iter: MergeIter {
                 start: true,
                 left_iter: self.iter(),
@@ -1030,7 +1032,7 @@ impl<T: Ord> BTreeSet<T> {
                 right_iter: other.iter(),
                 current_right: None,
             },
-        };
+        }
     }
     /// Retains only the elements specified by the predicate.
     ///
@@ -1363,7 +1365,7 @@ where
 
 impl<T, const N: usize> From<[T; N]> for BTreeSet<T>
 where
-    T: Ord ,
+    T: Ord,
 {
     fn from(value: [T; N]) -> Self {
         let mut btree: BTreeSet<T> = Default::default();
@@ -1378,7 +1380,7 @@ where
 
 impl<T> Default for BTreeSet<T>
 where
-    T:  Ord,
+    T: Ord,
 {
     fn default() -> Self {
         let node_capacity = DEFAULT_INNER_SIZE;
@@ -1416,7 +1418,7 @@ where
     T: Ord,
 {
     pub fn new(btree: &'a BTreeSet<T>) -> Self {
-        return Self {
+        Self {
             btree,
             current_front_node_idx: 0,
             current_front_idx: 0,
@@ -1424,13 +1426,13 @@ where
             current_back_idx: btree.len(),
             current_front_iterator: Some(btree.inner[0].inner.iter()),
             current_back_iterator: Some(btree.inner[btree.inner.len() - 1].inner.iter()),
-        };
+        }
     }
 }
 
 impl<'a, T> Iterator for Iter<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     type Item = &'a T;
 
@@ -1438,7 +1440,7 @@ where
         if self.current_front_idx == self.current_back_idx {
             return None;
         }
-        return if let Some(value) = self.current_front_iterator.as_mut().and_then(|i| i.next()) {
+        if let Some(value) = self.current_front_iterator.as_mut().and_then(|i| i.next()) {
             self.current_front_idx += 1;
             Some(value)
         } else {
@@ -1450,19 +1452,19 @@ where
                 Some(self.btree.inner[self.current_front_node_idx].inner.iter());
 
             self.next()
-        };
+        }
     }
 }
 
 impl<'a, T> DoubleEndedIterator for Iter<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx {
             return None;
         }
-        return if let Some(value) = self
+        if let Some(value) = self
             .current_back_iterator
             .as_mut()
             .and_then(|i| i.next_back())
@@ -1478,15 +1480,15 @@ where
                 Some(self.btree.inner[self.current_back_node_idx].inner.iter());
 
             self.next_back()
-        };
+        }
     }
 }
 
-impl<'a, T> FusedIterator for Iter<'a, T> where T:  Ord {}
+impl<'a, T> FusedIterator for Iter<'a, T> where T: Ord {}
 
 impl<'a, T> IntoIterator for &'a BTreeSet<T>
 where
-    T:  Ord,
+    T: Ord,
 {
     type Item = &'a T;
 
@@ -1505,14 +1507,14 @@ where
 /// [`into_iter`]: BTreeSet#method.into_iter
 pub struct IntoIter<T>
 where
-    T:  Ord,
+    T: Ord,
 {
     btree: BTreeSet<T>,
 }
 
 impl<T> Iterator for IntoIter<T>
 where
-    T:  Ord,
+    T: Ord,
 {
     type Item = T;
 
@@ -1523,18 +1525,18 @@ where
 
 impl<T> DoubleEndedIterator for IntoIter<T>
 where
-    T:  Ord,
+    T: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.btree.pop_last()
     }
 }
 
-impl<T> FusedIterator for IntoIter<T> where T:  Ord {}
+impl<T> FusedIterator for IntoIter<T> where T: Ord {}
 
 impl<T> IntoIterator for BTreeSet<T>
 where
-    T:  Ord,
+    T: Ord,
 {
     type Item = T;
 
@@ -1548,7 +1550,7 @@ where
 
 struct MergeIter<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     start: bool,
     left_iter: Iter<'a, T>,
@@ -1559,7 +1561,7 @@ where
 
 impl<'a, T> Iterator for MergeIter<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     type Item = (Option<&'a T>, Option<&'a T>);
     fn next(&mut self) -> Option<Self::Item> {
@@ -1604,14 +1606,14 @@ where
 /// [`union`]: BTreeSet::union
 pub struct Union<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     merge_iter: MergeIter<'a, T>,
 }
 
 impl<'a, T> Iterator for Union<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     type Item = &'a T;
 
@@ -1635,7 +1637,7 @@ where
     }
 }
 
-impl<'a, T> FusedIterator for Union<'a, T> where T:  Ord {}
+impl<'a, T> FusedIterator for Union<'a, T> where T: Ord {}
 
 /// A lazy iterator producing elements in the difference of `BTreeSet`s.
 ///
@@ -1645,14 +1647,14 @@ impl<'a, T> FusedIterator for Union<'a, T> where T:  Ord {}
 /// [`difference`]: BTreeSet::difference
 pub struct Difference<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     merge_iter: MergeIter<'a, T>,
 }
 
 impl<'a, T> Iterator for Difference<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     type Item = &'a T;
 
@@ -1677,7 +1679,7 @@ where
     }
 }
 
-impl<'a, T> FusedIterator for Difference<'a, T> where T:  Ord {}
+impl<'a, T> FusedIterator for Difference<'a, T> where T: Ord {}
 
 /// A lazy iterator producing elements in the symmetric difference of `BTreeSet`s.
 ///
@@ -1687,14 +1689,14 @@ impl<'a, T> FusedIterator for Difference<'a, T> where T:  Ord {}
 /// [`symmetric_difference`]: BTreeSet::symmetric_difference
 pub struct SymmetricDifference<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     merge_iter: MergeIter<'a, T>,
 }
 
 impl<'a, T> Iterator for SymmetricDifference<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     type Item = &'a T;
 
@@ -1722,7 +1724,7 @@ where
     }
 }
 
-impl<'a, T> FusedIterator for SymmetricDifference<'a, T> where T:  Ord {}
+impl<'a, T> FusedIterator for SymmetricDifference<'a, T> where T: Ord {}
 
 /// A lazy iterator producing elements in the intersection of `BTreeSet`s.
 ///
@@ -1732,14 +1734,14 @@ impl<'a, T> FusedIterator for SymmetricDifference<'a, T> where T:  Ord {}
 /// [`intersection`]: BTreeSet::intersection
 pub struct Intersection<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     merge_iter: MergeIter<'a, T>,
 }
 
 impl<'a, T> Iterator for Intersection<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     type Item = &'a T;
 
@@ -1763,7 +1765,7 @@ where
     }
 }
 
-impl<'a, T> FusedIterator for Intersection<'a, T> where T:  Ord {}
+impl<'a, T> FusedIterator for Intersection<'a, T> where T: Ord {}
 
 /// An iterator over a sub-range of items in a `BTreeSet`.
 ///
@@ -1773,14 +1775,14 @@ impl<'a, T> FusedIterator for Intersection<'a, T> where T:  Ord {}
 /// [`range`]: BTreeSet::range
 pub struct Range<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     spine_iter: Iter<'a, T>,
 }
 
 impl<'a, T> Iterator for Range<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     type Item = &'a T;
 
@@ -1791,18 +1793,18 @@ where
 
 impl<'a, T> DoubleEndedIterator for Range<'a, T>
 where
-    T:  Ord,
+    T: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.spine_iter.next_back()
     }
 }
 
-impl<'a, T> FusedIterator for Range<'a, T> where T:  Ord {}
+impl<'a, T> FusedIterator for Range<'a, T> where T: Ord {}
 
 impl<T> Index<usize> for BTreeSet<T>
 where
-    T: Ord ,
+    T: Ord,
 {
     type Output = T;
 
@@ -1811,58 +1813,9 @@ where
     }
 }
 
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Hash)]
-struct Pair<K, V>
-where
-    K:  Ord,
-    
-{
-    key: K,
-    value: V,
-}
-
-impl<K, V> Eq for Pair<K, V>
-where
-    K:  Ord,
-    
-{
-}
-
-impl<K, V> PartialEq<Self> for Pair<K, V>
-where
-    K:  Ord,
-    
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
-    }
-}
-
-impl<K, V> PartialOrd<Self> for Pair<K, V>
-where
-    K:  Ord,
-    
-{
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.key.partial_cmp(&other.key)
-    }
-}
-
-impl<K, V> Ord for Pair<K, V>
-where
-    K:  Ord,
-    
-{
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.key.cmp(&other.key)
-    }
-}
-
 pub struct VacantEntry<'a, K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     map: &'a mut BTreeMap<K, V>,
     key: K,
@@ -1870,7 +1823,7 @@ where
 
 pub struct OccupiedEntry<'a, K, V>
 where
-    K:  Ord,
+    K: Ord,
 {
     map: &'a mut BTreeMap<K, V>,
     idx: usize,
@@ -1878,7 +1831,7 @@ where
 
 pub enum Entry<'a, K, V>
 where
-    K: 'a  + Ord,
+    K: 'a + Ord,
     V: 'a,
 {
     Vacant(VacantEntry<'a, K, V>),
@@ -1887,7 +1840,7 @@ where
 
 impl<'a, K, V> Entry<'a, K, V>
 where
-    K: 'a  + Ord,
+    K: 'a + Ord,
     V: 'a,
 {
     pub fn or_insert(self, default: V) -> &'a mut V {
@@ -1948,8 +1901,7 @@ where
 
 impl<'a, K, V> OccupiedEntry<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     pub fn key(&self) -> &K {
         &self.map.set.get_index(self.idx).unwrap().key
@@ -1989,7 +1941,10 @@ where
         self.key
     }
     pub fn insert(self, value: V) -> &'a mut V {
-        let rank = self.map.set.rank_cmp(|item| &item.key < &self.key);
+        let rank = self
+            .map
+            .set
+            .rank_cmp(|item: &Pair<K, V>| &item.key < &self.key);
         self.map.insert(self.key, value);
 
         self.map.get_mut_index(rank).unwrap()
@@ -2087,14 +2042,14 @@ where
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BTreeMap<K, V>
 where
-    K:  Ord,
+    K: Ord,
 {
     set: BTreeSet<Pair<K, V>>,
 }
 
-impl<K:  Ord, V> Default for BTreeMap<K, V>
+impl<K: Ord, V> Default for BTreeMap<K, V>
 where
-    K:  Ord,
+    K: Ord,
 {
     fn default() -> Self {
         Self {
@@ -2105,8 +2060,7 @@ where
 
 impl<K, V> FromIterator<(K, V)> for BTreeMap<K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
         let mut btree = BTreeMap::new();
@@ -2118,10 +2072,9 @@ where
     }
 }
 
-impl<K:  Ord, V> BTreeMap<K, V>
+impl<K: Ord, V> BTreeMap<K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     /// Moves all elements from `other` into `self`, leaving `other` empty.
     ///
@@ -2197,7 +2150,7 @@ where
         Q: Ord + ?Sized,
     {
         self.set.contains_cmp(
-            |item| item.key.borrow() < key,
+            |item: &Pair<K, V>| item.key.borrow() < key,
             |item| item.key.borrow() == key,
         )
     }
@@ -2294,8 +2247,9 @@ where
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        let (node_idx, position_within_node) =
-            self.set.locate_value_cmp(|item| item.key.borrow() < key);
+        let (node_idx, position_within_node) = self
+            .set
+            .locate_value_cmp(|item: &Pair<K, V>| item.key.borrow() < key);
         if let Some(candidate_node) = self.set.inner.get(node_idx) {
             if let Some(candidate_value) = candidate_node.get(position_within_node) {
                 return Some((&candidate_value.key, &candidate_value.value));
@@ -2328,8 +2282,9 @@ where
         K: Borrow<Q> + Ord,
         Q: Ord,
     {
-        let (node_idx, position_within_node) =
-            self.set.locate_value_cmp(|item| item.key.borrow() < key);
+        let (node_idx, position_within_node) = self
+            .set
+            .locate_value_cmp(|item: &Pair<K, V>| item.key.borrow() < key);
         if self.set.inner.get(node_idx).is_some()
             && self.set.inner[node_idx]
                 .inner
@@ -2338,8 +2293,7 @@ where
         {
             let entry = self.set.inner[node_idx]
                 .inner
-                .get_mut(position_within_node)
-                .unwrap();
+                .get_mut(position_within_node)?;
 
             return Some(&mut entry.value);
         }
@@ -2399,13 +2353,12 @@ where
         if self.contains_key(&key) {
             let old_entry = self
                 .set
-                .delete_cmp(|item| item.key < key, |item| item.key == key)
-                .0
-                .unwrap();
+                .delete_cmp(|item: &Pair<K, V>| item.key < key, |item| item.key == key)
+                .0?;
 
             self.set.insert(Pair { key, value });
 
-            return Some(old_entry.value);
+            Some(old_entry.value)
         } else {
             self.set.insert(Pair { key, value });
 
@@ -2527,14 +2480,14 @@ where
             if let Some(node) = inner.next() {
                 node.inner.iter_mut()
             } else {
-                ([]).iter_mut()
+                [].iter_mut()
             }
         };
         let back_iter = {
             if let Some(node) = inner.next_back() {
                 node.inner.iter_mut()
             } else {
-                ([]).iter_mut()
+                [].iter_mut()
             }
         };
 
@@ -2748,7 +2701,7 @@ where
     /// ```
     pub fn range<Q, R>(&self, range: R) -> RangeMap<K, V>
     where
-        Q:  Ord + ?Sized,
+        Q: Ord + ?Sized,
         K: Borrow<Q>,
         R: RangeBounds<Q>,
     {
@@ -2760,18 +2713,30 @@ where
     }
     fn range_to_idx<Q, R>(&self, range: R) -> (usize, usize)
     where
-        Q:  Ord + ?Sized,
+        Q: Ord + ?Sized,
         K: Borrow<Q>,
         R: RangeBounds<Q>,
     {
         let start_idx = match range.start_bound() {
-            Bound::Included(bound) => self.set.rank_cmp(|item| item.key.borrow() < bound),
-            Bound::Excluded(bound) => self.set.rank_cmp(|item| item.key.borrow() < bound) + 1,
+            Bound::Included(bound) => self
+                .set
+                .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound),
+            Bound::Excluded(bound) => {
+                self.set
+                    .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound)
+                    + 1
+            }
             Bound::Unbounded => 0,
         };
         let end_idx = match range.end_bound() {
-            Bound::Included(bound) => self.set.rank_cmp(|item| item.key.borrow() < bound),
-            Bound::Excluded(bound) => self.set.rank_cmp(|item| item.key.borrow() < bound) - 1,
+            Bound::Included(bound) => self
+                .set
+                .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound),
+            Bound::Excluded(bound) => {
+                self.set
+                    .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound)
+                    - 1
+            }
             Bound::Unbounded => self.len() - 1,
         };
 
@@ -2807,7 +2772,7 @@ where
     /// ```
     pub fn range_mut<Q, R>(&mut self, range: R) -> RangeMut<K, V>
     where
-        Q:  Ord + ?Sized,
+        Q: Ord + ?Sized,
         K: Borrow<Q>,
         R: RangeBounds<Q>,
     {
@@ -2831,7 +2796,7 @@ where
             if let Some(node) = inner.nth(front_node_idx) {
                 node.inner.iter_mut()
             } else {
-                ([]).iter_mut()
+                [].iter_mut()
             }
         };
 
@@ -2839,7 +2804,7 @@ where
             if let Some(node) = inner.nth(back_node_idx - front_node_idx) {
                 node.inner.iter_mut()
             } else {
-                ([]).iter_mut()
+                [].iter_mut()
             }
         };
 
@@ -2893,12 +2858,12 @@ where
         Q: Ord + ?Sized,
     {
         let old_entry = self.set.delete_cmp(
-            |item| item.key.borrow() < key,
-            |item| item.key.borrow() == key,
+            |item: &Pair<K, V>| item.key.borrow() < key,
+            |item: &Pair<K, V>| item.key.borrow() == key,
         );
 
         if old_entry.1 {
-            return Some(old_entry.0.unwrap().value);
+            return Some(old_entry.0?.value);
         }
 
         None
@@ -2927,12 +2892,12 @@ where
         Q: Ord,
     {
         let old_entry = self.set.delete_cmp(
-            |item| item.key.borrow() < key,
+            |item: &Pair<K, V>| item.key.borrow() < key,
             |item| item.key.borrow() == key,
         );
 
         if old_entry.1 {
-            let key_value = old_entry.0.unwrap();
+            let key_value = old_entry.0?;
             return Some((key_value.key, key_value.value));
         }
 
@@ -3011,7 +2976,9 @@ where
         Q: Ord,
     {
         BTreeMap {
-            set: self.set.split_off_cmp(|item| item.key.borrow() < key),
+            set: self
+                .set
+                .split_off_cmp(|item: &Pair<K, V>| item.key.borrow() < key),
         }
     }
     /// Gets an iterator over the values of the map, in order by key.
@@ -3031,9 +2998,9 @@ where
     /// assert_eq!(values, ["hello", "goodbye"]);
     /// ```
     pub fn values(&self) -> Values<K, V> {
-        return Values {
+        Values {
             inner: self.set.iter(),
-        };
+        }
     }
     /// Gets a mutable iterator over the values of the map, in order by key.
     ///
@@ -3057,9 +3024,9 @@ where
     ///                     String::from("goodbye!")]);
     /// ```
     pub fn values_mut(&mut self) -> ValuesMut<K, V> {
-        return ValuesMut {
+        ValuesMut {
             inner: self.iter_mut(),
-        };
+        }
     }
     /// Gets the given key's corresponding entry in the map for in-place manipulation.
     ///
@@ -3086,14 +3053,11 @@ where
         K: Ord,
     {
         if self.contains_key(&key) {
-            let idx = self.set.rank_cmp(|item| item.key < key);
-            return Occupied(OccupiedEntry {
-                map: self,
-                idx,
-            });
+            let idx = self.set.rank_cmp(|item: &Pair<K, V>| item.key < key);
+            return Occupied(OccupiedEntry { map: self, idx });
         }
 
-        return Vacant(VacantEntry { map: self, key });
+        Vacant(VacantEntry { map: self, key })
     }
     /// Returns the first entry in the map for in-place manipulation.
     /// The key of this entry is the minimum key in the map.
@@ -3119,10 +3083,7 @@ where
         K: Ord,
     {
         if !self.is_empty() {
-            return Some(OccupiedEntry {
-                map: self,
-                idx: 0,
-            });
+            return Some(OccupiedEntry { map: self, idx: 0 });
         }
 
         None
@@ -3191,8 +3152,14 @@ where
         Q: Ord,
     {
         let start_idx = match bound {
-            Bound::Included(start) => self.set.rank_cmp(|item| item.key.borrow() < start),
-            Bound::Excluded(start) => self.set.rank_cmp(|item| item.key.borrow() < start) + 1,
+            Bound::Included(start) => self
+                .set
+                .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < start),
+            Bound::Excluded(start) => {
+                self.set
+                    .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < start)
+                    + 1
+            }
             Bound::Unbounded => 0,
         };
 
@@ -3226,14 +3193,14 @@ where
         Q: Ord + ?Sized,
         K: Borrow<Q>,
     {
-        self.set.rank_cmp(|item| item.key.borrow() < value)
+        self.set
+            .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < value)
     }
 }
 
 impl<K, V, const N: usize> From<[(K, V); N]> for BTreeMap<K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     fn from(value: [(K, V); N]) -> Self {
         let mut btree: BTreeMap<K, V> = Default::default();
@@ -3248,8 +3215,7 @@ where
 
 impl<K, V> IntoIterator for BTreeMap<K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     type Item = (K, V);
     type IntoIter = IntoIterMap<K, V>;
@@ -3263,17 +3229,16 @@ where
 
 impl<'a, K, V> IntoIterator for &'a BTreeMap<K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     type Item = (&'a K, &'a V);
 
     type IntoIter = IterMap<'a, K, V>;
 
     fn into_iter(self) -> Self::IntoIter {
-        return IterMap {
+        IterMap {
             inner: self.set.iter(),
-        };
+        }
     }
 }
 
@@ -3285,16 +3250,14 @@ where
 /// [`iter`]: BTreeMap::iter
 pub struct IterMap<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     inner: Iter<'a, Pair<K, V>>,
 }
 
 impl<'a, K, V> Iterator for IterMap<'a, K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     type Item = (&'a K, &'a V);
 
@@ -3309,8 +3272,7 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for IterMap<'a, K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3321,12 +3283,7 @@ where
     }
 }
 
-impl<'a, K, V> FusedIterator for IterMap<'a, K, V>
-where
-    K:  Ord,
-    
-{
-}
+impl<'a, K, V> FusedIterator for IterMap<'a, K, V> where K: Ord {}
 
 /// An owning iterator over the entries of a `BTreeMap`.
 ///
@@ -3336,16 +3293,14 @@ where
 /// [`into_iter`]: IntoIterator::into_iter
 pub struct IntoIterMap<K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     inner: IntoIter<Pair<K, V>>,
 }
 
 impl<K, V> Iterator for IntoIterMap<K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     type Item = (K, V);
 
@@ -3360,8 +3315,7 @@ where
 
 impl<K, V> DoubleEndedIterator for IntoIterMap<K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3372,12 +3326,7 @@ where
     }
 }
 
-impl<K, V> FusedIterator for IntoIterMap<K, V>
-where
-    K:  Ord,
-    
-{
-}
+impl<K, V> FusedIterator for IntoIterMap<K, V> where K: Ord {}
 
 /// An owning iterator over the keys of a `BTreeMap`.
 ///
@@ -3387,16 +3336,14 @@ where
 /// [`into_keys`]: BTreeMap::into_keys
 pub struct IntoKeys<K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     inner: IntoIterMap<K, V>,
 }
 
 impl<K, V> Iterator for IntoKeys<K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     type Item = K;
 
@@ -3411,8 +3358,7 @@ where
 
 impl<K, V> DoubleEndedIterator for IntoKeys<K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3423,12 +3369,7 @@ where
     }
 }
 
-impl<K, V> FusedIterator for IntoKeys<K, V>
-where
-    K:  Ord,
-    
-{
-}
+impl<K, V> FusedIterator for IntoKeys<K, V> where K: Ord {}
 
 /// An owning iterator over the values of a `BTreeMap`.
 ///
@@ -3438,16 +3379,14 @@ where
 /// [`into_values`]: BTreeMap::into_values
 pub struct IntoValues<K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     inner: IntoIterMap<K, V>,
 }
 
 impl<K, V> Iterator for IntoValues<K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     type Item = V;
 
@@ -3462,8 +3401,7 @@ where
 
 impl<K, V> DoubleEndedIterator for IntoValues<K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3474,12 +3412,7 @@ where
     }
 }
 
-impl<K, V> FusedIterator for IntoValues<K, V>
-where
-    K:  Ord,
-    
-{
-}
+impl<K, V> FusedIterator for IntoValues<K, V> where K: Ord {}
 
 /// An iterator over a sub-range of entries in a `BTreeMap`.
 ///
@@ -3489,16 +3422,14 @@ where
 /// [`range`]: BTreeMap::range
 pub struct RangeMap<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     inner: Range<'a, Pair<K, V>>,
 }
 
 impl<'a, K, V> Iterator for RangeMap<'a, K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     type Item = (&'a K, &'a V);
 
@@ -3513,8 +3444,7 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for RangeMap<'a, K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3525,12 +3455,7 @@ where
     }
 }
 
-impl<'a, K, V> FusedIterator for RangeMap<'a, K, V>
-where
-    K:  Ord,
-    
-{
-}
+impl<'a, K, V> FusedIterator for RangeMap<'a, K, V> where K: Ord {}
 
 /// An iterator over the values of a `BTreeMap`.
 ///
@@ -3540,16 +3465,14 @@ where
 /// [`values`]: BTreeMap::values
 pub struct Values<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     inner: Iter<'a, Pair<K, V>>,
 }
 
 impl<'a, K, V> Iterator for Values<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     type Item = &'a V;
 
@@ -3564,8 +3487,7 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for Values<'a, K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3576,12 +3498,7 @@ where
     }
 }
 
-impl<'a, K, V> FusedIterator for Values<'a, K, V>
-where
-    K:  Ord,
-    
-{
-}
+impl<'a, K, V> FusedIterator for Values<'a, K, V> where K: Ord {}
 
 /// An iterator over the keys of a `BTreeMap`.
 ///
@@ -3591,16 +3508,14 @@ where
 /// [`keys`]: BTreeMap::keys
 pub struct Keys<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     inner: Iter<'a, Pair<K, V>>,
 }
 
 impl<'a, K, V> Iterator for Keys<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     type Item = &'a K;
 
@@ -3615,8 +3530,7 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for Keys<'a, K, V>
 where
-    K:  Ord,
-    
+    K: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3627,12 +3541,7 @@ where
     }
 }
 
-impl<'a, K, V> FusedIterator for Keys<'a, K, V>
-where
-    K:  Ord,
-    
-{
-}
+impl<'a, K, V> FusedIterator for Keys<'a, K, V> where K: Ord {}
 
 /// A mutable iterator over the entries of a `BTreeMap`.
 ///
@@ -3642,8 +3551,7 @@ where
 /// [`iter_mut`]: BTreeMap::iter_mut
 pub struct IterMut<'a, K: 'a, V: 'a>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     inner: std::slice::IterMut<'a, Node<Pair<K, V>>>,
     current_front_node_idx: usize,
@@ -3656,8 +3564,7 @@ where
 
 impl<'a, K, V> Iterator for IterMut<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     type Item = (&'a K, &'a mut V);
 
@@ -3697,8 +3604,7 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for IterMut<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx + 1 {
@@ -3736,12 +3642,7 @@ where
     }
 }
 
-impl<'a, K, V> FusedIterator for IterMut<'a, K, V>
-where
-    K:  Ord,
-    
-{
-}
+impl<'a, K, V> FusedIterator for IterMut<'a, K, V> where K: Ord {}
 
 /// A mutable iterator over the values of a `BTreeMap`.
 ///
@@ -3751,16 +3652,14 @@ where
 /// [`values_mut`]: BTreeMap::values_mut
 pub struct ValuesMut<'a, K: 'a, V: 'a>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     inner: IterMut<'a, K, V>,
 }
 
 impl<'a, K, V> Iterator for ValuesMut<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     type Item = &'a mut V;
 
@@ -3775,8 +3674,7 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for ValuesMut<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3787,12 +3685,7 @@ where
     }
 }
 
-impl<'a, K, V> FusedIterator for ValuesMut<'a, K, V>
-where
-    K:  Ord,
-    
-{
-}
+impl<'a, K, V> FusedIterator for ValuesMut<'a, K, V> where K: Ord {}
 
 /// A mutable iterator over a sub-range of entries in a `BTreeMap`.
 ///
@@ -3802,63 +3695,55 @@ where
 /// [`range_mut`]: BTreeMap::range_mut
 pub struct RangeMut<'a, K: 'a, V: 'a>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     inner: IterMut<'a, K, V>,
 }
 
 impl<'a, K, V> Iterator for RangeMut<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     type Item = (&'a K, &'a mut V);
 
     fn next(&mut self) -> Option<Self::Item> {
-        return self.inner.next();
+        self.inner.next()
     }
 }
 
 impl<'a, K, V> DoubleEndedIterator for RangeMut<'a, K, V>
 where
-    K: Ord ,
-    
+    K: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
-        return self.inner.next_back();
+        self.inner.next_back()
     }
 }
 
-impl<'a, K, V> FusedIterator for RangeMut<'a, K, V>
-where
-    K:  Ord,
-    
-{
-}
+impl<'a, K, V> FusedIterator for RangeMut<'a, K, V> where K: Ord {}
 
 impl<K, Q, V> Index<&Q> for BTreeMap<K, V>
 where
-    K: Borrow<Q> + Ord ,
-    
+    K: Borrow<Q> + Ord,
+
     Q: Ord + ?Sized,
 {
     type Output = V;
 
     fn index(&self, index: &Q) -> &Self::Output {
-        return self.get(index).unwrap();
+        self.get(index).unwrap()
     }
 }
 
 pub struct Cursor<'a, T>
 where
-    T: Ord ,
+    T: Ord,
 {
     set: &'a BTreeSet<T>,
     idx: usize,
 }
 
-impl<'a, T: Ord > Cursor<'a, T> {
+impl<'a, T: Ord> Cursor<'a, T> {
     pub fn move_next(&mut self) {
         if self.idx == self.set.len() {
             self.idx = 0
@@ -3877,36 +3762,36 @@ impl<'a, T: Ord > Cursor<'a, T> {
         }
     }
     pub fn item(&self) -> Option<&'a T> {
-        return self.set.get_index(self.idx);
+        self.set.get_index(self.idx)
     }
     pub fn peek_next(&self) -> Option<&'a T> {
         if self.idx == self.set.len() {
             return self.set.first();
         }
 
-        return self.set.get_index(self.idx + 1);
+        self.set.get_index(self.idx + 1)
     }
     pub fn peek_index(&self, index: usize) -> Option<&'a T> {
-        return self.set.get_index(index);
+        self.set.get_index(index)
     }
     pub fn peek_prev(&self) -> Option<&'a T> {
         if self.idx == 0 {
             return None;
         }
 
-        return self.set.get_index(self.idx - 1);
+        self.set.get_index(self.idx - 1)
     }
 }
 
 pub struct CursorMap<'a, K, V>
 where
-    K: 'a + Ord ,
-    V: 'a ,
+    K: 'a + Ord,
+    V: 'a,
 {
     cursor: Cursor<'a, Pair<K, V>>,
 }
 
-impl<'a, K: Ord , V> CursorMap<'a, K, V> {
+impl<'a, K: Ord, V> CursorMap<'a, K, V> {
     pub fn move_next(&mut self) {
         self.cursor.move_next()
     }
@@ -4392,7 +4277,7 @@ mod tests {
         assert!(a.is_subset(&a));
         assert!(a.is_superset(&a));
         assert!(a.is_subset(&b));
-        assert!(!(b.is_subset(&a)));
+        assert!(!b.is_subset(&a));
         assert!(b.is_superset(&a));
         assert!(c.is_disjoint(&a));
         assert!(c.is_disjoint(&b));
@@ -4408,7 +4293,7 @@ mod tests {
             (DEFAULT_INNER_SIZE * 3) - 6,
             DEFAULT_INNER_SIZE,
             DEFAULT_INNER_SIZE + 1,
-            ((DEFAULT_INNER_SIZE * 10) - 1),
+            (DEFAULT_INNER_SIZE * 10) - 1,
         ] {
             let mut left = btree.clone();
             let right = left.split_off(&split);
