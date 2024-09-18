@@ -5,23 +5,28 @@
 
 A pure-Rust two-level dynamic order-statistic b-tree.
 
-This crate implements a compact set data structure that preserves its elements' sorted order and 
+This crate implements a compact set data structure that preserves its elements' sorted order and
 allows lookups of entries by value or sorted order position.
 
 Also, it is(mostly) a drop-in replacement for the stdlib BTree.
 
+Under the feature `concurrent` you can find a `persistent` version of the BTree that can be fearlessly shared between
+threads.
+
 # Background
 
-This was heavily inspired by [`indexmap`](https://crates.io/crates/indexmap), and 
+This was heavily inspired by [`indexmap`](https://crates.io/crates/indexmap), and
 python's [`sortedcontainers`](https://github.com/grantjenks/python-sortedcontainers).
 
 It differs from both in that:
+
 * `indexmap` is a hashmap that provides numerical lookups, but does not maintain order in case of removals, while
-`indexset` is a b-tree that always maintains order, irrespective of which mutating operation is run.
-* `sortecontainers` is similar in spirit, but utilizes a different routine for balancing the tree, and relies 
-on a heap for numerical lookups.
+  `indexset` is a b-tree that always maintains order, irrespective of which mutating operation is run.
+* `sortecontainers` is similar in spirit, but utilizes a different routine for balancing the tree, and relies
+  on a heap for numerical lookups.
 
 `indexset` provides the following features:
+
 - As fast to iterate as a vec.
 - Zero indirection.
 - Lookups by position and range.
@@ -30,13 +35,13 @@ on a heap for numerical lookups.
 
 ## Performance
 
-`BTreeSet` and `BTreeMap` derive a couple of performance facts directly from how it is constructed,  which is roughly:
+`BTreeSet` and `BTreeMap` derive a couple of performance facts directly from how it is constructed, which is roughly:
 
 > A two-level B-Tree with a fenwick tree as a low-cost index for numerical lookups
 
 - Iteration is very fast since it inherits a vec's iter struct.
-- Insertions and removals are constant time in the best-case scenario, and logarithmic on the node size in the worst 
-case
+- Insertions and removals are constant time in the best-case scenario, and logarithmic on the node size in the worst
+  case
 - Lookups are very fast, and rely only on two binary searches over very little data.
 
 ## Benchmarks
@@ -77,12 +82,13 @@ sorted-order position, it might be worth checking out this `indexset` instead.
 
 * `BTreeMap` is less polished than `BTreeSet`. This crate has been optimised for a leaner `BTreeSet`.
 * This is **beta** quality software, so use it at your own risk. I'm not 100% certain about every single iterator
-implementation(everything has tests though).
+  implementation(everything has tests though).
 * There's quite a couple utility traits that have not been implemented yet.
+* `Concurrent` `BTreeMap` and `BtreeSet` are lock-free and wait-free. That doesn't mean it is fast however :)
 
 # Naming
 
-This library is called `indexset`, because the base data structure is `BTreeSet`. `BTreeMap` is a `BTreeSet` with 
+This library is called `indexset`, because the base data structure is `BTreeSet`. `BTreeMap` is a `BTreeSet` with
 a `Pair<K, V>` item type.
 
 # Changelog
