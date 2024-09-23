@@ -1,6 +1,7 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use indexset::concurrent::set::BTreeSet;
 use rand::{thread_rng, Rng};
+use scc::TreeIndex;
 use std::sync::{Arc, RwLock};
 use std::thread;
 
@@ -10,10 +11,10 @@ enum Op {
     Write(usize),
 }
 
-const NUM_READERS: usize = 7;
+const NUM_READERS: usize = 32;
 const NUM_WRITERS: usize = 1;
 const NUM_THREADS: usize = NUM_READERS + NUM_WRITERS;
-const OPERATIONS_PER_THREAD: usize = 12_500;
+const OPERATIONS_PER_THREAD: usize = 10_000;
 const TOTAL_OPERATIONS: usize = NUM_THREADS * OPERATIONS_PER_THREAD;
 
 fn generate_operations(write_ratio: f64) -> Vec<Vec<Op>> {
@@ -57,6 +58,37 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
         write_ratio
     ));
 
+    group.bench_function(BenchmarkId::new("scc::TreeIndex", write_ratio), |b| {
+        b.iter(|| {
+            let set = Arc::new(TreeIndex::new());
+            let mut handles = vec![];
+
+            for thread_ops in operations.iter() {
+                let set = Arc::clone(&set);
+                let thread_ops = thread_ops.clone();
+                let handle = thread::spawn(move || {
+                    concurrent_operations(
+                        set,
+                        thread_ops,
+                        |set, item| {
+                            black_box(set.contains(&item));
+                        },
+                        |set, item| {
+                            black_box({
+                                let _ = set.insert(item, ());
+                            });
+                        },
+                    );
+                });
+                handles.push(handle);
+            }
+
+            for handle in handles {
+                handle.join().unwrap();
+            }
+        });
+    });
+
     group.bench_function(
         BenchmarkId::new("indexset::concurrent::set::BTreeSet", write_ratio),
         |b| {
@@ -75,7 +107,7 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
                                 set.contains(&item);
                             },
                             |set, item| {
-                                set.insert(item);
+                                set.insert_spmc(item);
                             },
                         );
                     });
@@ -125,7 +157,7 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
 }
 
 fn bench_concurrent_btreeset(c: &mut Criterion) {
-    let ratios = vec![0.01, 0.1, 0.2, 0.5];
+    let ratios = vec![0.01, 0.1, 0.3];
     for ratio in ratios {
         bench_btreeset_with_ratio(c, ratio);
     }
