@@ -1,3 +1,4 @@
+use crate::core::constants::DEFAULT_CUTOFF;
 use core::borrow::Borrow;
 use core::cmp::Ordering;
 
@@ -50,7 +51,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     }
     #[inline]
     fn halve(&mut self) -> Self {
-        self.split_off(super::constants::DEFAULT_CUTOFF)
+        self.split_off(self.capacity() / DEFAULT_CUTOFF)
     }
     #[inline]
     fn len(&self) -> usize {
