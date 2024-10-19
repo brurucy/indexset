@@ -222,6 +222,7 @@ impl<T: Ord> BTreeSet<T> {
     pub fn with_maximum_node_size(maximum_node_size: usize) -> Self {
         let mut new: Self = Default::default();
         new.inner = vec![Node::new(maximum_node_size)];
+        new.node_capacity = maximum_node_size;
 
         new
     }

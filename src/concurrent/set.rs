@@ -68,12 +68,14 @@ pub struct BTreeSet<T>
 where
     T: Ord,
 {
+    node_capacity: usize,
     inner: ArcSwap<Vec<Arc<ArcSwap<Vec<T>>>>>,
 }
 
 impl<T: Ord> Default for BTreeSet<T> {
     fn default() -> Self {
         Self {
+            node_capacity: DEFAULT_INNER_SIZE,
             inner: ArcSwap::from_pointee(vec![Arc::new(ArcSwap::from_pointee(
                 Vec::with_capacity(DEFAULT_INNER_SIZE),
             ))]),
@@ -366,6 +368,14 @@ impl<T: Ord + Clone> BTreeSet<T> {
             ..Default::default()
         }
     }
+    pub fn with_maximum_node_size(maximum_node_size: usize) -> Self {
+        Self {
+            node_capacity: maximum_node_size,
+            inner: ArcSwap::from_pointee(vec![Arc::new(ArcSwap::from_pointee(
+                Vec::with_capacity(maximum_node_size),
+            ))]),
+        }
+    }
     pub(crate) fn get<P, Q, R, S>(&self, cmp: P, cmp2: R, mut f: S)
     where
         T: Borrow<Q>,
@@ -445,7 +455,7 @@ impl<T: Ord + Clone> BTreeSet<T> {
             let (node_idx, node_snapshot) = locate_node(&new_snapshot, |x| *x < value);
             let mut node = (*node_snapshot).clone();
             let local_value = value.clone();
-            if node.len() < DEFAULT_INNER_SIZE {
+            if node.len() < self.node_capacity {
                 if NodeLike::insert(&mut node, local_value) {
                     update = true;
 
@@ -484,7 +494,7 @@ impl<T: Ord + Clone> BTreeSet<T> {
             let (node_idx, node_snapshot) = locate_node_unsafe(current_btree, |x| *x < value);
             let local_value = value.clone();
             let node = node_snapshot.load_full();
-            if node.len() < DEFAULT_INNER_SIZE {
+            if node.len() < self.node_capacity {
                 if !NodeLike::contains(node.as_ref(), &value) {
                     let mut node = (*node).clone();
 
