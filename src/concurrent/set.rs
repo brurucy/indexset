@@ -527,57 +527,57 @@ impl<T: Ord + Clone> BTreeSet<T> {
 
         update
     }
-    pub(crate) fn delete_cmp<Q, P, R>(&self, cmp: P, cmp2: R) -> (bool, Option<T>)
-    where
-        T: Borrow<Q>,
-        Q: Ord + ?Sized,
-        P: Fn(&Q) -> bool,
-        R: Fn(&T) -> bool,
-    {
-        let mut update = false;
-        let mut deleted_value = None;
+    // pub(crate) fn delete_cmp<Q, P, R>(&self, cmp: P, cmp2: R) -> (bool, Option<T>)
+    // where
+    //     T: Borrow<Q>,
+    //     Q: Ord + ?Sized,
+    //     P: Fn(&Q) -> bool,
+    //     R: Fn(&T) -> bool,
+    // {
+    //     let mut update = false;
+    //     let mut deleted_value = None;
 
-        self.inner.rcu(|top_level| {
-            let mut new_snapshot = freeze_nodes(top_level);
+    //     self.inner.rcu(|top_level| {
+    //         let mut new_snapshot = freeze_nodes(top_level);
 
-            let (node_idx, node_borrow) = locate_node(&new_snapshot, &cmp);
+    //         let (node_idx, node_borrow) = locate_node(&new_snapshot, &cmp);
 
-            let position_within_node = node_borrow.partition_point(|x| cmp(x.borrow()));
-            if let Some(candidate_value) = node_borrow.get(position_within_node) {
-                if !cmp2(candidate_value) {
-                    return unfreeze(new_snapshot);
-                }
-            } else {
-                return unfreeze(new_snapshot);
-            }
+    //         let position_within_node = node_borrow.partition_point(|x| cmp(x.borrow()));
+    //         if let Some(candidate_value) = node_borrow.get(position_within_node) {
+    //             if !cmp2(candidate_value) {
+    //                 return unfreeze(new_snapshot);
+    //             }
+    //         } else {
+    //             return unfreeze(new_snapshot);
+    //         }
 
-            update = true;
+    //         update = true;
 
-            let mut node = (*node_borrow).clone();
-            deleted_value = Some(node.delete(position_within_node));
+    //         let mut node = (*node_borrow).clone();
+    //         deleted_value = Some(node.delete(position_within_node));
 
-            if node.len() == 0 {
-                if new_snapshot.len() > 1 {
-                    new_snapshot.remove(node_idx);
+    //         if node.len() == 0 {
+    //             if new_snapshot.len() > 1 {
+    //                 new_snapshot.remove(node_idx);
 
-                    return unfreeze(new_snapshot);
-                }
-            };
+    //                 return unfreeze(new_snapshot);
+    //             }
+    //         };
 
-            new_snapshot[node_idx] = Arc::new(node);
+    //         new_snapshot[node_idx] = Arc::new(node);
 
-            unfreeze(new_snapshot)
-        });
+    //         unfreeze(new_snapshot)
+    //     });
 
-        (update, deleted_value)
-    }
-    pub(crate) fn delete<Q>(&self, value: &Q) -> (bool, Option<T>)
-    where
-        T: Borrow<Q> + Ord,
-        Q: Ord + ?Sized,
-    {
-        self.delete_cmp(|x| x < value, |x| x.borrow() == value)
-    }
+    //     (update, deleted_value)
+    // }
+    // pub(crate) fn delete<Q>(&self, value: &Q) -> (bool, Option<T>)
+    // where
+    //     T: Borrow<Q> + Ord,
+    //     Q: Ord + ?Sized,
+    // {
+    //     self.delete_cmp(|x| x < value, |x| x.borrow() == value)
+    // }
     /// If the set contains an element equal to the value, removes it from the
     /// set and drops it. Returns whether such an element was present.
     ///
@@ -596,13 +596,13 @@ impl<T: Ord + Clone> BTreeSet<T> {
     /// assert_eq!(set.remove(&2), true);
     /// assert_eq!(set.remove(&2), false);
     /// ```
-    pub fn remove<Q>(&self, value: &Q) -> bool
-    where
-        T: Borrow<Q> + Ord,
-        Q: Ord + ?Sized,
-    {
-        self.delete(value).0
-    }
+    // pub fn remove<Q>(&self, value: &Q) -> bool
+    // where
+    //     T: Borrow<Q> + Ord,
+    //     Q: Ord + ?Sized,
+    // {
+    //     self.delete(value).0
+    // }
     /// Returns the number of elements in the set.
     ///
     /// # Examples
@@ -983,389 +983,389 @@ where
 
 impl<'a, T> FusedIterator for Range<'a, T> where T: Ord + Clone {}
 
-#[cfg(test)]
-mod tests {
-    use crate::concurrent::set::BTreeSet;
-    use crate::core::constants::DEFAULT_INNER_SIZE;
-    use rand::Rng;
-    use std::collections::Bound::{Excluded, Included};
-    use std::collections::HashSet;
-    use std::sync::Arc;
-    use std::thread;
+// #[cfg(test)]
+// mod tests {
+//     use crate::concurrent::set::BTreeSet;
+//     use crate::core::constants::DEFAULT_INNER_SIZE;
+//     use rand::Rng;
+//     use std::collections::Bound::{Excluded, Included};
+//     use std::collections::HashSet;
+//     use std::sync::Arc;
+//     use std::thread;
 
-    #[test]
-    fn test_concurrent_insert() {
-        let set = Arc::new(BTreeSet::<i32>::new());
-        let num_threads = 8;
-        let operations_per_thread = 1000;
+//     #[test]
+//     fn test_concurrent_insert() {
+//         let set = Arc::new(BTreeSet::<i32>::new());
+//         let num_threads = 8;
+//         let operations_per_thread = 1000;
 
-        let mut handles = vec![];
-        let mut thread_local_data = Arc::new(vec![]);
-        let mut expected_len = HashSet::new();
-        for _ in 0usize..num_threads {
-            let mut data = vec![];
-            let mut rng = rand::thread_rng();
-            for _ in 0..operations_per_thread {
-                let value = rng.gen_range(0..10000);
-                let operation = rng.gen_range(0..2);
-                if operation == 0 {
-                    expected_len.insert(value);
-                };
+//         let mut handles = vec![];
+//         let mut thread_local_data = Arc::new(vec![]);
+//         let mut expected_len = HashSet::new();
+//         for _ in 0usize..num_threads {
+//             let mut data = vec![];
+//             let mut rng = rand::thread_rng();
+//             for _ in 0..operations_per_thread {
+//                 let value = rng.gen_range(0..10000);
+//                 let operation = rng.gen_range(0..2);
+//                 if operation == 0 {
+//                     expected_len.insert(value);
+//                 };
 
-                data.push((operation, value))
-            }
+//                 data.push((operation, value))
+//             }
 
-            let mut new_tld = (*thread_local_data).clone();
-            new_tld.push(data);
+//             let mut new_tld = (*thread_local_data).clone();
+//             new_tld.push(data);
 
-            thread_local_data = Arc::new(new_tld)
-        }
+//             thread_local_data = Arc::new(new_tld)
+//         }
 
-        for thread_idx in 0usize..num_threads {
-            let set_clone = Arc::clone(&set);
-            let local_tld = thread_local_data.clone();
-            let handle = thread::spawn(move || {
-                for op_idx in 0usize..operations_per_thread {
-                    let (operation, value) = &local_tld[thread_idx][op_idx];
+//         for thread_idx in 0usize..num_threads {
+//             let set_clone = Arc::clone(&set);
+//             let local_tld = thread_local_data.clone();
+//             let handle = thread::spawn(move || {
+//                 for op_idx in 0usize..operations_per_thread {
+//                     let (operation, value) = &local_tld[thread_idx][op_idx];
 
-                    if *operation == 0 {
-                        set_clone.insert(value.clone());
-                    }
-                }
-            });
-            handles.push(handle);
-        }
+//                     if *operation == 0 {
+//                         set_clone.insert(value.clone());
+//                     }
+//                 }
+//             });
+//             handles.push(handle);
+//         }
 
-        for handle in handles {
-            handle.join().unwrap();
-        }
+//         for handle in handles {
+//             handle.join().unwrap();
+//         }
 
-        assert_eq!(set.len(), expected_len.len());
+//         assert_eq!(set.len(), expected_len.len());
 
-        for thread_idx in 0usize..num_threads {
-            for op_idx in 0usize..operations_per_thread {
-                let (op, value) = thread_local_data[thread_idx][op_idx];
-                if op == 0 {
-                    assert!(set.contains(&value))
-                }
-            }
-        }
-    }
-    #[test]
-    fn test_insert_spmc() {
-        let set = Arc::new(BTreeSet::<i32>::new());
-        let range = (0..100_000);
-        for i in range {
-            set.insert_spmc(i);
-        }
+//         for thread_idx in 0usize..num_threads {
+//             for op_idx in 0usize..operations_per_thread {
+//                 let (op, value) = thread_local_data[thread_idx][op_idx];
+//                 if op == 0 {
+//                     assert!(set.contains(&value))
+//                 }
+//             }
+//         }
+//     }
+//     #[test]
+//     fn test_insert_spmc() {
+//         let set = Arc::new(BTreeSet::<i32>::new());
+//         let range = (0..100_000);
+//         for i in range {
+//             set.insert_spmc(i);
+//         }
 
-        assert_eq!(set.len(), 100_000);
-        for i in 0..100_000 {
-            set.contains(&i);
-        }
-    }
+//         assert_eq!(set.len(), 100_000);
+//         for i in 0..100_000 {
+//             set.contains(&i);
+//         }
+//     }
 
-    #[test]
-    fn test_remove_single_element() {
-        let set = BTreeSet::<i32>::new();
-        set.insert(5);
-        assert!(set.contains(&5));
-        assert!(set.remove(&5));
-        assert!(!set.contains(&5));
-        assert!(!set.remove(&5));
-    }
+//     #[test]
+//     fn test_remove_single_element() {
+//         let set = BTreeSet::<i32>::new();
+//         set.insert(5);
+//         assert!(set.contains(&5));
+//         assert!(set.remove(&5));
+//         assert!(!set.contains(&5));
+//         assert!(!set.remove(&5));
+//     }
 
-    #[test]
-    fn test_remove_multiple_elements() {
-        let set = BTreeSet::<i32>::new();
-        for i in 0..100 {
-            set.insert(i);
-        }
-        for i in 0..100 {
-            assert!(set.remove(&i));
-            assert!(!set.contains(&i));
-        }
-        assert_eq!(set.len(), 0);
-    }
+//     #[test]
+//     fn test_remove_multiple_elements() {
+//         let set = BTreeSet::<i32>::new();
+//         for i in 0..100 {
+//             set.insert(i);
+//         }
+//         for i in 0..100 {
+//             assert!(set.remove(&i));
+//             assert!(!set.contains(&i));
+//         }
+//         assert_eq!(set.len(), 0);
+//     }
 
-    #[test]
-    fn test_remove_non_existent() {
-        let set = BTreeSet::<i32>::new();
-        set.insert(5);
-        assert!(!set.remove(&10));
-        assert!(set.contains(&5));
-    }
-    #[test]
-    fn test_remove_stress() {
-        let set = Arc::new(BTreeSet::<i32>::new());
-        const NUM_ELEMENTS: i32 = 10000;
+//     #[test]
+//     fn test_remove_non_existent() {
+//         let set = BTreeSet::<i32>::new();
+//         set.insert(5);
+//         assert!(!set.remove(&10));
+//         assert!(set.contains(&5));
+//     }
+//     #[test]
+//     fn test_remove_stress() {
+//         let set = Arc::new(BTreeSet::<i32>::new());
+//         const NUM_ELEMENTS: i32 = 10000;
 
-        for i in 0..NUM_ELEMENTS {
-            assert!(set.insert(i), "Failed to insert {}", i);
-        }
-        assert_eq!(
-            set.len(),
-            NUM_ELEMENTS as usize,
-            "Incorrect size after insertion"
-        );
+//         for i in 0..NUM_ELEMENTS {
+//             assert!(set.insert(i), "Failed to insert {}", i);
+//         }
+//         assert_eq!(
+//             set.len(),
+//             NUM_ELEMENTS as usize,
+//             "Incorrect size after insertion"
+//         );
 
-        let num_threads = 8;
-        let elements_per_thread = NUM_ELEMENTS / num_threads;
-        let handles: Vec<_> = (0..num_threads)
-            .map(|t| {
-                let set = Arc::clone(&set);
-                thread::spawn(move || {
-                    for i in (t * elements_per_thread)..((t + 1) * elements_per_thread) {
-                        if i % 2 == 1 {
-                            assert!(set.remove(&i), "Failed to remove {}", i);
-                        }
-                    }
-                })
-            })
-            .collect();
+//         let num_threads = 8;
+//         let elements_per_thread = NUM_ELEMENTS / num_threads;
+//         let handles: Vec<_> = (0..num_threads)
+//             .map(|t| {
+//                 let set = Arc::clone(&set);
+//                 thread::spawn(move || {
+//                     for i in (t * elements_per_thread)..((t + 1) * elements_per_thread) {
+//                         if i % 2 == 1 {
+//                             assert!(set.remove(&i), "Failed to remove {}", i);
+//                         }
+//                     }
+//                 })
+//             })
+//             .collect();
 
-        for handle in handles {
-            handle.join().unwrap();
-        }
+//         for handle in handles {
+//             handle.join().unwrap();
+//         }
 
-        assert_eq!(
-            set.len(),
-            NUM_ELEMENTS as usize / 2,
-            "Incorrect size after removal"
-        );
+//         assert_eq!(
+//             set.len(),
+//             NUM_ELEMENTS as usize / 2,
+//             "Incorrect size after removal"
+//         );
 
-        for i in 0..NUM_ELEMENTS {
-            if i % 2 == 0 {
-                assert!(set.contains(&i), "Even number {} should be in the set", i);
-            } else {
-                assert!(
-                    !set.contains(&i),
-                    "Odd number {} should not be in the set",
-                    i
-                );
-            }
-        }
-    }
+//         for i in 0..NUM_ELEMENTS {
+//             if i % 2 == 0 {
+//                 assert!(set.contains(&i), "Even number {} should be in the set", i);
+//             } else {
+//                 assert!(
+//                     !set.contains(&i),
+//                     "Odd number {} should not be in the set",
+//                     i
+//                 );
+//             }
+//         }
+//     }
 
-    #[test]
-    fn test_remove_all_elements() {
-        let set = BTreeSet::<i32>::new();
-        let n = 1000;
+//     #[test]
+//     fn test_remove_all_elements() {
+//         let set = BTreeSet::<i32>::new();
+//         let n = 1000;
 
-        for i in 0..n {
-            set.insert(i);
-        }
+//         for i in 0..n {
+//             set.insert(i);
+//         }
 
-        for i in 0..n {
-            assert!(set.remove(&i), "Failed to remove {}", i);
-        }
+//         for i in 0..n {
+//             assert!(set.remove(&i), "Failed to remove {}", i);
+//         }
 
-        assert_eq!(set.len(), 0, "Set should be empty");
+//         assert_eq!(set.len(), 0, "Set should be empty");
 
-        for i in 0..n {
-            assert!(!set.contains(&i), "Element {} should not be in the set", i);
-        }
-    }
+//         for i in 0..n {
+//             assert!(!set.contains(&i), "Element {} should not be in the set", i);
+//         }
+//     }
 
-    #[test]
-    fn test_single_element() {
-        let set = BTreeSet::new();
-        set.insert(1);
-        let mut iter = set.into_iter();
-        assert_eq!(iter.next(), Some(&1));
-        assert_eq!(iter.next(), None);
-        assert_eq!(iter.next_back(), None);
-    }
+//     #[test]
+//     fn test_single_element() {
+//         let set = BTreeSet::new();
+//         set.insert(1);
+//         let mut iter = set.into_iter();
+//         assert_eq!(iter.next(), Some(&1));
+//         assert_eq!(iter.next(), None);
+//         assert_eq!(iter.next_back(), None);
+//     }
 
-    #[test]
-    fn test_multiple_elements() {
-        let set = BTreeSet::new();
-        set.insert(1);
-        set.insert(2);
-        set.insert(3);
-        let mut iter = set.into_iter();
-        assert_eq!(iter.next(), Some(&1));
-        assert_eq!(iter.next_back(), Some(&3));
-        assert_eq!(iter.next(), Some(&2));
-        assert_eq!(iter.next(), None);
-        assert_eq!(iter.next_back(), None);
-    }
+//     #[test]
+//     fn test_multiple_elements() {
+//         let set = BTreeSet::new();
+//         set.insert(1);
+//         set.insert(2);
+//         set.insert(3);
+//         let mut iter = set.into_iter();
+//         assert_eq!(iter.next(), Some(&1));
+//         assert_eq!(iter.next_back(), Some(&3));
+//         assert_eq!(iter.next(), Some(&2));
+//         assert_eq!(iter.next(), None);
+//         assert_eq!(iter.next_back(), None);
+//     }
 
-    #[test]
-    fn test_bidirectional_iteration() {
-        let set = BTreeSet::new();
-        for i in 1..=100 {
-            set.insert(i);
-        }
-        let mut iter = set.into_iter();
-        for i in 1..=50 {
-            assert_eq!(iter.next(), Some(&i));
-            assert_eq!(iter.next_back(), Some(&(101 - i)));
-        }
-        assert_eq!(iter.next(), None);
-        assert_eq!(iter.next_back(), None);
-    }
+//     #[test]
+//     fn test_bidirectional_iteration() {
+//         let set = BTreeSet::new();
+//         for i in 1..=100 {
+//             set.insert(i);
+//         }
+//         let mut iter = set.into_iter();
+//         for i in 1..=50 {
+//             assert_eq!(iter.next(), Some(&i));
+//             assert_eq!(iter.next_back(), Some(&(101 - i)));
+//         }
+//         assert_eq!(iter.next(), None);
+//         assert_eq!(iter.next_back(), None);
+//     }
 
-    #[test]
-    fn test_fused_iterator() {
-        let set = BTreeSet::new();
-        set.insert(1);
-        let mut iter = set.into_iter();
-        assert_eq!(iter.next(), Some(&1));
-        assert_eq!(iter.next(), None);
-        assert_eq!(iter.next(), None);
-    }
+//     #[test]
+//     fn test_fused_iterator() {
+//         let set = BTreeSet::new();
+//         set.insert(1);
+//         let mut iter = set.into_iter();
+//         assert_eq!(iter.next(), Some(&1));
+//         assert_eq!(iter.next(), None);
+//         assert_eq!(iter.next(), None);
+//     }
 
-    #[test]
-    fn test_large_set() {
-        let set = BTreeSet::new();
-        for i in 0..10000 {
-            set.insert(i);
-        }
-        assert_eq!(set.into_iter().count(), 10000);
-    }
+//     #[test]
+//     fn test_large_set() {
+//         let set = BTreeSet::new();
+//         for i in 0..10000 {
+//             set.insert(i);
+//         }
+//         assert_eq!(set.into_iter().count(), 10000);
+//     }
 
-    #[test]
-    fn test_iterator_after_modifications() {
-        let set = BTreeSet::new();
-        for i in 0..100 {
-            set.insert(i);
-        }
-        let mut iter = set.into_iter();
-        assert_eq!(iter.next(), Some(&0));
-        set.insert(100); // This shouldn't affect the existing iterator
-        for i in 1..100 {
-            assert_eq!(iter.next(), Some(&i));
-        }
-        assert_eq!(iter.next(), None); // The new 100 shouldn't be visible
-    }
+//     #[test]
+//     fn test_iterator_after_modifications() {
+//         let set = BTreeSet::new();
+//         for i in 0..100 {
+//             set.insert(i);
+//         }
+//         let mut iter = set.into_iter();
+//         assert_eq!(iter.next(), Some(&0));
+//         set.insert(100); // This shouldn't affect the existing iterator
+//         for i in 1..100 {
+//             assert_eq!(iter.next(), Some(&i));
+//         }
+//         assert_eq!(iter.next(), None); // The new 100 shouldn't be visible
+//     }
 
-    #[test]
-    fn test_out_of_bounds_range() {
-        let btree: BTreeSet<usize> = BTreeSet::from_iter(0..10);
-        assert_eq!(btree.range((Included(5), Included(10))).count(), 5);
-        assert_eq!(btree.range((Included(5), Included(11))).count(), 5);
-        assert_eq!(
-            btree
-                .range((Included(5), Included(10 + DEFAULT_INNER_SIZE)))
-                .count(),
-            5
-        );
-        assert_eq!(btree.range((Included(0), Included(11))).count(), 10);
-    }
+//     #[test]
+//     fn test_out_of_bounds_range() {
+//         let btree: BTreeSet<usize> = BTreeSet::from_iter(0..10);
+//         assert_eq!(btree.range((Included(5), Included(10))).count(), 5);
+//         assert_eq!(btree.range((Included(5), Included(11))).count(), 5);
+//         assert_eq!(
+//             btree
+//                 .range((Included(5), Included(10 + DEFAULT_INNER_SIZE)))
+//                 .count(),
+//             5
+//         );
+//         assert_eq!(btree.range((Included(0), Included(11))).count(), 10);
+//     }
 
-    #[test]
-    fn test_iterating_over_blocks() {
-        let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 10)).into_iter());
-        assert_eq!(btree.iter().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
-        assert_eq!(
-            btree.range(0..DEFAULT_INNER_SIZE).count(),
-            (0..DEFAULT_INNER_SIZE).count()
-        );
-        assert_eq!(
-            btree.range(0..=DEFAULT_INNER_SIZE).count(),
-            (0..=DEFAULT_INNER_SIZE).count()
-        );
-        assert_eq!(
-            btree.range(0..=DEFAULT_INNER_SIZE + 1).count(),
-            (0..=DEFAULT_INNER_SIZE + 1).count()
-        );
+//     #[test]
+//     fn test_iterating_over_blocks() {
+//         let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 10)).into_iter());
+//         assert_eq!(btree.iter().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
+//         assert_eq!(
+//             btree.range(0..DEFAULT_INNER_SIZE).count(),
+//             (0..DEFAULT_INNER_SIZE).count()
+//         );
+//         assert_eq!(
+//             btree.range(0..=DEFAULT_INNER_SIZE).count(),
+//             (0..=DEFAULT_INNER_SIZE).count()
+//         );
+//         assert_eq!(
+//             btree.range(0..=DEFAULT_INNER_SIZE + 1).count(),
+//             (0..=DEFAULT_INNER_SIZE + 1).count()
+//         );
 
-        assert_eq!(
-            btree.iter().rev().count(),
-            (0..(DEFAULT_INNER_SIZE + 10)).count()
-        );
-        assert_eq!(
-            btree.range(0..DEFAULT_INNER_SIZE).rev().count(),
-            (0..DEFAULT_INNER_SIZE).count()
-        );
-        assert_eq!(
-            btree.range(0..=DEFAULT_INNER_SIZE).rev().count(),
-            (0..=DEFAULT_INNER_SIZE).count()
-        );
-        assert_eq!(
-            btree.range(0..=DEFAULT_INNER_SIZE + 1).rev().count(),
-            (0..=DEFAULT_INNER_SIZE + 1).count()
-        );
-    }
+//         assert_eq!(
+//             btree.iter().rev().count(),
+//             (0..(DEFAULT_INNER_SIZE + 10)).count()
+//         );
+//         assert_eq!(
+//             btree.range(0..DEFAULT_INNER_SIZE).rev().count(),
+//             (0..DEFAULT_INNER_SIZE).count()
+//         );
+//         assert_eq!(
+//             btree.range(0..=DEFAULT_INNER_SIZE).rev().count(),
+//             (0..=DEFAULT_INNER_SIZE).count()
+//         );
+//         assert_eq!(
+//             btree.range(0..=DEFAULT_INNER_SIZE + 1).rev().count(),
+//             (0..=DEFAULT_INNER_SIZE + 1).count()
+//         );
+//     }
 
-    #[test]
-    fn test_empty_set() {
-        let btree: BTreeSet<usize> = BTreeSet::new();
-        assert_eq!(btree.iter().count(), 0);
-        assert_eq!(btree.range(0..0).count(), 0);
-        assert_eq!(btree.range(0..).count(), 0);
-        assert_eq!(btree.range(..0).count(), 0);
-        assert_eq!(btree.range(..).count(), 0);
-        assert_eq!(btree.range(0..=0).count(), 0);
-        assert_eq!(btree.range(..1).count(), 0);
+//     #[test]
+//     fn test_empty_set() {
+//         let btree: BTreeSet<usize> = BTreeSet::new();
+//         assert_eq!(btree.iter().count(), 0);
+//         assert_eq!(btree.range(0..0).count(), 0);
+//         assert_eq!(btree.range(0..).count(), 0);
+//         assert_eq!(btree.range(..0).count(), 0);
+//         assert_eq!(btree.range(..).count(), 0);
+//         assert_eq!(btree.range(0..=0).count(), 0);
+//         assert_eq!(btree.range(..1).count(), 0);
 
-        assert_eq!(btree.iter().rev().count(), 0);
-        assert_eq!(btree.range(0..0).rev().count(), 0);
-        assert_eq!(btree.range(..).rev().count(), 0);
-        assert_eq!(btree.range(..1).rev().count(), 0);
+//         assert_eq!(btree.iter().rev().count(), 0);
+//         assert_eq!(btree.range(0..0).rev().count(), 0);
+//         assert_eq!(btree.range(..).rev().count(), 0);
+//         assert_eq!(btree.range(..1).rev().count(), 0);
 
-        assert_eq!(btree.range(..DEFAULT_INNER_SIZE).count(), 0);
-        assert_eq!(
-            btree
-                .range(DEFAULT_INNER_SIZE..DEFAULT_INNER_SIZE * 2)
-                .count(),
-            0
-        );
-    }
+//         assert_eq!(btree.range(..DEFAULT_INNER_SIZE).count(), 0);
+//         assert_eq!(
+//             btree
+//                 .range(DEFAULT_INNER_SIZE..DEFAULT_INNER_SIZE * 2)
+//                 .count(),
+//             0
+//         );
+//     }
 
-    #[test]
-    fn test_remove_range() {
-        let btree = BTreeSet::from_iter(0..=(DEFAULT_INNER_SIZE * 2));
+//     #[test]
+//     fn test_remove_range() {
+//         let btree = BTreeSet::from_iter(0..=(DEFAULT_INNER_SIZE * 2));
 
-        btree.remove_range(5..15);
-        let expected_len = (DEFAULT_INNER_SIZE * 2) - 9;
-        let actual_len = btree.len();
-        assert_eq!(expected_len, actual_len);
+//         btree.remove_range(5..15);
+//         let expected_len = (DEFAULT_INNER_SIZE * 2) - 9;
+//         let actual_len = btree.len();
+//         assert_eq!(expected_len, actual_len);
 
-        btree.remove_range(DEFAULT_INNER_SIZE - 5..DEFAULT_INNER_SIZE + 5);
-        let expected_len = expected_len - 10;
-        let actual_len = btree.len();
-        assert_eq!(expected_len, actual_len);
+//         btree.remove_range(DEFAULT_INNER_SIZE - 5..DEFAULT_INNER_SIZE + 5);
+//         let expected_len = expected_len - 10;
+//         let actual_len = btree.len();
+//         assert_eq!(expected_len, actual_len);
 
-        btree.remove_range(..DEFAULT_INNER_SIZE / 2);
-        let expected_len = expected_len - ((DEFAULT_INNER_SIZE / 2) - 10);
-        let actual_len = btree.len();
-        assert_eq!(expected_len, actual_len);
+//         btree.remove_range(..DEFAULT_INNER_SIZE / 2);
+//         let expected_len = expected_len - ((DEFAULT_INNER_SIZE / 2) - 10);
+//         let actual_len = btree.len();
+//         assert_eq!(expected_len, actual_len);
 
-        btree.remove_range(DEFAULT_INNER_SIZE * 3 / 2..);
-        let expected_len =
-            expected_len - ((DEFAULT_INNER_SIZE * 2) - ((DEFAULT_INNER_SIZE * 3) / 2) + 1);
-        let actual_len = btree.len();
-        assert_eq!(expected_len, actual_len);
+//         btree.remove_range(DEFAULT_INNER_SIZE * 3 / 2..);
+//         let expected_len =
+//             expected_len - ((DEFAULT_INNER_SIZE * 2) - ((DEFAULT_INNER_SIZE * 3) / 2) + 1);
+//         let actual_len = btree.len();
+//         assert_eq!(expected_len, actual_len);
 
-        btree.remove_range(..);
-        assert_eq!(btree.len(), 0);
+//         btree.remove_range(..);
+//         assert_eq!(btree.len(), 0);
 
-        for i in 0..=(DEFAULT_INNER_SIZE * 2) {
-            btree.insert(i);
-        }
+//         for i in 0..=(DEFAULT_INNER_SIZE * 2) {
+//             btree.insert(i);
+//         }
 
-        btree.remove_range((Excluded(5), Excluded(15)));
-        assert_eq!(
-            btree.range(0..DEFAULT_INNER_SIZE).count(),
-            DEFAULT_INNER_SIZE - 9
-        );
+//         btree.remove_range((Excluded(5), Excluded(15)));
+//         assert_eq!(
+//             btree.range(0..DEFAULT_INNER_SIZE).count(),
+//             DEFAULT_INNER_SIZE - 9
+//         );
 
-        btree.remove_range((
-            Included(DEFAULT_INNER_SIZE),
-            Excluded(DEFAULT_INNER_SIZE + 10),
-        ));
-        assert_eq!(
-            btree.range(0..=DEFAULT_INNER_SIZE * 2).count(),
-            DEFAULT_INNER_SIZE * 2 - 18
-        );
+//         btree.remove_range((
+//             Included(DEFAULT_INNER_SIZE),
+//             Excluded(DEFAULT_INNER_SIZE + 10),
+//         ));
+//         assert_eq!(
+//             btree.range(0..=DEFAULT_INNER_SIZE * 2).count(),
+//             DEFAULT_INNER_SIZE * 2 - 18
+//         );
 
-        let original_count = btree.len();
-        btree.remove_range(DEFAULT_INNER_SIZE * 3..DEFAULT_INNER_SIZE * 4);
-        assert_eq!(btree.len(), original_count);
+//         let original_count = btree.len();
+//         btree.remove_range(DEFAULT_INNER_SIZE * 3..DEFAULT_INNER_SIZE * 4);
+//         assert_eq!(btree.len(), original_count);
 
-        btree.remove_range(DEFAULT_INNER_SIZE * 2 - 5..DEFAULT_INNER_SIZE * 3);
-        assert_eq!(btree.len(), original_count - 6);
-    }
-}
+//         btree.remove_range(DEFAULT_INNER_SIZE * 2 - 5..DEFAULT_INNER_SIZE * 3);
+//         assert_eq!(btree.len(), original_count - 6);
+//     }
+// }

@@ -12,15 +12,25 @@ pub trait NodeLike<T: Ord>: Default {
     #[allow(dead_code)]
     fn insert(&mut self, value: T) -> bool;
     #[allow(dead_code)]
-    fn contains(&self, value: &T) -> bool;
+    fn contains<Q: Ord + ?Sized>(&self, value: &Q) -> bool
+    where
+        T: Borrow<Q>;
     #[allow(dead_code)]
-    fn delete(&mut self, index: usize) -> T;
+    fn delete<Q: Ord + ?Sized>(&mut self, value: &Q) -> Option<T>
+    where
+        T: Borrow<Q>;
+    #[allow(dead_code)]
+    fn replace(&mut self, value: T) -> Option<T>;
     #[allow(dead_code)]
     fn max(&self) -> Option<&T>;
 }
 
 #[inline]
-fn search<T: Ord>(haystack: &[T], needle: &T) -> Result<usize, usize> {
+fn search<Q, T: Ord>(haystack: &[T], needle: &Q) -> Result<usize, usize>
+where
+    T: Borrow<Q> + Ord,
+    Q: Ord + ?Sized,
+{
     let mut j = haystack.len();
 
     unsafe {
@@ -69,15 +79,39 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         true
     }
     #[inline]
-    fn contains(&self, value: &T) -> bool {
+    fn contains<Q>(&self, value: &Q) -> bool
+    where
+        T: Borrow<Q> + Ord,
+        Q: Ord + ?Sized,
+    {
         match search(&self, &value) {
             Ok(_) => true,
             Err(_) => false,
         }
     }
     #[inline]
-    fn delete(&mut self, index: usize) -> T {
-        self.remove(index)
+    fn delete<Q>(&mut self, value: &Q) -> Option<T>
+    where
+        T: Borrow<Q> + Ord,
+        Q: Ord + ?Sized,
+    {
+        match search(&self, value) {
+            Ok(idx) => Some(self.remove(idx)),
+            Err(_) => None,
+        }
+    }
+    #[inline]
+    fn replace(&mut self, value: T) -> Option<T> {
+        match search(&self, &value) {
+            Ok(idx) => {
+                self.push(value);
+                let len = self.len() - 1;
+                self.swap(idx, len);
+
+                self.pop()
+            }
+            Err(_) => None,
+        }
     }
     #[inline]
     fn max(&self) -> Option<&T> {

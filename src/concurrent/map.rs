@@ -252,11 +252,12 @@ impl<K: Ord + Clone, V: Clone> BTreeMap<K, V> {
         if self.contains_key(&key) {
             let new_entry = Pair { key, value };
 
-            let old_entry = self.set.delete(&new_entry).1?.value;
+            //let old_entry = self.set.delete(&new_entry).1?.value;
 
             self.set.insert(new_entry);
 
-            Some(old_entry)
+            //Some(old_entry)
+            None
         } else {
             self.set.insert(Pair { key, value });
 
@@ -270,11 +271,12 @@ impl<K: Ord + Clone, V: Clone> BTreeMap<K, V> {
         if self.contains_key(&key) {
             let new_entry = Pair { key, value };
 
-            let old_entry = self.set.delete(&new_entry).1?.value;
+            //let old_entry = self.set.delete(&new_entry).1?.value;
 
             self.set.insert_spmc(new_entry);
 
-            Some(old_entry)
+            //Some(old_entry)
+            None
         } else {
             self.set.insert_spmc(Pair { key, value });
 
@@ -299,21 +301,21 @@ impl<K: Ord + Clone, V: Clone> BTreeMap<K, V> {
     /// assert_eq!(map.remove(&1), Some("a"));
     /// assert_eq!(map.remove(&1), None);
     /// ```
-    pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
-    where
-        Pair<K, V>: Borrow<Q> + Ord,
-        Q: Ord + ?Sized,
-    {
-        let (removed, old_entry) = self
-            .set
-            .delete_cmp(|x| x.borrow() < key, |x| x.borrow() == key);
+    // pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    // where
+    //     Pair<K, V>: Borrow<Q> + Ord,
+    //     Q: Ord + ?Sized,
+    // {
+    //     let (removed, old_entry) = self
+    //         .set
+    //         .delete_cmp(|x| x.borrow() < key, |x| x.borrow() == key);
 
-        if removed {
-            return Some(old_entry?.value);
-        }
+    //     if removed {
+    //         return Some(old_entry?.value);
+    //     }
 
-        None
-    }
+    //     None
+    // }
     /// Returns the number of elements in the map.
     ///
     /// # Examples

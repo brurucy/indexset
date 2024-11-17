@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use indexset::concurrent::set::BTreeSet;
+use indexset::concurrent2::set::BTreeSet;
 use rand::{thread_rng, Rng};
 use scc::TreeIndex;
 use std::sync::{Arc, RwLock};
@@ -53,10 +53,7 @@ fn concurrent_operations<T: Send + Sync + 'static>(
 fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
     let operations = Arc::new(generate_operations(write_ratio));
 
-    let mut group = c.benchmark_group(format!(
-        "Concurrent BTreeSet (Write Ratio: {:.2})",
-        write_ratio
-    ));
+    let mut group = c.benchmark_group(format!("Write Ratio: {:.2}", write_ratio));
 
     group.bench_function(BenchmarkId::new("scc::TreeIndex", write_ratio), |b| {
         b.iter(|| {
@@ -93,7 +90,7 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
         BenchmarkId::new("indexset::concurrent::set::BTreeSet", write_ratio),
         |b| {
             b.iter(|| {
-                let set = Arc::new(BTreeSet::with_maximum_node_size(128));
+                let set = Arc::new(BTreeSet::new());
                 let mut handles = vec![];
 
                 for thread_ops in operations.iter() {
@@ -107,7 +104,7 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
                                 set.contains(&item);
                             },
                             |set, item| {
-                                set.insert_spmc(item);
+                                set.insert(item);
                             },
                         );
                     });

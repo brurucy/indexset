@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use indexset::concurrent::set::BTreeSet;
+use indexset::concurrent2::set::BTreeSet;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use scc::TreeIndex;
@@ -10,14 +10,14 @@ fn criterion_benchmark(c: &mut Criterion) {
     input.shuffle(&mut thread_rng());
 
     c.bench_function("stdlib insert 100k", |b| {
-        b.iter(|| std::collections::BTreeSet::from_iter(input.iter()))
+        b.iter(|| black_box(std::collections::BTreeSet::from_iter(input.iter())))
     });
     c.bench_function("indexset insert 100k", |b| {
         b.iter(|| {
             let indexset = BTreeSet::new();
 
             input.iter().for_each(|item| {
-                indexset.insert_spmc(item);
+                black_box(indexset.insert(item));
             })
         })
     });
@@ -26,40 +26,40 @@ fn criterion_benchmark(c: &mut Criterion) {
             let treeindex = TreeIndex::new();
 
             input.iter().for_each(|item| {
-                treeindex.insert(*item, ());
+                black_box(treeindex.insert(*item, ()));
             })
         })
     });
 
-    let stdlib = std::collections::BTreeSet::from_iter(input.iter());
-    let indexset = BTreeSet::from_iter(input.iter());
-    let treeindex = TreeIndex::new();
-    for i in &input {
-        treeindex.insert(*i, ());
-    }
+    // let stdlib = std::collections::BTreeSet::from_iter(input.iter());
+    // let indexset = BTreeSet::from_iter(input.iter());
+    // let treeindex = TreeIndex::new();
+    // for i in &input {
+    //     treeindex.insert(*i, ());
+    // }
 
-    c.bench_function("stdlib contains 100k", |b| {
-        b.iter(|| {
-            input.iter().for_each(|item| {
-                stdlib.contains(black_box(item));
-            })
-        })
-    });
-    c.bench_function("indexset contains 100k", |b| {
-        b.iter(|| {
-            input.iter().for_each(|item| {
-                indexset.contains(black_box(item));
-            })
-        })
-    });
+    // c.bench_function("stdlib contains 100k", |b| {
+    //     b.iter(|| {
+    //         input.iter().for_each(|item| {
+    //             stdlib.contains(black_box(item));
+    //         })
+    //     })
+    // });
+    // c.bench_function("indexset contains 100k", |b| {
+    //     b.iter(|| {
+    //         input.iter().for_each(|item| {
+    //             indexset.contains(black_box(item));
+    //         })
+    //     })
+    // });
 
-    c.bench_function("treeindex contains 100k", |b| {
-        b.iter(|| {
-            input.iter().for_each(|item| {
-                treeindex.contains(black_box(item));
-            })
-        })
-    });
+    // c.bench_function("treeindex contains 100k", |b| {
+    //     b.iter(|| {
+    //         input.iter().for_each(|item| {
+    //             treeindex.contains(black_box(item));
+    //         })
+    //     })
+    // });
 
     // c.bench_function("stdlib get i-th 100k", |b| {
     //     b.iter(|| {
