@@ -18,12 +18,11 @@ scc = "2.1.17"
 [dependencies]
 serde = { version = "1.0.151", optional = true, features = ["derive"] }
 ftree = { version = "1.1.0", features = ["serde"] }
-arc-swap = { version = "1.7.1", optional = true }
+arc-swap = { version = "1.7.1" }
 parking_lot = { version = "0.12.3" }
 
 [features]
 serde = ["dep:serde"]
-concurrent = ["dep:arc-swap"]
 
 [[bench]]
 name = "stdlib"
