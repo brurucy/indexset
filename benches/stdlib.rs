@@ -10,7 +10,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     input.shuffle(&mut thread_rng());
 
     c.bench_function("stdlib insert 100k", |b| {
-        b.iter(|| black_box(std::collections::BTreeSet::from_iter(input.iter())))
+        b.iter(|| {
+            let mut btreeset = std::collections::BTreeSet::new();
+
+            input.iter().for_each(|item| {
+                black_box(btreeset.insert(item));
+            })
+        })
     });
     c.bench_function("indexset insert 100k", |b| {
         b.iter(|| {
@@ -26,7 +32,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             let treeindex = TreeIndex::new();
 
             input.iter().for_each(|item| {
-                black_box(treeindex.insert(*item, ()));
+                black_box(treeindex.insert(*item, ()).unwrap());
             })
         })
     });

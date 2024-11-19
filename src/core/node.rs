@@ -2,7 +2,7 @@ use crate::core::constants::DEFAULT_CUTOFF;
 use core::borrow::Borrow;
 use core::cmp::Ordering;
 
-pub trait NodeLike<T: Ord>: Default {
+pub trait NodeLike<T: Ord> {
     #[allow(dead_code)]
     fn get_ith(&self, index: usize) -> Option<&T>;
     #[allow(dead_code)]
