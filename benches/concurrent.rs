@@ -1,5 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use indexset::concurrent2::set::BTreeSet;
+use indexset::BTreeSet;
+use parking_lot::Mutex;
 use rand::{thread_rng, Rng};
 use scc::TreeIndex;
 use std::sync::{Arc, RwLock};
@@ -11,10 +12,10 @@ enum Op {
     Write(usize),
 }
 
-const NUM_READERS: usize = 1;
-const NUM_WRITERS: usize = 4;
+const NUM_READERS: usize = 30;
+const NUM_WRITERS: usize = 10;
 const NUM_THREADS: usize = NUM_READERS + NUM_WRITERS;
-const OPERATIONS_PER_THREAD: usize = 100_000;
+const OPERATIONS_PER_THREAD: usize = 10_000;
 const TOTAL_OPERATIONS: usize = NUM_THREADS * OPERATIONS_PER_THREAD;
 
 fn generate_operations(write_ratio: f64) -> Vec<Vec<Op>> {
@@ -111,7 +112,7 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
         BenchmarkId::new("indexset::concurrent::set::BTreeSet", write_ratio),
         |b| {
             b.iter(|| {
-                let set = Arc::new(BTreeSet::new());
+                let set = Arc::new(Mutex::new(BTreeSet::new()));
                 let mut handles = vec![];
 
                 for thread_ops in operations.iter() {
@@ -122,10 +123,10 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
                             set,
                             thread_ops,
                             |set, item| {
-                                set.contains(&item);
+                                set.lock().contains(&item);
                             },
                             |set, item| {
-                                set.insert(item);
+                                set.lock().insert(item);
                             },
                         );
                     });
@@ -143,7 +144,7 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
         BenchmarkId::new("RwLock<std::collections::BTreeSet>", write_ratio),
         |b| {
             b.iter(|| {
-                let set = Arc::new(RwLock::new(RwLock::new(std::collections::BTreeSet::new())));
+                let set = Arc::new(RwLock::new(std::collections::BTreeSet::new()));
                 let mut handles = vec![];
 
                 for thread_ops in operations.iter() {
@@ -154,10 +155,10 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
                             set,
                             thread_ops,
                             |set, item| {
-                                set.read().unwrap().read().unwrap().contains(&item);
+                                set.read().unwrap().contains(&item);
                             },
                             |set, item| {
-                                set.write().unwrap().write().unwrap().insert(item);
+                                set.write().unwrap().insert(item);
                             },
                         );
                     });
