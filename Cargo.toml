@@ -13,7 +13,6 @@ readme = "README.md"
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 rand = "0.8.5"
-scc = "2.1.17"
 
 [dependencies]
 serde = { version = "1.0.151", optional = true, features = ["derive"] }
@@ -21,6 +20,7 @@ ftree = { version = "1.1.0", features = ["serde"] }
 arc-swap = { version = "1.7.1" }
 parking_lot = { version = "0.12.3" }
 crossbeam-utils = { version = "0.8.20" }
+scc = "2.1.17"
 
 [features]
 serde = ["dep:serde"]
