@@ -971,85 +971,139 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
         Self::default()
     }
     pub fn insert(&self, value: T) -> bool {
-        let global_read_lock = self.inner.read();
-        let g = Guard::new();
-        let mut node_idx = global_read_lock.partition_point(|node| {
-            if let Some(&max) = node.load(Relaxed, &g).as_ref().unwrap().max_key().as_ref() {
-                return max.borrow() < &value;
-            };
-            false
-        });
-        if global_read_lock.get(node_idx).is_none() {
-            node_idx -= 1
-        }
-        if let Some(node) = global_read_lock.get(node_idx).cloned() {
-            let shared_node = node.get_shared(Acquire, &g).unwrap();
-            match shared_node.insert(value, ()) {
-                InsertResult::Success => return true,
-                InsertResult::Duplicate(_, _) => return false,
-                InsertResult::Full(k, v) => {
-                    drop(global_read_lock);
-                    let mut global_write_lock = self.inner.write();
-                    let mut low_key_leaf_shared = None;
-                    let mut high_key_leaf_shared = None;
-                    node.get_shared(Acquire, &g)
-                        .unwrap()
-                        .freeze_and_distribute(&mut low_key_leaf_shared, &mut high_key_leaf_shared);
-                    // println!("Node before swap {:?}", unsafe {
-                    //     global_write_lock
-                    //         .get(node_idx)
-                    //         .unwrap()
-                    //         .get_shared(Acquire, &g)
-                    //         .unwrap()
-                    //         .entry_array
-                    //         .get()
-                    //         .read()
-                    //         .0
-                    //         .map(|munit| munit.assume_init())
-                    // });
+        loop {
+            // Add retry loop for the whole operation
+            let global_read_lock = self.inner.read();
+            let g = Guard::new();
 
-                    let mut already_inserted = false;
-                    if let Some(node) = low_key_leaf_shared {
-                        if let Some(max_key) = node.max_key() {
-                            if &k < max_key {
-                                node.insert(k.clone(), ());
-                                already_inserted = true;
+            let mut node_idx = global_read_lock.partition_point(|node| {
+                if let Some(&max) = node.load(Relaxed, &g).as_ref().unwrap().max_key().as_ref() {
+                    return max.borrow() < &value;
+                };
+                false
+            });
+
+            if global_read_lock.get(node_idx).is_none() {
+                node_idx -= 1
+            }
+
+            if let Some(node) = global_read_lock.get(node_idx).cloned() {
+                let shared_node = node.get_shared(Acquire, &g).unwrap();
+                match shared_node.insert(value.clone(), ()) {
+                    // Clone value for retries
+                    InsertResult::Success => return true,
+                    InsertResult::Duplicate(_, _) => return false,
+                    InsertResult::Full(k, _) => {
+                        // Drop read lock before attempting split
+                        drop(global_read_lock);
+
+                        // Try to perform split under write lock
+                        let split_result = {
+                            let mut global_write_lock = self.inner.write();
+
+                            // Verify node hasn't changed
+                            if let Some(current_node) = global_write_lock.get(node_idx) {
+                                if !current_node
+                                    .load(Acquire, &g)
+                                    .as_ptr()
+                                    .equivalent(&shared_node.as_ptr())
+                                {
+                                    continue; // Node changed, retry entire operation
+                                }
+
+                                let mut low_key_leaf_shared = None;
+                                let mut high_key_leaf_shared = None;
+
+                                shared_node.freeze_and_distribute(
+                                    &mut low_key_leaf_shared,
+                                    &mut high_key_leaf_shared,
+                                );
+
+                                if let (Some(low), Some(high)) =
+                                    (low_key_leaf_shared, high_key_leaf_shared)
+                                {
+                                    global_write_lock[node_idx]
+                                        .swap((Some(low), Tag::None), Release);
+                                    global_write_lock
+                                        .insert(node_idx + 1, AtomicShared::from(high));
+                                    true
+                                } else {
+                                    false // Split failed somehow
+                                }
+                            } else {
+                                false // Node index no longer valid
                             }
+                        };
+
+                        if split_result {
+                            // After successful split, retry insertion
+                            continue;
                         }
-                        global_write_lock[node_idx].swap((Some(node), Tag::None), Release);
+                        // If split failed, treat as retry
+                        return self.insert(k);
                     }
-
-                    if let Some(node) = high_key_leaf_shared {
-                        if !already_inserted {
-                            node.insert(k, ());
-                        }
-
-                        global_write_lock.insert(node_idx + 1, AtomicShared::from(node));
-                    }
-
-                    // println!("Node after swap {:?}", unsafe {
-                    //     global_write_lock
-                    //         .get(node_idx)
-                    //         .unwrap()
-                    //         .get_shared(Acquire, &g)
-                    //         .unwrap()
-                    //         .entry_array
-                    //         .get()
-                    //         .read()
-                    //         .0
-                    //         .map(|munit| munit.assume_init())
-                    // });
-
-                    true
+                    InsertResult::Frozen(k, _)
+                    | InsertResult::Retired(k, _)
+                    | InsertResult::Retry(k, _) => return self.insert(k),
                 }
-                InsertResult::Frozen(k, _) => self.insert(k),
-                InsertResult::Retired(k, _) => self.insert(k),
-                InsertResult::Retry(k, _) => self.insert(k),
-            };
+            }
+            return false; // No valid node found
         }
-
-        false
     }
+    // pub fn insert(&self, value: T) -> bool {
+    //     let global_read_lock = self.inner.read();
+    //     let g = Guard::new();
+    //     let mut node_idx = global_read_lock.partition_point(|node| {
+    //         if let Some(&max) = node.load(Relaxed, &g).as_ref().unwrap().max_key().as_ref() {
+    //             return max.borrow() < &value;
+    //         };
+    //         false
+    //     });
+    //     if global_read_lock.get(node_idx).is_none() {
+    //         node_idx -= 1
+    //     }
+    //     if let Some(node) = global_read_lock.get(node_idx).cloned() {
+    //         let shared_node = node.get_shared(Acquire, &g).unwrap();
+    //         match shared_node.insert(value, ()) {
+    //             InsertResult::Success => return true,
+    //             InsertResult::Duplicate(_, _) => return false,
+    //             InsertResult::Full(k, v) => {
+    //                 drop(global_read_lock);
+    //                 let mut global_write_lock = self.inner.write();
+    //                 let mut low_key_leaf_shared = None;
+    //                 let mut high_key_leaf_shared = None;
+    //                 shared_node
+    //                     .freeze_and_distribute(&mut low_key_leaf_shared, &mut high_key_leaf_shared);
+
+    //                 let mut already_inserted = false;
+    //                 if let Some(node) = low_key_leaf_shared {
+    //                     if let Some(max_key) = node.max_key() {
+    //                         if &k < max_key {
+    //                             node.insert(k.clone(), ());
+    //                             already_inserted = true;
+    //                         }
+    //                     }
+    //                     global_write_lock[node_idx].swap((Some(node), Tag::None), Release);
+    //                 }
+
+    //                 if let Some(node) = high_key_leaf_shared {
+    //                     if !already_inserted {
+    //                         node.insert(k, ());
+    //                     }
+
+    //                     global_write_lock.insert(node_idx + 1, AtomicShared::from(node));
+    //                 }
+
+    //                 true
+    //             }
+    //             InsertResult::Frozen(k, _) => self.insert(k),
+    //             InsertResult::Retired(k, _) => self.insert(k),
+    //             InsertResult::Retry(k, _) => self.insert(k),
+    //         };
+    //     }
+
+    //     false
+    // }
     fn locate_node<Q>(&self, value: &Q, g: &Guard) -> Option<Shared<Leaf<T, ()>>>
     where
         T: Borrow<Q>,
@@ -1135,8 +1189,8 @@ mod tests {
     #[test]
     fn test_concurrent_insert() {
         let set = Arc::new(BTreeSet::<i32>::new());
-        let num_threads = 2;
-        let operations_per_thread = 30;
+        let num_threads = 8;
+        let operations_per_thread = 10000;
         let mut handles = vec![];
 
         let test_data: Vec<Vec<(i32, i32)>> = (0..num_threads)
@@ -1163,9 +1217,7 @@ mod tests {
                 for (operation, value) in thread_data {
                     if operation == 0 {
                         set_clone.insert(value);
-                        //if set_clone.insert(value) {
                         expected_values.lock().unwrap().insert(value);
-                        //}
                     }
                 }
             });
@@ -1177,7 +1229,6 @@ mod tests {
         }
 
         let expected_values = expected_values.lock().unwrap();
-        println!("AAA {}", set.len());
         assert_eq!(set.len(), expected_values.len());
 
         for value in expected_values.iter() {
