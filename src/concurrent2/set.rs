@@ -972,7 +972,6 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
     }
     pub fn insert(&self, value: T) -> bool {
         loop {
-            // Add retry loop for the whole operation
             let global_read_lock = self.inner.read();
             let g = Guard::new();
 
@@ -990,25 +989,20 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
             if let Some(node) = global_read_lock.get(node_idx).cloned() {
                 let shared_node = node.get_shared(Acquire, &g).unwrap();
                 match shared_node.insert(value.clone(), ()) {
-                    // Clone value for retries
                     InsertResult::Success => return true,
                     InsertResult::Duplicate(_, _) => return false,
                     InsertResult::Full(k, _) => {
-                        // Drop read lock before attempting split
                         drop(global_read_lock);
-
-                        // Try to perform split under write lock
                         let split_result = {
                             let mut global_write_lock = self.inner.write();
 
-                            // Verify node hasn't changed
                             if let Some(current_node) = global_write_lock.get(node_idx) {
                                 if !current_node
                                     .load(Acquire, &g)
                                     .as_ptr()
                                     .equivalent(&shared_node.as_ptr())
                                 {
-                                    continue; // Node changed, retry entire operation
+                                    continue;
                                 }
 
                                 let mut low_key_leaf_shared = None;
@@ -1028,18 +1022,16 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
                                         .insert(node_idx + 1, AtomicShared::from(high));
                                     true
                                 } else {
-                                    false // Split failed somehow
+                                    false
                                 }
                             } else {
-                                false // Node index no longer valid
+                                false
                             }
                         };
 
                         if split_result {
-                            // After successful split, retry insertion
                             continue;
                         }
-                        // If split failed, treat as retry
                         return self.insert(k);
                     }
                     InsertResult::Frozen(k, _)
@@ -1047,63 +1039,9 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
                     | InsertResult::Retry(k, _) => return self.insert(k),
                 }
             }
-            return false; // No valid node found
+            return false;
         }
     }
-    // pub fn insert(&self, value: T) -> bool {
-    //     let global_read_lock = self.inner.read();
-    //     let g = Guard::new();
-    //     let mut node_idx = global_read_lock.partition_point(|node| {
-    //         if let Some(&max) = node.load(Relaxed, &g).as_ref().unwrap().max_key().as_ref() {
-    //             return max.borrow() < &value;
-    //         };
-    //         false
-    //     });
-    //     if global_read_lock.get(node_idx).is_none() {
-    //         node_idx -= 1
-    //     }
-    //     if let Some(node) = global_read_lock.get(node_idx).cloned() {
-    //         let shared_node = node.get_shared(Acquire, &g).unwrap();
-    //         match shared_node.insert(value, ()) {
-    //             InsertResult::Success => return true,
-    //             InsertResult::Duplicate(_, _) => return false,
-    //             InsertResult::Full(k, v) => {
-    //                 drop(global_read_lock);
-    //                 let mut global_write_lock = self.inner.write();
-    //                 let mut low_key_leaf_shared = None;
-    //                 let mut high_key_leaf_shared = None;
-    //                 shared_node
-    //                     .freeze_and_distribute(&mut low_key_leaf_shared, &mut high_key_leaf_shared);
-
-    //                 let mut already_inserted = false;
-    //                 if let Some(node) = low_key_leaf_shared {
-    //                     if let Some(max_key) = node.max_key() {
-    //                         if &k < max_key {
-    //                             node.insert(k.clone(), ());
-    //                             already_inserted = true;
-    //                         }
-    //                     }
-    //                     global_write_lock[node_idx].swap((Some(node), Tag::None), Release);
-    //                 }
-
-    //                 if let Some(node) = high_key_leaf_shared {
-    //                     if !already_inserted {
-    //                         node.insert(k, ());
-    //                     }
-
-    //                     global_write_lock.insert(node_idx + 1, AtomicShared::from(node));
-    //                 }
-
-    //                 true
-    //             }
-    //             InsertResult::Frozen(k, _) => self.insert(k),
-    //             InsertResult::Retired(k, _) => self.insert(k),
-    //             InsertResult::Retry(k, _) => self.insert(k),
-    //         };
-    //     }
-
-    //     false
-    // }
     fn locate_node<Q>(&self, value: &Q, g: &Guard) -> Option<Shared<Leaf<T, ()>>>
     where
         T: Borrow<Q>,
@@ -1134,18 +1072,8 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
     {
         let g = Guard::new();
         if let Some(node) = self.locate_node(value, &g) {
-            println!("Candidate node: {:?}", unsafe {
-                node.entry_array
-                    .get()
-                    .read()
-                    .0
-                    .map(|munit| munit.assume_init())
-            },);
-
-            println!("\tTarget: {:?}", value);
             let (potential_kv, metadata) = node.min_greater_equal(value);
             if let Some(kv) = potential_kv {
-                println!("\tCandidate value: {:?}", &kv.0);
                 return kv.0.borrow() == value;
             }
         }
@@ -1160,17 +1088,6 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
             .map(|node| {
                 let leaf = node.load(Relaxed, &g).as_ref().unwrap();
                 let count = Scanner::new(leaf).count();
-                println!(
-                    "Leaf contains: {:?}, count: {}",
-                    unsafe {
-                        leaf.entry_array
-                            .get()
-                            .read()
-                            .0
-                            .map(|munit| munit.assume_init())
-                    },
-                    count
-                );
                 count
             })
             .sum()
