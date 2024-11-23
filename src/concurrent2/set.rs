@@ -15,7 +15,7 @@ where
 }
 impl<T: Ord> Default for BTreeSet<T> {
     fn default() -> Self {
-        let node_capacity = DEFAULT_INNER_SIZE;
+        let node_capacity = DEFAULT_INNER_SIZE / 8;
 
         Self {
             node_capacity,

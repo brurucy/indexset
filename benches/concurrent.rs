@@ -1,6 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use indexset::BTreeSet;
-use parking_lot::Mutex;
+use indexset::concurrent2::set::BTreeSet;
 use rand::{thread_rng, Rng};
 use scc::TreeIndex;
 use std::sync::{Arc, RwLock};
@@ -12,10 +11,10 @@ enum Op {
     Write(usize),
 }
 
-const NUM_READERS: usize = 1;
-const NUM_WRITERS: usize = 1;
+const NUM_READERS: usize = 8;
+const NUM_WRITERS: usize = 2;
 const NUM_THREADS: usize = NUM_READERS + NUM_WRITERS;
-const OPERATIONS_PER_THREAD: usize = 10_000;
+const OPERATIONS_PER_THREAD: usize = 100_000;
 const TOTAL_OPERATIONS: usize = NUM_THREADS * OPERATIONS_PER_THREAD;
 
 fn generate_operations(write_ratio: f64) -> Vec<Vec<Op>> {
@@ -76,6 +75,7 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
     let operations = Arc::new(generate_operations(write_ratio));
 
     let mut group = c.benchmark_group(format!("Write Ratio: {:.2}", write_ratio));
+    group.warm_up_time(std::time::Duration::from_millis(1000));
 
     group.bench_function(BenchmarkId::new("scc::TreeIndex", write_ratio), |b| {
         b.iter(|| {
@@ -112,7 +112,7 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
         BenchmarkId::new("indexset::concurrent::set::BTreeSet", write_ratio),
         |b| {
             b.iter(|| {
-                let set = Arc::new(Mutex::new(BTreeSet::new()));
+                let set = Arc::new(BTreeSet::new());
                 let mut handles = vec![];
 
                 for thread_ops in operations.iter() {
@@ -123,10 +123,10 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
                             set,
                             thread_ops,
                             |set, item| {
-                                set.lock().contains(&item);
+                                set.contains(&item);
                             },
                             |set, item| {
-                                set.lock().insert(item);
+                                set.insert(item);
                             },
                         );
                     });
