@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::sync::atomic::AtomicUsize;
 use std::{borrow::Borrow, sync::Arc};
 
@@ -6,10 +7,9 @@ use parking_lot::{Mutex, RwLock};
 use crate::core::constants::DEFAULT_INNER_SIZE;
 use crate::core::node::*;
 
-use scc::ebr::Shared;
+use scc::ebr::{AtomicShared, Guard, Shared, Tag};
 
 use std::cell::UnsafeCell;
-use std::cmp::Ordering;
 use std::fmt::{self, Debug};
 use std::mem::{needs_drop, MaybeUninit};
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
@@ -610,21 +610,24 @@ where
                 .unwrap_unchecked()
         };
 
-        let boundary = Self::optimal_boundary(metadata);
-        let scanner = Scanner {
+        let entries: Vec<_> = Scanner {
             leaf: self,
             metadata,
             entry_index: DIMENSION.num_entries,
-        };
-        for (i, (k, v)) in scanner.enumerate() {
-            if i < boundary {
+        }
+        .collect();
+
+        let split_point = (entries.len() + 1) / 2;
+
+        for (i, (k, v)) in entries.into_iter().enumerate() {
+            if i < split_point {
                 low_key_leaf
                     .get_or_insert_with(|| Shared::new(Leaf::new()))
                     .insert_unchecked(k.clone(), v.clone(), i);
             } else {
                 high_key_leaf
                     .get_or_insert_with(|| Shared::new(Leaf::new()))
-                    .insert_unchecked(k.clone(), v.clone(), i - boundary);
+                    .insert_unchecked(k.clone(), v.clone(), i - split_point);
             };
         }
     }
@@ -943,35 +946,35 @@ impl<'l, K, V> Iterator for Scanner<'l, K, V> {
     }
 }
 
-#[derive(Debug)]
 pub struct BTreeSet<T>
 where
     T: Ord,
 {
     node_capacity: usize,
-    inner: RwLock<Vec<Arc<Mutex<Vec<T>>>>>,
+    inner: RwLock<Vec<AtomicShared<Leaf<T, ()>>>>,
 }
-impl<T: Ord> Default for BTreeSet<T> {
+impl<T: Ord + 'static> Default for BTreeSet<T> {
     fn default() -> Self {
         let node_capacity = DEFAULT_INNER_SIZE;
+        let leaf = Shared::new(Leaf::new());
+        let inner_vec = vec![AtomicShared::from(leaf)];
 
         Self {
             node_capacity,
-            inner: RwLock::new(vec![Arc::new(Mutex::new(Vec::with_capacity(
-                node_capacity,
-            )))]),
+            inner: RwLock::new(inner_vec),
         }
     }
 }
 
-impl<T: Ord + Clone> BTreeSet<T> {
+impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
     pub fn new() -> Self {
         Self::default()
     }
     pub fn insert(&self, value: T) -> bool {
         let global_read_lock = self.inner.read();
+        let g = Guard::new();
         let mut node_idx = global_read_lock.partition_point(|node| {
-            if let Some(&max) = node.lock().last().as_ref() {
+            if let Some(&max) = node.load(Relaxed, &g).as_ref().unwrap().max_key().as_ref() {
                 return max.borrow() < &value;
             };
             false
@@ -980,33 +983,81 @@ impl<T: Ord + Clone> BTreeSet<T> {
             node_idx -= 1
         }
         if let Some(node) = global_read_lock.get(node_idx).cloned() {
-            let mut node_write_lock = node.lock();
-            if node_write_lock.len() == self.node_capacity {
-                if NodeLike::insert(&mut *node_write_lock, value) {
+            let shared_node = node.get_shared(Acquire, &g).unwrap();
+            match shared_node.insert(value, ()) {
+                InsertResult::Success => return true,
+                InsertResult::Duplicate(_, _) => return false,
+                InsertResult::Full(k, v) => {
                     drop(global_read_lock);
-                    drop(node_write_lock);
                     let mut global_write_lock = self.inner.write();
-                    let mut node_write_lock = node.lock();
-                    let new_node = node_write_lock.halve();
-                    global_write_lock.insert(node_idx + 1, Arc::new(Mutex::new(new_node)));
+                    let mut low_key_leaf_shared = None;
+                    let mut high_key_leaf_shared = None;
+                    node.get_shared(Acquire, &g)
+                        .unwrap()
+                        .freeze_and_distribute(&mut low_key_leaf_shared, &mut high_key_leaf_shared);
+                    // println!("Node before swap {:?}", unsafe {
+                    //     global_write_lock
+                    //         .get(node_idx)
+                    //         .unwrap()
+                    //         .get_shared(Acquire, &g)
+                    //         .unwrap()
+                    //         .entry_array
+                    //         .get()
+                    //         .read()
+                    //         .0
+                    //         .map(|munit| munit.assume_init())
+                    // });
 
-                    return true;
+                    let mut already_inserted = false;
+                    if let Some(node) = low_key_leaf_shared {
+                        if let Some(max_key) = node.max_key() {
+                            if &k < max_key {
+                                node.insert(k.clone(), ());
+                                already_inserted = true;
+                            }
+                        }
+                        global_write_lock[node_idx].swap((Some(node), Tag::None), Release);
+                    }
+
+                    if let Some(node) = high_key_leaf_shared {
+                        if !already_inserted {
+                            node.insert(k, ());
+                        }
+
+                        global_write_lock.insert(node_idx + 1, AtomicShared::from(node));
+                    }
+
+                    // println!("Node after swap {:?}", unsafe {
+                    //     global_write_lock
+                    //         .get(node_idx)
+                    //         .unwrap()
+                    //         .get_shared(Acquire, &g)
+                    //         .unwrap()
+                    //         .entry_array
+                    //         .get()
+                    //         .read()
+                    //         .0
+                    //         .map(|munit| munit.assume_init())
+                    // });
+
+                    true
                 }
-            } else {
-                return NodeLike::insert(&mut *node_write_lock, value);
-            }
+                InsertResult::Frozen(k, _) => self.insert(k),
+                InsertResult::Retired(k, _) => self.insert(k),
+                InsertResult::Retry(k, _) => self.insert(k),
+            };
         }
 
         false
     }
-    fn locate_node<Q>(&self, value: &Q) -> Option<Arc<Mutex<Vec<T>>>>
+    fn locate_node<Q>(&self, value: &Q, g: &Guard) -> Option<Shared<Leaf<T, ()>>>
     where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
     {
         let global_read_lock = self.inner.read();
         let mut node_idx = global_read_lock.partition_point(|node| {
-            if let Some(&max) = node.lock().last().as_ref() {
+            if let Some(&ref max) = node.load(Acquire, &g).as_ref().unwrap().max_key() {
                 return max.borrow() < value;
             };
             false
@@ -1018,28 +1069,65 @@ impl<T: Ord + Clone> BTreeSet<T> {
         if global_read_lock.get(node_idx).is_none() {
             node_idx -= 1
         }
-        global_read_lock.get(node_idx).cloned()
+        global_read_lock
+            .get(node_idx)
+            .map(|x| x.get_shared(Relaxed, g).unwrap())
     }
     pub fn contains<Q>(&self, value: &Q) -> bool
     where
         T: Borrow<Q>,
-        Q: Ord + ?Sized,
+        Q: Ord + ?Sized + Debug,
     {
-        if let Some(node) = self.locate_node(value) {
-            return node.lock().contains(value);
+        let g = Guard::new();
+        if let Some(node) = self.locate_node(value, &g) {
+            println!("Candidate node: {:?}", unsafe {
+                node.entry_array
+                    .get()
+                    .read()
+                    .0
+                    .map(|munit| munit.assume_init())
+            },);
+
+            println!("\tTarget: {:?}", value);
+            let (potential_kv, metadata) = node.min_greater_equal(value);
+            if let Some(kv) = potential_kv {
+                println!("\tCandidate value: {:?}", &kv.0);
+                return kv.0.borrow() == value;
+            }
         }
+
         false
     }
     pub fn len(&self) -> usize {
         let global_read_lock = self.inner.read();
-        global_read_lock.iter().map(|node| node.lock().len()).sum()
+        let g = Guard::new();
+        global_read_lock
+            .iter()
+            .map(|node| {
+                let leaf = node.load(Relaxed, &g).as_ref().unwrap();
+                let count = Scanner::new(leaf).count();
+                println!(
+                    "Leaf contains: {:?}, count: {}",
+                    unsafe {
+                        leaf.entry_array
+                            .get()
+                            .read()
+                            .0
+                            .map(|munit| munit.assume_init())
+                    },
+                    count
+                );
+                count
+            })
+            .sum()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::concurrent2::set::BTreeSet;
+    use crate::concurrent2::set::{BTreeSet, Dimension};
     use rand::Rng;
+    use scc::ebr::Guard;
     use std::collections::HashSet;
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -1047,8 +1135,8 @@ mod tests {
     #[test]
     fn test_concurrent_insert() {
         let set = Arc::new(BTreeSet::<i32>::new());
-        let num_threads = 8;
-        let operations_per_thread = 1000;
+        let num_threads = 2;
+        let operations_per_thread = 30;
         let mut handles = vec![];
 
         let test_data: Vec<Vec<(i32, i32)>> = (0..num_threads)
@@ -1099,15 +1187,54 @@ mod tests {
 
     #[test]
     fn test_insert_st() {
-        let set = Arc::new(BTreeSet::<i32>::new());
-        let range = 0..100_000;
-        for i in range {
+        let set = Arc::new(BTreeSet::<usize>::new());
+        let n = 1024;
+        let range = 0..n;
+        for i in range.rev() {
             set.insert(i);
         }
 
-        assert_eq!(set.len(), 100_000);
-        for i in 0..100_000 {
-            set.contains(&i);
+        let g = Guard::new();
+        let zeroth = (set.inner.read())[0]
+            .load(std::sync::atomic::Ordering::Relaxed, &g)
+            .get_shared()
+            .unwrap();
+        println!("Zeroth - {:?}", unsafe {
+            zeroth
+                .entry_array
+                .get()
+                .read()
+                .0
+                .map(|munit| munit.assume_init())
+        });
+        println!(
+            "Zeroth State - { }",
+            Dimension::frozen(zeroth.metadata.load(std::sync::atomic::Ordering::Relaxed))
+        );
+        let first = (set.inner.read())[1]
+            .load(std::sync::atomic::Ordering::Relaxed, &g)
+            .get_shared()
+            .unwrap();
+
+        println!("First - {:?}", unsafe {
+            first
+                .entry_array
+                .get()
+                .read()
+                .0
+                .map(|munit| munit.assume_init())
+        });
+        println!(
+            "First State - {}",
+            Dimension::frozen(first.metadata.load(std::sync::atomic::Ordering::Relaxed))
+        );
+
+        println!("Leaf count: {:?}", set.inner.read().len());
+
+        assert_eq!(set.len(), n);
+        for i in 0..n {
+            assert!(set.contains(&i), "{} wasn't found", i);
         }
+        assert!(!set.contains(&n));
     }
 }

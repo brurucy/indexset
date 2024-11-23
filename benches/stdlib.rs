@@ -23,7 +23,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             let indexset = BTreeSet::new();
 
             input.iter().for_each(|item| {
-                black_box(indexset.insert(item));
+                black_box(indexset.insert(*item));
             })
         })
     });
