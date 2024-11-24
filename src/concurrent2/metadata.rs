@@ -235,7 +235,7 @@ mod tests {
     use super::*;
 
     const TEST_DIMENSION: Dimension = Dimension {
-        num_entries: 16,
+        num_entries: 14,
         num_bits_per_entry: 4,
     };
 
@@ -582,5 +582,179 @@ mod tests {
         assert!(Dimension::retired_bytes(metadata_bytes));
         assert_eq!(dim.rank_bytes(metadata_bytes, 0), 5);
         assert_eq!(dim.rank_bytes(metadata_bytes, 1), 7);
+    }
+
+    #[test]
+    fn test_rank_bit_order() {
+        let dim = TEST_DIMENSION;
+
+        // Test asymmetric patterns that would expose reversal
+        let test_cases = [
+            (0b1000, "0b1000"), // Single high bit
+            (0b0001, "0b0001"), // Single low bit
+            (0b1010, "0b1010"), // Alternating starting high
+            (0b0101, "0b0101"), // Alternating starting low
+            (0b1100, "0b1100"), // High pair
+            (0b0011, "0b0011"), // Low pair
+            (0b1110, "0b1110"), // Three high bits
+            (0b0111, "0b0111"), // Three low bits
+        ];
+
+        for (index, offset) in [(0, 0), (1, 4), (7, 28), (13, 52)].iter() {
+            // Test at start, first boundary cross, middle, and end positions
+            for (value, pattern) in test_cases.iter() {
+                let mut metadata = 0usize;
+                metadata = dim.augment(metadata, *index, *value);
+                let metadata_bytes = dim.augment_bytes([0u8; 8], *index, *value);
+
+                assert_eq!(
+                    dim.rank(metadata, *index),
+                    dim.rank_bytes(metadata_bytes, *index),
+                    "Bit pattern {} at index {} (offset {} bits) gave different results\n\
+                 usize version: {:04b}\n\
+                 bytes version: {:04b}",
+                    pattern,
+                    index,
+                    offset,
+                    dim.rank(metadata, *index),
+                    dim.rank_bytes(metadata_bytes, *index)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_byte_boundary_crossing() {
+        let dim = TEST_DIMENSION;
+
+        // Test ranks that cross byte boundaries (index 1 spans bytes 0-1)
+        let value = 0b1010; // Will become split across bytes
+        let mut metadata = 0usize;
+        metadata = dim.augment(metadata, 1, value);
+        let metadata_bytes = dim.augment_bytes([0u8; 8], 1, value);
+
+        println!("Metadata bytes: {:?}", Dimension::to_bytes(metadata));
+        println!("Direct bytes: {:?}", metadata_bytes);
+
+        assert_eq!(
+            dim.rank(metadata, 1),
+            dim.rank_bytes(metadata_bytes, 1),
+            "Rank spanning byte boundary gave different results"
+        );
+    }
+
+    #[test]
+    fn test_multi_rank_interactions() {
+        let dim = TEST_DIMENSION;
+        let mut metadata = 0usize;
+        let mut metadata_bytes = [0u8; 8];
+
+        // Fill with alternating patterns that would expose bit reversal
+        let patterns = [
+            (0, 0b1010),
+            (1, 0b0101),
+            (2, 0b1100),
+            (3, 0b0011),
+            (4, 0b1110),
+            (5, 0b0111),
+            (6, 0b1000),
+            (7, 0b0001),
+        ];
+
+        // Set all patterns
+        for &(index, value) in patterns.iter() {
+            metadata = dim.augment(metadata, index, value);
+            metadata_bytes = dim.augment_bytes(metadata_bytes, index, value);
+        }
+
+        // Verify each pattern
+        for &(index, expected) in patterns.iter() {
+            assert_eq!(
+                dim.rank(metadata, index),
+                dim.rank_bytes(metadata_bytes, index),
+                "At index {}, patterns interfered:\n\
+             usize version: {:04b}\n\
+             bytes version: {:04b}",
+                index,
+                dim.rank(metadata, index),
+                dim.rank_bytes(metadata_bytes, index)
+            );
+        }
+    }
+
+    #[test]
+    fn test_rank_with_state_flags() {
+        let dim = TEST_DIMENSION;
+        let mut metadata = 0usize;
+        let mut metadata_bytes = [0u8; 8];
+
+        // Set state flags first
+        metadata = Dimension::freeze(metadata);
+        metadata = Dimension::retire(metadata);
+        metadata_bytes = Dimension::freeze_bytes(metadata_bytes);
+        metadata_bytes = Dimension::retire_bytes(metadata_bytes);
+
+        // Now set a rank that would expose bit reversal
+        let test_index = 13; // Last position, closest to flags
+        let test_value = 0b1010;
+
+        metadata = dim.augment(metadata, test_index, test_value);
+        metadata_bytes = dim.augment_bytes(metadata_bytes, test_index, test_value);
+
+        // Check state flags remained
+        assert_eq!(
+            Dimension::frozen(metadata),
+            Dimension::frozen_bytes(metadata_bytes),
+            "Frozen state mismatch after rank set"
+        );
+        assert_eq!(
+            Dimension::retired(metadata),
+            Dimension::retired_bytes(metadata_bytes),
+            "Retired state mismatch after rank set"
+        );
+
+        // Check rank value
+        assert_eq!(
+            dim.rank(metadata, test_index),
+            dim.rank_bytes(metadata_bytes, test_index),
+            "Rank near flags gave different results:\n\
+         usize version: {:04b}\n\
+         bytes version: {:04b}",
+            dim.rank(metadata, test_index),
+            dim.rank_bytes(metadata_bytes, test_index)
+        );
+    }
+
+    #[test]
+    fn test_rank_modification_sequence() {
+        let dim = TEST_DIMENSION;
+        let mut metadata = 0usize;
+        let mut metadata_bytes = [0u8; 8];
+
+        // Test sequence of modifications at the same index
+        let test_index = 1; // Position that crosses byte boundary
+        let modifications = [
+            0b1010, // Initial value
+            0b0101, // Flip all bits
+            0b1100, // Change to high pair
+            0b0011, // Change to low pair
+            0b1010, // Back to initial
+        ];
+
+        for &value in modifications.iter() {
+            metadata = dim.augment(metadata, test_index, value);
+            metadata_bytes = dim.augment_bytes(metadata_bytes, test_index, value);
+
+            assert_eq!(
+                dim.rank(metadata, test_index),
+                dim.rank_bytes(metadata_bytes, test_index),
+                "After setting {:04b}:\n\
+             usize version: {:04b}\n\
+             bytes version: {:04b}",
+                value,
+                dim.rank(metadata, test_index),
+                dim.rank_bytes(metadata_bytes, test_index)
+            );
+        }
     }
 }

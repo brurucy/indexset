@@ -45,6 +45,297 @@ pub struct Leaf<K, V> {
     pub(crate) entry_array: UnsafeCell<EntryArray<K, V>>,
 }
 
+type ENTRY_METADATA = AtomicU8;
+type LEAF_METADATA = [ENTRY_METADATA; 9];
+
+const UNINIT_RANK: u8 = 0;
+const REMOVED_RANK: u8 = u8::MAX; // 255
+                                  // For the status byte (last byte in array)
+const FROZEN_BIT: u8 = 0b0100_0000; // Second to last bit
+const RETIRED_BIT: u8 = 0b1000_0000; // Last bit
+
+pub struct SimpleLeaf<K, V> {
+    pub(crate) metadata: LEAF_METADATA, // [AtomicU8; 9]
+    pub(crate) entry_array: UnsafeCell<EntryArray<K, V>>,
+}
+unsafe impl<K: Send, V: Send> Send for SimpleLeaf<K, V> {}
+
+unsafe impl<K: Sync, V: Sync> Sync for SimpleLeaf<K, V> {}
+
+impl<K, V> SimpleLeaf<K, V> {
+    fn new() -> Self {
+        Self {
+            metadata: [
+                AtomicU8::new(0),
+                AtomicU8::new(0),
+                AtomicU8::new(0),
+                AtomicU8::new(0),
+                AtomicU8::new(0),
+                AtomicU8::new(0),
+                AtomicU8::new(0),
+                AtomicU8::new(0),
+                AtomicU8::new(0),
+            ],
+            entry_array: UnsafeCell::new(unsafe { MaybeUninit::uninit().assume_init() }),
+        }
+    }
+}
+
+impl<K, V> SimpleLeaf<K, V> {
+    #[inline]
+    fn status_byte(&self) -> &AtomicU8 {
+        &self.metadata[8] // Last byte for status
+    }
+
+    #[inline]
+    pub(crate) fn is_frozen(&self) -> bool {
+        self.status_byte().load(Acquire) & FROZEN_BIT != 0
+    }
+
+    #[inline]
+    pub(crate) fn is_retired(&self) -> bool {
+        self.status_byte().load(Acquire) & RETIRED_BIT != 0
+    }
+
+    #[inline]
+    pub(crate) fn freeze(&self) {
+        let mut current = self.status_byte().load(Acquire);
+        loop {
+            let new = current | FROZEN_BIT;
+            match self
+                .status_byte()
+                .compare_exchange(current, new, Release, Relaxed)
+            {
+                Ok(_) => break,
+                Err(val) => current = val,
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn retire(&self) {
+        let mut current = self.status_byte().load(Acquire);
+        loop {
+            let new = current | RETIRED_BIT;
+            match self
+                .status_byte()
+                .compare_exchange(current, new, Release, Relaxed)
+            {
+                Ok(_) => break,
+                Err(val) => current = val,
+            }
+        }
+    }
+}
+
+impl<K: Ord, V> SimpleLeaf<K, V> {
+    fn write(&self, index: usize, key: K, val: V) {
+        unsafe {
+            (*self.entry_array.get()).0[index].as_mut_ptr().write(key);
+            (*self.entry_array.get()).1[index].as_mut_ptr().write(val);
+        }
+    }
+    fn key_at(&self, index: usize) -> &K {
+        unsafe { &*(*self.entry_array.get()).0[index].as_ptr() }
+    }
+
+    fn compare<Q>(&self, index: usize, key: &Q) -> Ordering
+    where
+        Q: Comparable<K> + ?Sized,
+    {
+        key.compare(self.key_at(index)).reverse()
+    }
+
+    fn search_slot<Q>(&self, key: &Q) -> Option<usize>
+    where
+        Q: Comparable<K> + ?Sized,
+    {
+        let mut min_max_rank = REMOVED_RANK;
+        let mut max_min_rank = 0;
+
+        for i in 0..8 {
+            let rank = self.metadata[i].load(Acquire);
+            if rank == UNINIT_RANK {
+                continue;
+            }
+            if rank < min_max_rank && rank > max_min_rank {
+                match self.compare(i, key) {
+                    Ordering::Less => {
+                        if max_min_rank < rank {
+                            max_min_rank = rank;
+                        }
+                    }
+                    Ordering::Greater => {
+                        if min_max_rank > rank {
+                            min_max_rank = rank;
+                        }
+                    }
+                    Ordering::Equal => {
+                        return Some(i);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn value_at(&self, index: usize) -> &V {
+        unsafe { &*(*self.entry_array.get()).1[index].as_ptr() }
+    }
+
+    #[inline]
+    pub(super) fn search_entry<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        Q: Comparable<K> + ?Sized,
+    {
+        // No need to load full metadata - search_slot handles individual loads
+        self.search_slot(key)
+            .map(|i| (self.key_at(i), self.value_at(i)))
+    }
+    fn take(&self, index: usize) -> (K, V) {
+        unsafe {
+            (
+                (*self.entry_array.get()).0[index].as_ptr().read(),
+                (*self.entry_array.get()).1[index].as_ptr().read(),
+            )
+        }
+    }
+
+    fn rollback(&self, index: usize) -> InsertResult<K, V> {
+        let (key, val) = self.take(index);
+
+        // Reset the entry's rank back to UNINIT_RANK
+        self.metadata[index].store(UNINIT_RANK, Release);
+
+        // Check status byte after rollback
+        let status = self.status_byte().load(Acquire);
+        if status & RETIRED_BIT != 0 {
+            InsertResult::Retired(key, val)
+        } else if status & FROZEN_BIT != 0 {
+            InsertResult::Frozen(key, val)
+        } else {
+            InsertResult::Duplicate(key, val)
+        }
+    }
+    fn post_insert(&self, free_slot_index: usize) -> InsertResult<K, V> {
+        let key = self.key_at(free_slot_index);
+        loop {
+            let mut min_max_rank = REMOVED_RANK;
+            let mut max_min_rank = 0;
+
+            // First pass: find our rank position
+            for i in 0..8 {
+                let rank = self.metadata[i].load(Acquire);
+                if rank == UNINIT_RANK {
+                    continue;
+                }
+                if rank < min_max_rank && rank > max_min_rank {
+                    match self.compare(i, key) {
+                        Ordering::Less => {
+                            if max_min_rank < rank {
+                                max_min_rank = rank;
+                            }
+                        }
+                        Ordering::Greater => {
+                            if min_max_rank > rank {
+                                min_max_rank = rank;
+                            }
+                        }
+                        Ordering::Equal => {
+                            return self.rollback(free_slot_index);
+                        }
+                    }
+                }
+            }
+
+            let our_rank = max_min_rank + 1;
+            match self.metadata[free_slot_index].compare_exchange(
+                REMOVED_RANK,
+                our_rank,
+                Release,
+                Acquire,
+            ) {
+                Ok(_) => {
+                    // Second pass: adjust ranks of greater elements
+                    for i in 0..8 {
+                        if i == free_slot_index {
+                            continue;
+                        }
+
+                        let rank = self.metadata[i].load(Acquire);
+                        if rank == UNINIT_RANK || rank == REMOVED_RANK {
+                            continue;
+                        }
+
+                        if rank <= our_rank {
+                            continue;
+                        }
+
+                        if self.compare(i, key) == Ordering::Greater {
+                            let mut current = rank;
+                            match self.metadata[i].compare_exchange(
+                                current,
+                                current + 1,
+                                AcqRel,
+                                Acquire,
+                            ) {
+                                Ok(_) => (),
+                                Err(_) => {
+                                    return self.rollback(free_slot_index);
+                                }
+                            }
+                        }
+                    }
+                    return InsertResult::Success;
+                }
+                Err(_) => {
+                    return self.rollback(free_slot_index);
+                }
+            }
+        }
+    }
+
+    // Try to set our rank first
+
+    pub(super) fn insert(&self, key: K, val: V) -> InsertResult<K, V> {
+        'retry: loop {
+            // Check status first
+            if self.is_retired() {
+                return InsertResult::Retired(key, val);
+            } else if self.is_frozen() {
+                return InsertResult::Frozen(key, val);
+            }
+
+            // Find free slot
+            for i in 0..8 {
+                // 8 entries, leaving last byte for status
+                let current = self.metadata[i].load(Acquire);
+                if current == UNINIT_RANK {
+                    // Try to reserve slot
+                    match self.metadata[i].compare_exchange(
+                        UNINIT_RANK,
+                        REMOVED_RANK,
+                        Acquire,
+                        Acquire,
+                    ) {
+                        Ok(_) => {
+                            self.write(i, key, val);
+                            return self.post_insert(i);
+                        }
+                        Err(_) => continue 'retry,
+                    }
+                }
+            }
+
+            // Check for duplicate before giving up
+            if self.search_slot(&key).is_some() {
+                return InsertResult::Duplicate(key, val);
+            }
+            return InsertResult::Full(key, val);
+        }
+    }
+}
+
 /// The result of insertion.
 pub enum InsertResult<K, V> {
     /// Insertion succeeded.
@@ -215,27 +506,27 @@ impl<K, V> Leaf<K, V> {
     /// For instance, when the length of a [`Leaf`] is 7,
     /// - Returns 6 for `rank = [1, 2, 3, 4, 5, 6, 7]`.
     /// - Returns 1 for `rank = [7, 6, 5, 4, 3, 2, 1]`.
-    #[inline]
-    pub(super) fn optimal_boundary(mut mutable_metadata: usize) -> usize {
-        let mut boundary: usize = DIMENSION.num_entries;
-        let mut prev_rank = 0;
-        for _ in 0..DIMENSION.num_entries {
-            let rank = mutable_metadata % (1_usize << DIMENSION.num_bits_per_entry);
-            if rank != 0 && rank != DIMENSION.removed_rank() {
-                if prev_rank >= rank {
-                    boundary -= 1;
-                } else if prev_rank != 0 {
-                    boundary += 1;
-                }
-                prev_rank = rank;
-            }
-            mutable_metadata >>= DIMENSION.num_bits_per_entry;
-        }
-        boundary.clamp(
-            DIMENSION.num_entries / 2 + 1,
-            DIMENSION.num_entries + DIMENSION.num_entries / 2 - 1,
-        ) - DIMENSION.num_entries / 2
-    }
+    // #[inline]
+    // pub(super) fn optimal_boundary(mut mutable_metadata: usize) -> usize {
+    //     let mut boundary: usize = DIMENSION.num_entries;
+    //     let mut prev_rank = 0;
+    //     for _ in 0..DIMENSION.num_entries {
+    //         let rank = mutable_metadata % (1_usize << DIMENSION.num_bits_per_entry);
+    //         if rank != 0 && rank != DIMENSION.removed_rank() {
+    //             if prev_rank >= rank {
+    //                 boundary -= 1;
+    //             } else if prev_rank != 0 {
+    //                 boundary += 1;
+    //             }
+    //             prev_rank = rank;
+    //         }
+    //         mutable_metadata >>= DIMENSION.num_bits_per_entry;
+    //     }
+    //     boundary.clamp(
+    //         DIMENSION.num_entries / 2 + 1,
+    //         DIMENSION.num_entries + DIMENSION.num_entries / 2 - 1,
+    //     ) - DIMENSION.num_entries / 2
+    // }
 
     fn key_at(&self, index: usize) -> &K {
         unsafe { &*(*self.entry_array.get()).0[index].as_ptr() }
@@ -826,9 +1117,8 @@ impl<'l, K, V> Iterator for Scanner<'l, K, V> {
 }
 
 mod tests {
-    use std::sync::atomic::Ordering;
-
-    use crate::concurrent2::leaf::{InsertResult, Leaf, RemoveResult, Scanner};
+    use super::*;
+    use std::sync::atomic::Ordering::*;
 
     #[test]
     fn test_scanner_ordering() {
@@ -859,24 +1149,229 @@ mod tests {
 
     #[test]
     fn test_leaf_operations() {
-        let leaf = Leaf::<i32, ()>::new();
+        let leaf = SimpleLeaf::<i32, ()>::new();
         // Add debug prints:
-        for i in (0..10).rev() {
+        for i in (0..8).rev() {
             println!("Inserting {}", i);
             let result = leaf.insert(i, ());
             // Print metadata after each insert
-            let metadata = leaf.metadata.load(Ordering::Acquire);
-            println!("Metadata after insert: {:?}", metadata);
             assert!(matches!(result, InsertResult::Success));
         }
-        // Print final state before searches
-        let metadata = leaf.metadata.load(Ordering::Acquire);
-        println!("Final metadata: {:?}", metadata);
-        for i in 0..10 {
-            println!("Searching for {}", i);
-            assert!(leaf.search_entry(&i).is_some(), "Could not find {}", i);
+
+        for i in (0..8).rev() {
+            println!("Searching {}", i);
+            // Print metadata after each insert
+            assert!(leaf.search_entry(&i).is_some(), "with: {}", i);
+        }
+    }
+
+    #[test]
+    fn test_leaf_edge_cases() {
+        // Insert in different orders to test rank assignment
+        let leaf = SimpleLeaf::<i32, ()>::new();
+
+        // Test 1: Alternating high/low values
+        let data = [0, 7, 1, 6, 2, 5, 3, 4];
+        for &i in &data {
+            assert!(matches!(leaf.insert(i, ()), InsertResult::Success));
+        }
+        // Verify order is maintained
+        for i in 0..8 {
+            assert!(leaf.search_entry(&i).is_some());
         }
 
-        assert!(false)
+        // Test 2: Duplicate handling
+        let leaf = SimpleLeaf::<i32, ()>::new();
+        assert!(matches!(leaf.insert(1, ()), InsertResult::Success));
+        assert!(matches!(leaf.insert(1, ()), InsertResult::Duplicate(1, ())));
+
+        // Test 3: Full leaf handling
+        let leaf = SimpleLeaf::<i32, ()>::new();
+        for i in 0..8 {
+            assert!(matches!(leaf.insert(i, ()), InsertResult::Success));
+        }
+        assert!(matches!(leaf.insert(9, ()), InsertResult::Full(9, ())));
+
+        // Test 4: Frozen/Retired states
+        let leaf = SimpleLeaf::<i32, ()>::new();
+        assert!(matches!(leaf.insert(1, ()), InsertResult::Success));
+        leaf.freeze();
+        assert!(matches!(leaf.insert(2, ()), InsertResult::Frozen(2, ())));
+        leaf.retire();
+        assert!(matches!(leaf.insert(3, ()), InsertResult::Retired(3, ())));
+
+        // Test 5: Search in empty slots
+        let leaf = SimpleLeaf::<i32, ()>::new();
+        assert!(leaf.search_entry(&1).is_none());
+    }
+
+    #[test]
+    fn test_rollback_scenarios() {
+        let leaf = SimpleLeaf::<i32, ()>::new();
+
+        // Insert some initial values
+        assert!(matches!(leaf.insert(1, ()), InsertResult::Success));
+        assert!(matches!(leaf.insert(3, ()), InsertResult::Success));
+
+        // Test rollback during concurrent operations
+        // (This might need to be modified based on how you simulate concurrency)
+        leaf.freeze();
+        let result = leaf.insert(2, ());
+        assert!(matches!(result, InsertResult::Frozen(2, ())));
+
+        // Verify state after rollback
+        assert!(leaf.search_entry(&1).is_some());
+        assert!(leaf.search_entry(&2).is_none());
+        assert!(leaf.search_entry(&3).is_some());
+    }
+
+    #[test]
+    fn test_rank_assignments() {
+        let leaf = SimpleLeaf::<i32, ()>::new();
+
+        // Insert in reverse order to force rank adjustments
+        for i in (0..8).rev() {
+            assert!(matches!(leaf.insert(i, ()), InsertResult::Success));
+            // Check all previously inserted items are still findable
+            for j in i..8 {
+                assert!(
+                    leaf.search_entry(&j).is_some(),
+                    "Lost value {} after inserting {}",
+                    j,
+                    i
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_mixed_operations() {
+        let leaf = SimpleLeaf::<i32, ()>::new();
+
+        // Mix of operations
+        assert!(matches!(leaf.insert(5, ()), InsertResult::Success));
+        assert!(leaf.search_entry(&5).is_some());
+        assert!(matches!(leaf.insert(3, ()), InsertResult::Success));
+        assert!(leaf.search_entry(&3).is_some());
+        assert!(matches!(leaf.insert(7, ()), InsertResult::Success));
+        assert!(leaf.search_entry(&7).is_some());
+
+        // Verify ordering
+        let values: Vec<i32> = (0..8)
+            .filter_map(|i| leaf.search_entry(&i).map(|(k, _)| *k))
+            .collect();
+        assert!(
+            values.windows(2).all(|w| w[0] < w[1]),
+            "Values not properly ordered"
+        );
+    }
+
+    #[test]
+    fn test_concurrent_operations() {
+        use std::collections::HashSet;
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::Arc;
+        use std::thread;
+
+        let leaf = Arc::new(SimpleLeaf::<i32, ()>::new());
+        let successful_inserts = Arc::new(AtomicUsize::new(0));
+        let mut handles = vec![];
+
+        // Track what values each thread attempted to insert
+        let mut attempted_values = HashSet::new();
+
+        // Spawn threads
+        for i in 0..4 {
+            let leaf_clone = Arc::clone(&leaf);
+            let success_counter = Arc::clone(&successful_inserts);
+
+            // Record attempted values
+            attempted_values.insert(i * 2);
+            attempted_values.insert(i * 2 + 1);
+
+            handles.push(thread::spawn(move || {
+                for j in 0..2 {
+                    let val = i * 2 + j;
+                    loop {
+                        // Add loop to handle Retry
+                        match leaf_clone.insert(val, ()) {
+                            InsertResult::Success => {
+                                success_counter.fetch_add(1, Relaxed);
+                                break;
+                            }
+                            InsertResult::Full(..) => {
+                                // Expected - leaf might be full
+                                return;
+                            }
+                            InsertResult::Duplicate(..) => {
+                                // Actually impossible in this test because each thread
+                                // inserts unique values
+                                panic!("Got duplicate when inserting unique value {}", val);
+                            }
+                            InsertResult::Retry(k, v) => {
+                                // Expected due to concurrent rank adjustments
+                                // Try again with the same values
+                                continue;
+                            }
+                            InsertResult::Frozen(..) | InsertResult::Retired(..) => {
+                                // Not expected in this test
+                                panic!("Leaf became frozen or retired during test");
+                            }
+                        }
+                    }
+                }
+            }));
+        }
+
+        // Wait for all threads
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Verify final state
+        let mut found_values = HashSet::new();
+        for i in 0..8 {
+            if let Some((k, _)) = leaf.search_entry(&i) {
+                found_values.insert(*k);
+            }
+        }
+
+        // Verification
+        println!("Attempted to insert: {:?}", attempted_values);
+        println!("Successfully found: {:?}", found_values);
+        println!("Reported successes: {}", successful_inserts.load(Relaxed));
+
+        // Verify ordering
+        let mut prev_opt = None;
+        for i in 0..8 {
+            if let Some((k, _)) = leaf.search_entry(&i) {
+                if let Some(prev) = prev_opt {
+                    assert!(*k > prev, "Values not properly ordered");
+                }
+                prev_opt = Some(*k);
+            }
+        }
+
+        // Verify consistency between reported successes and found values
+        assert_eq!(
+            successful_inserts.load(Relaxed),
+            found_values.len(),
+            "Mismatch between reported successful inserts and found values"
+        );
+
+        // Verify we didn't exceed capacity
+        assert!(
+            found_values.len() <= 8,
+            "More values present than leaf capacity"
+        );
+
+        // Verify all found values were from our attempt set
+        for value in &found_values {
+            assert!(
+                attempted_values.contains(value),
+                "Found value {} that wasn't attempted",
+                value
+            );
+        }
     }
 }
