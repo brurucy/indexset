@@ -249,7 +249,7 @@ mod tests {
         });
         println!(
             "Zeroth State - { }",
-            Dimension::frozen(zeroth.metadata.load(std::sync::atomic::Ordering::Relaxed))
+            Dimension::frozen_bytes(zeroth.load_bytes(std::sync::atomic::Ordering::Relaxed))
         );
         let first = (set.inner.read())[1]
             .load(std::sync::atomic::Ordering::Relaxed, &g)
@@ -266,7 +266,7 @@ mod tests {
         });
         println!(
             "First State - {}",
-            Dimension::frozen(first.metadata.load(std::sync::atomic::Ordering::Relaxed))
+            Dimension::frozen_bytes(first.load_bytes(std::sync::atomic::Ordering::Relaxed))
         );
 
         println!("Leaf count: {:?}", set.inner.read().len());
