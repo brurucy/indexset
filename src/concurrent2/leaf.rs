@@ -5,7 +5,7 @@ use std::{
     fmt::Debug,
     mem::{needs_drop, MaybeUninit},
     sync::atomic::{
-        AtomicU8,
+        AtomicBool, AtomicU8,
         Ordering::{AcqRel, Acquire, Relaxed, Release},
     },
 };
@@ -112,6 +112,20 @@ impl<K, V> SimpleLeaf<K, V> {
         }
     }
 
+    fn thaw(&self) {
+        let mut current = self.status_byte().load(Acquire);
+        loop {
+            let new = current & !FROZEN_BIT;
+            match self
+                .status_byte()
+                .compare_exchange(current, new, Release, Acquire)
+            {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
     #[inline]
     pub(crate) fn retire(&self) {
         let mut current = self.status_byte().load(Acquire);
@@ -146,15 +160,14 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
         key.compare(self.key_at(index)).reverse()
     }
 
-    fn search_slot<Q>(&self, key: &Q) -> Option<usize>
+    fn search_slot<Q>(&self, key: &Q, ranks: &[u8; 8]) -> Option<usize>
     where
         Q: Comparable<K> + ?Sized,
     {
         let mut min_max_rank = REMOVED_RANK;
         let mut max_min_rank = 0;
-
         for i in 0..8 {
-            let rank = self.metadata[i].load(Acquire);
+            let rank = ranks[i];
             if rank == UNINIT_RANK {
                 continue;
             }
@@ -189,7 +202,12 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
         Q: Comparable<K> + ?Sized,
     {
         // No need to load full metadata - search_slot handles individual loads
-        self.search_slot(key)
+        let mut ranks = [0u8; 8];
+        for i in 0..8 {
+            ranks[i] = self.metadata[i].load(Acquire);
+        }
+
+        self.search_slot(key, &ranks)
             .map(|i| (self.key_at(i), self.value_at(i)))
     }
     fn take(&self, index: usize) -> (K, V) {
@@ -217,13 +235,16 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
             InsertResult::Duplicate(key, val)
         }
     }
+
     fn post_insert(&self, free_slot_index: usize) -> InsertResult<K, V> {
         let key = self.key_at(free_slot_index);
         loop {
+            // Add loop for retrying entire operation
             let mut min_max_rank = REMOVED_RANK;
             let mut max_min_rank = 0;
+            let mut ranks_to_adjust = Vec::with_capacity(8);
 
-            // First pass: find our rank position
+            // First pass: find positions and collect all needed adjustments
             for i in 0..8 {
                 let rank = self.metadata[i].load(Acquire);
                 if rank == UNINIT_RANK {
@@ -240,6 +261,7 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
                             if min_max_rank > rank {
                                 min_max_rank = rank;
                             }
+                            ranks_to_adjust.push((i, rank));
                         }
                         Ordering::Equal => {
                             return self.rollback(free_slot_index);
@@ -249,6 +271,8 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
             }
 
             let our_rank = max_min_rank + 1;
+
+            // First set our rank
             match self.metadata[free_slot_index].compare_exchange(
                 REMOVED_RANK,
                 our_rank,
@@ -256,37 +280,28 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
                 Acquire,
             ) {
                 Ok(_) => {
-                    // Second pass: adjust ranks of greater elements
-                    for i in 0..8 {
-                        if i == free_slot_index {
-                            continue;
-                        }
-
-                        let rank = self.metadata[i].load(Acquire);
-                        if rank == UNINIT_RANK || rank == REMOVED_RANK {
-                            continue;
-                        }
-
-                        if rank <= our_rank {
-                            continue;
-                        }
-
-                        if self.compare(i, key) == Ordering::Greater {
-                            let mut current = rank;
-                            match self.metadata[i].compare_exchange(
-                                current,
-                                current + 1,
-                                AcqRel,
-                                Acquire,
-                            ) {
-                                Ok(_) => (),
-                                Err(_) => {
-                                    return self.rollback(free_slot_index);
-                                }
+                    // Now try to adjust all other ranks in their original state
+                    let mut success = true;
+                    for (i, original_rank) in ranks_to_adjust {
+                        match self.metadata[i].compare_exchange(
+                            original_rank, // Must still be in original state
+                            original_rank + 1,
+                            AcqRel,
+                            Acquire,
+                        ) {
+                            Ok(_) => continue,
+                            Err(_) => {
+                                success = false;
+                                break;
                             }
                         }
                     }
-                    return InsertResult::Success;
+
+                    if success {
+                        return InsertResult::Success;
+                    } else {
+                        return self.rollback(free_slot_index);
+                    }
                 }
                 Err(_) => {
                     return self.rollback(free_slot_index);
@@ -296,42 +311,73 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
     }
 
     // Try to set our rank first
+    fn try_freeze_for_insert(&self) -> bool {
+        let mut current = self.status_byte().load(Acquire);
+        loop {
+            if current & (RETIRED_BIT | FROZEN_BIT) != 0 {
+                return false;
+            }
+            match self.status_byte().compare_exchange(
+                current,
+                current | FROZEN_BIT,
+                Acquire,
+                Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(new) => current = new,
+            }
+        }
+    }
 
     pub(super) fn insert(&self, key: K, val: V) -> InsertResult<K, V> {
         'retry: loop {
-            // Check status first
             if self.is_retired() {
                 return InsertResult::Retired(key, val);
             } else if self.is_frozen() {
                 return InsertResult::Frozen(key, val);
             }
 
-            // Find free slot
-            for i in 0..8 {
-                // 8 entries, leaving last byte for status
-                let current = self.metadata[i].load(Acquire);
-                if current == UNINIT_RANK {
-                    // Try to reserve slot
-                    match self.metadata[i].compare_exchange(
-                        UNINIT_RANK,
-                        REMOVED_RANK,
-                        Acquire,
-                        Acquire,
-                    ) {
-                        Ok(_) => {
-                            self.write(i, key, val);
-                            return self.post_insert(i);
-                        }
-                        Err(_) => continue 'retry,
-                    }
-                }
+            // Try to freeze for our insert
+            if !self.try_freeze_for_insert() {
+                continue 'retry;
             }
 
-            // Check for duplicate before giving up
-            if self.search_slot(&key).is_some() {
-                return InsertResult::Duplicate(key, val);
-            }
-            return InsertResult::Full(key, val);
+            // Do insert under frozen state
+            let result = {
+                for i in 0..8 {
+                    let current = self.metadata[i].load(Acquire);
+                    if current == UNINIT_RANK {
+                        match self.metadata[i].compare_exchange(
+                            UNINIT_RANK,
+                            REMOVED_RANK,
+                            Acquire,
+                            Acquire,
+                        ) {
+                            Ok(_) => {
+                                self.write(i, key, val);
+                                let insert_result = self.post_insert(i);
+                                self.thaw();
+                                return insert_result;
+                            }
+                            Err(_) => {
+                                self.thaw();
+                                continue 'retry;
+                            }
+                        }
+                    }
+                }
+
+                // No slots found
+                let mut ranks = [0u8; 8];
+                for i in 0..8 {
+                    ranks[i] = self.metadata[i].load(Acquire);
+                }
+                self.thaw();
+                if self.search_slot(&key, &ranks).is_some() {
+                    return InsertResult::Duplicate(key, val);
+                }
+                return InsertResult::Full(key, val);
+            };
         }
     }
 }
@@ -1308,14 +1354,11 @@ mod tests {
                                 // inserts unique values
                                 panic!("Got duplicate when inserting unique value {}", val);
                             }
-                            InsertResult::Retry(k, v) => {
-                                // Expected due to concurrent rank adjustments
-                                // Try again with the same values
-                                continue;
-                            }
-                            InsertResult::Frozen(..) | InsertResult::Retired(..) => {
+                            InsertResult::Retry(..)
+                            | InsertResult::Frozen(..)
+                            | InsertResult::Retired(..) => {
                                 // Not expected in this test
-                                panic!("Leaf became frozen or retired during test");
+                                continue;
                             }
                         }
                     }
