@@ -18,12 +18,17 @@ use super::{
     comparable::Comparable,
     metadata::{Dimension, DIMENSION},
 };
+
+pub type EntryArray<K, V> = (
+    [MaybeUninit<K>; MAX_N_ENTRIES],
+    [MaybeUninit<V>; MAX_N_ENTRIES],
+);
+
 /// The number of entries and number of state bits per entry.
 /// [`Leaf`] is an ordered array of key-value pairs.
 ///
 /// A constructed key-value pair entry is never dropped until the entire [`Leaf`] instance is
 /// dropped.
-type METADATA = [AtomicU8; 8];
 
 /// [`Leaf`] is an ordered array of key-value pairs.
 ///
@@ -46,7 +51,8 @@ pub struct Leaf<K, V> {
 }
 
 type ENTRY_METADATA = AtomicU8;
-type LEAF_METADATA = [ENTRY_METADATA; 9];
+const MAX_N_ENTRIES: usize = 8;
+type LEAF_METADATA = [ENTRY_METADATA; MAX_N_ENTRIES + 1];
 
 const UNINIT_RANK: u8 = 0;
 const REMOVED_RANK: u8 = u8::MAX; // 255
@@ -64,18 +70,10 @@ unsafe impl<K: Sync, V: Sync> Sync for SimpleLeaf<K, V> {}
 
 impl<K, V> SimpleLeaf<K, V> {
     fn new() -> Self {
+        let metadata = [const { AtomicU8::new(0) }; MAX_N_ENTRIES + 1];
+
         Self {
-            metadata: [
-                AtomicU8::new(0),
-                AtomicU8::new(0),
-                AtomicU8::new(0),
-                AtomicU8::new(0),
-                AtomicU8::new(0),
-                AtomicU8::new(0),
-                AtomicU8::new(0),
-                AtomicU8::new(0),
-                AtomicU8::new(0),
-            ],
+            metadata,
             entry_array: UnsafeCell::new(unsafe { MaybeUninit::uninit().assume_init() }),
         }
     }
@@ -84,7 +82,7 @@ impl<K, V> SimpleLeaf<K, V> {
 impl<K, V> SimpleLeaf<K, V> {
     #[inline]
     fn status_byte(&self) -> &AtomicU8 {
-        &self.metadata[8] // Last byte for status
+        &self.metadata[MAX_N_ENTRIES] // Last byte for status
     }
 
     #[inline]
@@ -160,13 +158,13 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
         key.compare(self.key_at(index)).reverse()
     }
 
-    fn search_slot<Q>(&self, key: &Q, ranks: &[u8; 8]) -> Option<usize>
+    fn search_slot<Q>(&self, key: &Q, ranks: &[u8; MAX_N_ENTRIES]) -> Option<usize>
     where
         Q: Comparable<K> + ?Sized,
     {
         let mut min_max_rank = REMOVED_RANK;
         let mut max_min_rank = 0;
-        for i in 0..8 {
+        for i in 0..MAX_N_ENTRIES {
             let rank = ranks[i];
             if rank == UNINIT_RANK {
                 continue;
@@ -202,8 +200,8 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
         Q: Comparable<K> + ?Sized,
     {
         // No need to load full metadata - search_slot handles individual loads
-        let mut ranks = [0u8; 8];
-        for i in 0..8 {
+        let mut ranks = [0u8; MAX_N_ENTRIES];
+        for i in 0..MAX_N_ENTRIES {
             ranks[i] = self.metadata[i].load(Acquire);
         }
 
@@ -242,10 +240,10 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
             // Add loop for retrying entire operation
             let mut min_max_rank = REMOVED_RANK;
             let mut max_min_rank = 0;
-            let mut ranks_to_adjust = Vec::with_capacity(8);
+            let mut ranks_to_adjust = Vec::with_capacity(MAX_N_ENTRIES);
 
             // First pass: find positions and collect all needed adjustments
-            for i in 0..8 {
+            for i in 0..MAX_N_ENTRIES {
                 let rank = self.metadata[i].load(Acquire);
                 if rank == UNINIT_RANK {
                     continue;
@@ -344,7 +342,7 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
 
             // Do insert under frozen state
             let result = {
-                for i in 0..8 {
+                for i in 0..MAX_N_ENTRIES {
                     let current = self.metadata[i].load(Acquire);
                     if current == UNINIT_RANK {
                         match self.metadata[i].compare_exchange(
@@ -360,7 +358,6 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
                                 return insert_result;
                             }
                             Err(_) => {
-                                self.thaw();
                                 continue 'retry;
                             }
                         }
@@ -368,8 +365,8 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
                 }
 
                 // No slots found
-                let mut ranks = [0u8; 8];
-                for i in 0..8 {
+                let mut ranks = [0u8; MAX_N_ENTRIES];
+                for i in 0..MAX_N_ENTRIES {
                     ranks[i] = self.metadata[i].load(Acquire);
                 }
                 self.thaw();
@@ -1057,11 +1054,6 @@ unsafe impl<K: Send, V: Send> Send for Leaf<K, V> {}
 unsafe impl<K: Sync, V: Sync> Sync for Leaf<K, V> {}
 
 /// Each constructed entry in an `EntryArray` is never dropped until the [`Leaf`] is dropped.
-pub type EntryArray<K, V> = (
-    [MaybeUninit<K>; DIMENSION.num_entries],
-    [MaybeUninit<V>; DIMENSION.num_entries],
-);
-
 pub struct Scanner<'l, K, V> {
     leaf: &'l Leaf<K, V>,
     metadata: usize,
