@@ -167,7 +167,7 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::concurrent2::leaf::Dimension;
+    use crate::concurrent2::metadata::Dimension;
     use crate::concurrent2::set::BTreeSet;
     use rand::Rng;
     use scc::ebr::Guard;
@@ -247,10 +247,10 @@ mod tests {
                 .0
                 .map(|munit| munit.assume_init())
         });
-        println!(
-            "Zeroth State - { }",
-            Dimension::frozen_bytes(zeroth.load_bytes(std::sync::atomic::Ordering::Relaxed))
-        );
+        // println!(
+        //     "Zeroth State - { }",
+        //     Dimension::frozen_bytes(zeroth.load_bytes(std::sync::atomic::Ordering::Relaxed))
+        // );
         let first = (set.inner.read())[1]
             .load(std::sync::atomic::Ordering::Relaxed, &g)
             .get_shared()
@@ -264,10 +264,10 @@ mod tests {
                 .0
                 .map(|munit| munit.assume_init())
         });
-        println!(
-            "First State - {}",
-            Dimension::frozen_bytes(first.load_bytes(std::sync::atomic::Ordering::Relaxed))
-        );
+        // println!(
+        //     "First State - {}",
+        //     Dimension::frozen_bytes(first.load_bytes(std::sync::atomic::Ordering::Relaxed))
+        // );
 
         println!("Leaf count: {:?}", set.inner.read().len());
 
