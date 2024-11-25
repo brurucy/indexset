@@ -1,5 +1,6 @@
 use core::fmt;
 use std::{
+    borrow::Borrow,
     cell::UnsafeCell,
     cmp::Ordering,
     fmt::Debug,
@@ -8,6 +9,7 @@ use std::{
         AtomicBool, AtomicU8,
         Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst},
     },
+    thread::current,
 };
 
 use scc::ebr::Shared;
@@ -60,306 +62,17 @@ const REMOVED_RANK: u8 = u8::MAX; // 255
 const FROZEN_BIT: u8 = 0b0100_0000; // Second to last bit
 const RETIRED_BIT: u8 = 0b1000_0000; // Last bit
 
-pub struct SimpleLeaf<K, V> {
-    pub(crate) metadata: LEAF_METADATA, // [AtomicU8; 9]
-    pub(crate) entry_array: UnsafeCell<EntryArray<K, V>>,
-}
-unsafe impl<K: Send, V: Send> Send for SimpleLeaf<K, V> {}
-
-unsafe impl<K: Sync, V: Sync> Sync for SimpleLeaf<K, V> {}
-
-impl<K, V> SimpleLeaf<K, V> {
-    fn new() -> Self {
-        let metadata = [const { AtomicU8::new(0) }; MAX_N_ENTRIES + 1];
-
-        Self {
-            metadata,
-            entry_array: UnsafeCell::new(unsafe { MaybeUninit::uninit().assume_init() }),
-        }
-    }
-}
-
-impl<K, V> SimpleLeaf<K, V> {
-    #[inline]
-    fn status_byte(&self) -> &AtomicU8 {
-        &self.metadata[MAX_N_ENTRIES] // Last byte for status
-    }
-
-    #[inline]
-    pub(crate) fn is_frozen(&self) -> bool {
-        self.status_byte().load(SeqCst) & FROZEN_BIT != 0
-    }
-
-    #[inline]
-    pub(crate) fn is_retired(&self) -> bool {
-        self.status_byte().load(Acquire) & RETIRED_BIT != 0
-    }
-
-    #[inline]
-    pub(crate) fn freeze(&self) {
-        let mut current = self.status_byte().load(SeqCst);
-        loop {
-            let new = current | FROZEN_BIT;
-            match self
-                .status_byte()
-                .compare_exchange(current, new, SeqCst, SeqCst)
-            {
-                Ok(_) => break,
-                Err(val) => current = val,
-            }
-        }
-    }
-    fn thaw(&self) {
-        let mut current_status = self.status_byte().load(SeqCst);
-
-        loop {
-            if current_status & FROZEN_BIT != 0 {
-                let new_status = current_status & !FROZEN_BIT;
-                match self.status_byte().compare_exchange(
-                    current_status,
-                    new_status,
-                    SeqCst,
-                    SeqCst,
-                ) {
-                    Ok(_) => {
-                        return;
-                    }
-                    Err(new_status) => current_status = new_status, // Retry on failure
-                }
-            } else {
-                return;
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn retire(&self) {
-        let mut current = self.status_byte().load(Acquire);
-        loop {
-            let new = current | RETIRED_BIT;
-            match self
-                .status_byte()
-                .compare_exchange(current, new, Release, Acquire)
-            {
-                Ok(_) => break,
-                Err(val) => current = val,
-            }
-        }
-    }
-}
-
-impl<K: Ord, V> SimpleLeaf<K, V> {
-    fn write(&self, index: usize, key: K, val: V) {
-        unsafe {
-            (*self.entry_array.get()).0[index].as_mut_ptr().write(key);
-            (*self.entry_array.get()).1[index].as_mut_ptr().write(val);
-        }
-    }
-    fn key_at(&self, index: usize) -> &K {
-        unsafe { &*(*self.entry_array.get()).0[index].as_ptr() }
-    }
-
-    fn compare<Q>(&self, index: usize, key: &Q) -> Ordering
-    where
-        Q: Comparable<K> + ?Sized,
-    {
-        key.compare(self.key_at(index)).reverse()
-    }
-
-    fn search_slot<Q>(&self, key: &Q, ranks: &[u8; MAX_N_ENTRIES]) -> Option<usize>
-    where
-        Q: Comparable<K> + ?Sized,
-    {
-        let mut min_max_rank = REMOVED_RANK;
-        let mut max_min_rank = 0;
-        for i in 0..MAX_N_ENTRIES {
-            let rank = ranks[i];
-            if rank == UNINIT_RANK {
-                continue;
-            }
-            if rank < min_max_rank && rank > max_min_rank {
-                match self.compare(i, key) {
-                    Ordering::Less => {
-                        if max_min_rank < rank {
-                            max_min_rank = rank;
-                        }
-                    }
-                    Ordering::Greater => {
-                        if min_max_rank > rank {
-                            min_max_rank = rank;
-                        }
-                    }
-                    Ordering::Equal => {
-                        return Some(i);
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn value_at(&self, index: usize) -> &V {
-        unsafe { &*(*self.entry_array.get()).1[index].as_ptr() }
-    }
-
-    #[inline]
-    pub(super) fn search_entry<Q>(&self, key: &Q) -> Option<(&K, &V)>
-    where
-        Q: Comparable<K> + ?Sized,
-    {
-        let mut ranks = [0u8; MAX_N_ENTRIES];
-        for i in 0..MAX_N_ENTRIES {
-            ranks[i] = self.metadata[i].load(SeqCst);
-        }
-
-        self.search_slot(key, &ranks)
-            .map(|i| (self.key_at(i), self.value_at(i)))
-    }
-    fn take(&self, index: usize) -> (K, V) {
-        unsafe {
-            (
-                (*self.entry_array.get()).0[index].as_ptr().read(),
-                (*self.entry_array.get()).1[index].as_ptr().read(),
-            )
-        }
-    }
-
-    fn rollback(&self, index: usize) -> InsertResult<K, V> {
-        let (key, val) = self.take(index);
-
-        // Reset the entry's rank back to UNINIT_RANK
-        self.metadata[index].store(UNINIT_RANK, Release);
-
-        // Check status byte after rollback
-        let status = self.status_byte().load(Acquire);
-        if status & RETIRED_BIT != 0 {
-            InsertResult::Retired(key, val)
-        } else if status & FROZEN_BIT != 0 {
-            InsertResult::Frozen(key, val)
-        } else {
-            InsertResult::Duplicate(key, val)
-        }
-    }
-
-    fn post_insert(&self, free_slot_index: usize) -> InsertResult<K, V> {
-        let key = self.key_at(free_slot_index);
-        let mut min_max_rank = REMOVED_RANK;
-        let mut max_min_rank = 0;
-        let mut ranks_to_adjust = Vec::with_capacity(MAX_N_ENTRIES);
-
-        for i in 0..MAX_N_ENTRIES {
-            let rank = self.metadata[i].load(Acquire);
-            if rank == UNINIT_RANK {
-                continue;
-            }
-            if rank < min_max_rank && rank > max_min_rank {
-                match self.compare(i, key) {
-                    Ordering::Less => {
-                        if max_min_rank < rank {
-                            max_min_rank = rank;
-                        }
-                    }
-                    Ordering::Greater => {
-                        if min_max_rank > rank {
-                            min_max_rank = rank;
-                        }
-                        ranks_to_adjust.push((i, rank));
-                    }
-                    Ordering::Equal => {
-                        self.rollback(free_slot_index);
-                        let (k, v) = self.take(free_slot_index);
-                        return InsertResult::Duplicate(k, v);
-                    }
-                }
-            }
-        }
-
-        let our_rank = max_min_rank + 1;
-
-        match self.metadata[free_slot_index].compare_exchange(
-            REMOVED_RANK,
-            our_rank,
-            SeqCst,
-            SeqCst,
-        ) {
-            Ok(_) => {
-                for (i, original_rank) in ranks_to_adjust {
-                    loop {
-                        let new_rank = original_rank + 1;
-                        match self.metadata[i].compare_exchange(
-                            original_rank,
-                            new_rank,
-                            SeqCst,
-                            SeqCst,
-                        ) {
-                            Ok(_) => break, // Success
-                            Err(_) => {
-                                continue;
-                            }
-                        }
-                    }
-                }
-
-                return InsertResult::Success;
-            }
-            Err(_) => {
-                self.rollback(free_slot_index);
-            }
-        }
-
-        self.rollback(free_slot_index)
-    }
-
-    pub(super) fn insert(&self, key: K, val: V) -> InsertResult<K, V> {
-        'retry: loop {
-            self.freeze();
-            for i in 0..MAX_N_ENTRIES {
-                let current = self.metadata[i].load(SeqCst);
-                if current == UNINIT_RANK {
-                    match self.metadata[i].compare_exchange(
-                        UNINIT_RANK,
-                        REMOVED_RANK,
-                        SeqCst,
-                        SeqCst,
-                    ) {
-                        Ok(_) => {
-                            self.write(i, key, val);
-                            let insert_result = self.post_insert(i);
-                            self.thaw();
-                            return insert_result;
-                        }
-                        Err(_) => {
-                            continue 'retry;
-                        }
-                    }
-                }
-            }
-
-            let mut ranks = [0u8; MAX_N_ENTRIES];
-            for i in 0..MAX_N_ENTRIES {
-                ranks[i] = self.metadata[i].load(SeqCst);
-            }
-            if self.search_slot(&key, &ranks).is_some() {
-                return InsertResult::Duplicate(key, val);
-            }
-
-            self.thaw();
-            return InsertResult::Full(key, val);
-        }
-    }
-}
-
-pub struct RetardedLeaf<K, V> {
+pub struct AtomicSortedArray<K, V> {
     pub(crate) atomic_lock: AtomicBool,
     pub(crate) metadata: LEAF_METADATA,
     pub(crate) entry_array: UnsafeCell<EntryArray<K, V>>,
 }
 
-unsafe impl<K: Send, V: Send> Send for RetardedLeaf<K, V> {}
+unsafe impl<K: Send, V: Send> Send for AtomicSortedArray<K, V> {}
 
-unsafe impl<K: Sync, V: Sync> Sync for RetardedLeaf<K, V> {}
+unsafe impl<K: Sync, V: Sync> Sync for AtomicSortedArray<K, V> {}
 
-impl<K, V> RetardedLeaf<K, V> {
+impl<K, V> AtomicSortedArray<K, V> {
     fn new() -> Self {
         let metadata = [const { AtomicU8::new(0) }; MAX_N_ENTRIES + 1];
 
@@ -371,43 +84,29 @@ impl<K, V> RetardedLeaf<K, V> {
     }
 }
 
-impl<K, V> RetardedLeaf<K, V> {
+impl<K, V> AtomicSortedArray<K, V> {
     #[inline]
     fn status_byte(&self) -> &AtomicU8 {
         &self.metadata[MAX_N_ENTRIES] // Last byte for status
     }
-
     #[inline]
     pub(crate) fn is_frozen(&self) -> bool {
         self.atomic_lock.load(SeqCst)
     }
-
     #[inline]
-    pub(crate) fn freeze(&self) {
-        loop {
-            if self
-                .atomic_lock
-                .compare_exchange(false, true, SeqCst, SeqCst)
-                .is_ok()
-            {
-                break;
-            }
-        }
+    pub(crate) fn try_freeze(&self) -> bool {
+        self.atomic_lock
+            .compare_exchange(false, true, SeqCst, SeqCst)
+            .is_ok()
     }
-    fn thaw(&self) {
-        loop {
-            if self
-                .atomic_lock
-                .compare_exchange(true, false, SeqCst, SeqCst)
-                .is_ok()
-            {
-                break;
-            }
-        }
+    pub(crate) fn try_thaw(&self) -> bool {
+        self.atomic_lock
+            .compare_exchange(true, false, SeqCst, SeqCst)
+            .is_ok()
     }
 }
 
-impl<K: Ord, V> RetardedLeaf<K, V> {
+impl<K: Ord + Debug, V: Debug> AtomicSortedArray<K, V> {
     fn write(&self, index: usize, key: K, val: V) {
         unsafe {
             (*self.entry_array.get()).0[index].as_mut_ptr().write(key);
@@ -487,11 +186,11 @@ impl<K: Ord, V> RetardedLeaf<K, V> {
     fn rollback(&self, index: usize) -> InsertResult<K, V> {
         let (key, val) = self.take(index);
 
-        // Reset the entry's rank back to UNINIT_RANK
-        self.metadata[index].store(UNINIT_RANK, Release);
+        // TODO Reset the entry's rank back to UNINIT_RANK. We have to undo all metadata as well.
+        self.metadata[index].store(UNINIT_RANK, SeqCst);
 
         // Check status byte after rollback
-        let status = self.status_byte().load(Acquire);
+        let status = self.status_byte().load(SeqCst);
         if status & RETIRED_BIT != 0 {
             InsertResult::Retired(key, val)
         } else if status & FROZEN_BIT != 0 {
@@ -505,15 +204,14 @@ impl<K: Ord, V> RetardedLeaf<K, V> {
         let key = self.key_at(free_slot_index);
         let mut min_max_rank = REMOVED_RANK;
         let mut max_min_rank = 0;
-        let mut ranks_to_adjust = Vec::with_capacity(MAX_N_ENTRIES);
 
-        // First pass: find positions and collect all needed adjustments
         for i in 0..MAX_N_ENTRIES {
-            let rank = self.metadata[i].load(Acquire);
+            let rank = self.metadata[i].load(SeqCst);
             if rank == UNINIT_RANK {
                 continue;
             }
-            if rank < min_max_rank && rank > max_min_rank {
+            println!("Cond: {} - {} - {}", rank, min_max_rank, max_min_rank);
+            if rank < REMOVED_RANK && rank > 0 {
                 match self.compare(i, key) {
                     Ordering::Less => {
                         if max_min_rank < rank {
@@ -524,66 +222,30 @@ impl<K: Ord, V> RetardedLeaf<K, V> {
                         if min_max_rank > rank {
                             min_max_rank = rank;
                         }
-                        ranks_to_adjust.push((i, rank));
+                        println!("{:?} Rank Increased to: {}", self.key_at(i), rank + 1);
+                        self.metadata[i].store(rank + 1, SeqCst);
                     }
                     Ordering::Equal => {
-                        // Clean up before returning
-                        self.rollback(free_slot_index);
-                        let (k, v) = self.take(free_slot_index);
-                        //self.thaw(); // Move thawing here for early exits
+                        let (k, v) = self.take(i);
                         return InsertResult::Duplicate(k, v);
                     }
                 }
             }
         }
 
-        let our_rank = max_min_rank + 1;
+        println!("Key: {:?} Rank: {}", key, max_min_rank + 1);
+        self.metadata[free_slot_index].store(max_min_rank + 1, SeqCst);
 
-        // First set our rank
-        match self.metadata[free_slot_index].compare_exchange(
-            REMOVED_RANK,
-            our_rank,
-            SeqCst,
-            SeqCst,
-        ) {
-            Ok(_) => {
-                // Now try to adjust all other ranks in their original state
-                for (i, original_rank) in ranks_to_adjust {
-                    // Atomic rank adjustment loop
-                    loop {
-                        let new_rank = original_rank + 1;
-                        match self.metadata[i].compare_exchange(
-                            original_rank,
-                            new_rank,
-                            SeqCst,
-                            SeqCst,
-                        ) {
-                            Ok(_) => break, // Success
-                            Err(_) => {
-                                // Retry rank adjustment if CAS failed
-                                continue;
-                            }
-                        }
-                    }
-                }
-
-                // Thaw only after successfully completing all updates
-                //self.thaw();
-                return InsertResult::Success;
-            }
-            Err(_) => {
-                self.rollback(free_slot_index);
-            }
-        }
-
-        // Thaw in case of rollback or failure
-        //self.thaw();
-        self.rollback(free_slot_index)
+        return InsertResult::Success;
     }
 
     pub(super) fn insert(&self, key: K, val: V) -> InsertResult<K, V> {
+        let mut i = 0;
+
+        if !self.try_freeze() {
+            return InsertResult::Frozen(key, val);
+        }
         'retry: loop {
-            self.freeze();
             // Step 1: Ensure this thread freezes the node
             // if !self.try_freeze_for_insert() {
             //     // Couldn't freeze, retry
@@ -604,10 +266,13 @@ impl<K: Ord, V> RetardedLeaf<K, V> {
                             // Write the key and value into the free slot
                             self.write(i, key, val);
                             let insert_result = self.post_insert(i);
-                            self.thaw(); // Thaw after successful insert
+                            if !self.try_thaw() {
+                                panic!("WHAT")
+                            }
                             return insert_result;
                         }
                         Err(_) => {
+                            println!("How could it fail here");
                             continue 'retry; // Retry if compare_exchange failed
                         }
                     }
@@ -619,10 +284,14 @@ impl<K: Ord, V> RetardedLeaf<K, V> {
             for i in 0..MAX_N_ENTRIES {
                 ranks[i] = self.metadata[i].load(SeqCst);
             }
+            println!("Searching for dupe");
             if self.search_slot(&key, &ranks).is_some() {
+                println!("Dupe");
                 return InsertResult::Duplicate(key, val);
             }
-            self.thaw();
+            if !self.try_thaw() {
+                println!("WHAT");
+            }
             return InsertResult::Full(key, val);
         }
     }
@@ -783,42 +452,6 @@ impl<K, V> Leaf<K, V> {
             })
             .is_ok()
     }
-
-    /// Returns the recommended number of entries that the left-side node shall store when a
-    /// [`Leaf`] is split.
-    ///
-    /// Returns a number in `[1, len(leaf))` that represents the recommended number of entries in
-    /// the left-side node. The number is calculated as, for each adjacent slots,
-    /// - Initial `score = len(leaf)`.
-    /// - Rank increased: `score -= 1`.
-    /// - Rank decreased: `score += 1`.
-    /// - Clamp `score` in `[len(leaf) / 2 + 1, len(leaf) / 2 + len(leaf) - 1)`.
-    /// - Take `score - len(leaf) / 2`.
-    ///
-    /// For instance, when the length of a [`Leaf`] is 7,
-    /// - Returns 6 for `rank = [1, 2, 3, 4, 5, 6, 7]`.
-    /// - Returns 1 for `rank = [7, 6, 5, 4, 3, 2, 1]`.
-    // #[inline]
-    // pub(super) fn optimal_boundary(mut mutable_metadata: usize) -> usize {
-    //     let mut boundary: usize = DIMENSION.num_entries;
-    //     let mut prev_rank = 0;
-    //     for _ in 0..DIMENSION.num_entries {
-    //         let rank = mutable_metadata % (1_usize << DIMENSION.num_bits_per_entry);
-    //         if rank != 0 && rank != DIMENSION.removed_rank() {
-    //             if prev_rank >= rank {
-    //                 boundary -= 1;
-    //             } else if prev_rank != 0 {
-    //                 boundary += 1;
-    //             }
-    //             prev_rank = rank;
-    //         }
-    //         mutable_metadata >>= DIMENSION.num_bits_per_entry;
-    //     }
-    //     boundary.clamp(
-    //         DIMENSION.num_entries / 2 + 1,
-    //         DIMENSION.num_entries + DIMENSION.num_entries / 2 - 1,
-    //     ) - DIMENSION.num_entries / 2
-    // }
 
     fn key_at(&self, index: usize) -> &K {
         unsafe { &*(*self.entry_array.get()).0[index].as_ptr() }
@@ -1436,7 +1069,7 @@ mod tests {
 
     #[test]
     fn test_leaf_operations() {
-        let leaf = SimpleLeaf::<i32, ()>::new();
+        let leaf = AtomicSortedArray::<i32, ()>::new();
         // Add debug prints:
         for i in (0..8).rev() {
             println!("Inserting {}", i);
@@ -1455,7 +1088,7 @@ mod tests {
     #[test]
     fn test_leaf_edge_cases() {
         // Insert in different orders to test rank assignment
-        let leaf = SimpleLeaf::<i32, ()>::new();
+        let leaf = AtomicSortedArray::<i32, ()>::new();
 
         // Test 1: Alternating high/low values
         let data = [0, 7, 1, 6, 2, 5, 3, 4];
@@ -1468,33 +1101,33 @@ mod tests {
         }
 
         // Test 2: Duplicate handling
-        let leaf = SimpleLeaf::<i32, ()>::new();
+        let leaf = AtomicSortedArray::<i32, ()>::new();
         assert!(matches!(leaf.insert(1, ()), InsertResult::Success));
         assert!(matches!(leaf.insert(1, ()), InsertResult::Duplicate(1, ())));
 
         // Test 3: Full leaf handling
-        let leaf = SimpleLeaf::<i32, ()>::new();
+        let leaf = AtomicSortedArray::<i32, ()>::new();
         for i in 0..8 {
             assert!(matches!(leaf.insert(i, ()), InsertResult::Success));
         }
         assert!(matches!(leaf.insert(9, ()), InsertResult::Full(9, ())));
 
         // Test 4: Frozen/Retired states
-        let leaf = SimpleLeaf::<i32, ()>::new();
+        let leaf = AtomicSortedArray::<i32, ()>::new();
         assert!(matches!(leaf.insert(1, ()), InsertResult::Success));
-        leaf.freeze();
+        leaf.try_freeze();
         assert!(matches!(leaf.insert(2, ()), InsertResult::Frozen(2, ())));
-        leaf.retire();
-        assert!(matches!(leaf.insert(3, ()), InsertResult::Retired(3, ())));
+        // leaf.try_retire();
+        // assert!(matches!(leaf.insert(3, ()), InsertResult::Retired(3, ())));
 
         // Test 5: Search in empty slots
-        let leaf = SimpleLeaf::<i32, ()>::new();
+        let leaf = AtomicSortedArray::<i32, ()>::new();
         assert!(leaf.search_entry(&1).is_none());
     }
 
     #[test]
     fn test_rollback_scenarios() {
-        let leaf = SimpleLeaf::<i32, ()>::new();
+        let leaf = AtomicSortedArray::<i32, ()>::new();
 
         // Insert some initial values
         assert!(matches!(leaf.insert(1, ()), InsertResult::Success));
@@ -1502,7 +1135,7 @@ mod tests {
 
         // Test rollback during concurrent operations
         // (This might need to be modified based on how you simulate concurrency)
-        leaf.freeze();
+        leaf.try_freeze();
         let result = leaf.insert(2, ());
         assert!(matches!(result, InsertResult::Frozen(2, ())));
 
@@ -1514,7 +1147,7 @@ mod tests {
 
     #[test]
     fn test_rank_assignments() {
-        let leaf = SimpleLeaf::<i32, ()>::new();
+        let leaf = AtomicSortedArray::<i32, ()>::new();
 
         // Insert in reverse order to force rank adjustments
         for i in (0..8).rev() {
@@ -1533,7 +1166,7 @@ mod tests {
 
     #[test]
     fn test_mixed_operations() {
-        let leaf = SimpleLeaf::<i32, ()>::new();
+        let leaf = AtomicSortedArray::<i32, ()>::new();
 
         // Mix of operations
         assert!(matches!(leaf.insert(5, ()), InsertResult::Success));
@@ -1560,7 +1193,7 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        let leaf = Arc::new(Leaf::<i32, ()>::new());
+        let leaf = Arc::new(AtomicSortedArray::<i32, ()>::new());
         let successful_inserts = Arc::new(AtomicUsize::new(0));
         let mut handles = vec![];
 
@@ -1573,8 +1206,11 @@ mod tests {
             let success_counter = Arc::clone(&successful_inserts);
 
             // Record attempted values
-            attempted_values.insert(i * 2);
-            attempted_values.insert(i * 2 + 1);
+            let first_insertion = i * 2;
+            let second_insertion = i * 2 + 1;
+
+            attempted_values.insert(first_insertion);
+            attempted_values.insert(second_insertion);
 
             handles.push(thread::spawn(move || {
                 for j in 0..2 {
@@ -1599,6 +1235,7 @@ mod tests {
                             | InsertResult::Frozen(..)
                             | InsertResult::Retired(..) => {
                                 // Not expected in this test
+                                //println!("Oh no");
                                 continue;
                             }
                         }
@@ -1619,14 +1256,6 @@ mod tests {
                 found_values.insert(*k);
             }
         }
-
-        // Verification
-        println!("Attempted to insert: {:?}", attempted_values);
-        println!("Successfully found: {:?}", found_values);
-        println!("Reported successes: {}", successful_inserts.load(Relaxed));
-        println!("Actual contents: {:?}", unsafe {
-            (*leaf.entry_array.get()).0.map(|x| x.assume_init())
-        });
 
         // Verify ordering
         let mut prev_opt = None;
