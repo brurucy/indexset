@@ -6,7 +6,7 @@ use std::{
     mem::{needs_drop, MaybeUninit},
     sync::atomic::{
         AtomicBool, AtomicU8,
-        Ordering::{AcqRel, Acquire, Relaxed, Release},
+        Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst},
     },
 };
 
@@ -87,7 +87,7 @@ impl<K, V> SimpleLeaf<K, V> {
 
     #[inline]
     pub(crate) fn is_frozen(&self) -> bool {
-        self.status_byte().load(Acquire) & FROZEN_BIT != 0
+        self.status_byte().load(SeqCst) & FROZEN_BIT != 0
     }
 
     #[inline]
@@ -97,29 +97,37 @@ impl<K, V> SimpleLeaf<K, V> {
 
     #[inline]
     pub(crate) fn freeze(&self) {
-        let mut current = self.status_byte().load(Acquire);
+        let mut current = self.status_byte().load(SeqCst);
         loop {
             let new = current | FROZEN_BIT;
             match self
                 .status_byte()
-                .compare_exchange(current, new, Release, Relaxed)
+                .compare_exchange(current, new, SeqCst, SeqCst)
             {
                 Ok(_) => break,
                 Err(val) => current = val,
             }
         }
     }
-
     fn thaw(&self) {
-        let mut current = self.status_byte().load(Acquire);
+        let mut current_status = self.status_byte().load(SeqCst);
+
         loop {
-            let new = current & !FROZEN_BIT;
-            match self
-                .status_byte()
-                .compare_exchange(current, new, Release, Acquire)
-            {
-                Ok(_) => break,
-                Err(actual) => current = actual,
+            if current_status & FROZEN_BIT != 0 {
+                let new_status = current_status & !FROZEN_BIT;
+                match self.status_byte().compare_exchange(
+                    current_status,
+                    new_status,
+                    SeqCst,
+                    SeqCst,
+                ) {
+                    Ok(_) => {
+                        return;
+                    }
+                    Err(new_status) => current_status = new_status, // Retry on failure
+                }
+            } else {
+                return;
             }
         }
     }
@@ -131,7 +139,7 @@ impl<K, V> SimpleLeaf<K, V> {
             let new = current | RETIRED_BIT;
             match self
                 .status_byte()
-                .compare_exchange(current, new, Release, Relaxed)
+                .compare_exchange(current, new, Release, Acquire)
             {
                 Ok(_) => break,
                 Err(val) => current = val,
@@ -199,10 +207,9 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
     where
         Q: Comparable<K> + ?Sized,
     {
-        // No need to load full metadata - search_slot handles individual loads
         let mut ranks = [0u8; MAX_N_ENTRIES];
         for i in 0..MAX_N_ENTRIES {
-            ranks[i] = self.metadata[i].load(Acquire);
+            ranks[i] = self.metadata[i].load(SeqCst);
         }
 
         self.search_slot(key, &ranks)
@@ -236,145 +243,387 @@ impl<K: Ord, V> SimpleLeaf<K, V> {
 
     fn post_insert(&self, free_slot_index: usize) -> InsertResult<K, V> {
         let key = self.key_at(free_slot_index);
-        loop {
-            // Add loop for retrying entire operation
-            let mut min_max_rank = REMOVED_RANK;
-            let mut max_min_rank = 0;
-            let mut ranks_to_adjust = Vec::with_capacity(MAX_N_ENTRIES);
+        let mut min_max_rank = REMOVED_RANK;
+        let mut max_min_rank = 0;
+        let mut ranks_to_adjust = Vec::with_capacity(MAX_N_ENTRIES);
 
-            // First pass: find positions and collect all needed adjustments
-            for i in 0..MAX_N_ENTRIES {
-                let rank = self.metadata[i].load(Acquire);
-                if rank == UNINIT_RANK {
-                    continue;
-                }
-                if rank < min_max_rank && rank > max_min_rank {
-                    match self.compare(i, key) {
-                        Ordering::Less => {
-                            if max_min_rank < rank {
-                                max_min_rank = rank;
-                            }
+        for i in 0..MAX_N_ENTRIES {
+            let rank = self.metadata[i].load(Acquire);
+            if rank == UNINIT_RANK {
+                continue;
+            }
+            if rank < min_max_rank && rank > max_min_rank {
+                match self.compare(i, key) {
+                    Ordering::Less => {
+                        if max_min_rank < rank {
+                            max_min_rank = rank;
                         }
-                        Ordering::Greater => {
-                            if min_max_rank > rank {
-                                min_max_rank = rank;
-                            }
-                            ranks_to_adjust.push((i, rank));
+                    }
+                    Ordering::Greater => {
+                        if min_max_rank > rank {
+                            min_max_rank = rank;
                         }
-                        Ordering::Equal => {
-                            return self.rollback(free_slot_index);
-                        }
+                        ranks_to_adjust.push((i, rank));
+                    }
+                    Ordering::Equal => {
+                        self.rollback(free_slot_index);
+                        let (k, v) = self.take(free_slot_index);
+                        return InsertResult::Duplicate(k, v);
                     }
                 }
             }
+        }
 
-            let our_rank = max_min_rank + 1;
+        let our_rank = max_min_rank + 1;
 
-            // First set our rank
-            match self.metadata[free_slot_index].compare_exchange(
-                REMOVED_RANK,
-                our_rank,
-                Release,
-                Acquire,
-            ) {
-                Ok(_) => {
-                    // Now try to adjust all other ranks in their original state
-                    let mut success = true;
-                    for (i, original_rank) in ranks_to_adjust {
+        match self.metadata[free_slot_index].compare_exchange(
+            REMOVED_RANK,
+            our_rank,
+            SeqCst,
+            SeqCst,
+        ) {
+            Ok(_) => {
+                for (i, original_rank) in ranks_to_adjust {
+                    loop {
+                        let new_rank = original_rank + 1;
                         match self.metadata[i].compare_exchange(
-                            original_rank, // Must still be in original state
-                            original_rank + 1,
-                            AcqRel,
-                            Acquire,
+                            original_rank,
+                            new_rank,
+                            SeqCst,
+                            SeqCst,
                         ) {
-                            Ok(_) => continue,
+                            Ok(_) => break, // Success
                             Err(_) => {
-                                success = false;
-                                break;
+                                continue;
                             }
                         }
                     }
+                }
 
-                    if success {
-                        return InsertResult::Success;
-                    } else {
-                        return self.rollback(free_slot_index);
-                    }
-                }
-                Err(_) => {
-                    return self.rollback(free_slot_index);
-                }
+                return InsertResult::Success;
+            }
+            Err(_) => {
+                self.rollback(free_slot_index);
             }
         }
-    }
 
-    // Try to set our rank first
-    fn try_freeze_for_insert(&self) -> bool {
-        let mut current = self.status_byte().load(Acquire);
-        loop {
-            if current & (RETIRED_BIT | FROZEN_BIT) != 0 {
-                return false;
-            }
-            match self.status_byte().compare_exchange(
-                current,
-                current | FROZEN_BIT,
-                Acquire,
-                Acquire,
-            ) {
-                Ok(_) => return true,
-                Err(new) => current = new,
-            }
-        }
+        self.rollback(free_slot_index)
     }
 
     pub(super) fn insert(&self, key: K, val: V) -> InsertResult<K, V> {
         'retry: loop {
-            if self.is_retired() {
-                return InsertResult::Retired(key, val);
-            } else if self.is_frozen() {
-                return InsertResult::Frozen(key, val);
+            self.freeze();
+            for i in 0..MAX_N_ENTRIES {
+                let current = self.metadata[i].load(SeqCst);
+                if current == UNINIT_RANK {
+                    match self.metadata[i].compare_exchange(
+                        UNINIT_RANK,
+                        REMOVED_RANK,
+                        SeqCst,
+                        SeqCst,
+                    ) {
+                        Ok(_) => {
+                            self.write(i, key, val);
+                            let insert_result = self.post_insert(i);
+                            self.thaw();
+                            return insert_result;
+                        }
+                        Err(_) => {
+                            continue 'retry;
+                        }
+                    }
+                }
             }
 
-            // Try to freeze for our insert
-            if !self.try_freeze_for_insert() {
-                continue 'retry;
+            let mut ranks = [0u8; MAX_N_ENTRIES];
+            for i in 0..MAX_N_ENTRIES {
+                ranks[i] = self.metadata[i].load(SeqCst);
+            }
+            if self.search_slot(&key, &ranks).is_some() {
+                return InsertResult::Duplicate(key, val);
             }
 
-            // Do insert under frozen state
-            let result = {
-                for i in 0..MAX_N_ENTRIES {
-                    let current = self.metadata[i].load(Acquire);
-                    if current == UNINIT_RANK {
+            self.thaw();
+            return InsertResult::Full(key, val);
+        }
+    }
+}
+
+pub struct RetardedLeaf<K, V> {
+    pub(crate) atomic_lock: AtomicBool,
+    pub(crate) metadata: LEAF_METADATA,
+    pub(crate) entry_array: UnsafeCell<EntryArray<K, V>>,
+}
+
+unsafe impl<K: Send, V: Send> Send for RetardedLeaf<K, V> {}
+
+unsafe impl<K: Sync, V: Sync> Sync for RetardedLeaf<K, V> {}
+
+impl<K, V> RetardedLeaf<K, V> {
+    fn new() -> Self {
+        let metadata = [const { AtomicU8::new(0) }; MAX_N_ENTRIES + 1];
+
+        Self {
+            atomic_lock: AtomicBool::new(false),
+            metadata,
+            entry_array: UnsafeCell::new(unsafe { MaybeUninit::uninit().assume_init() }),
+        }
+    }
+}
+
+impl<K, V> RetardedLeaf<K, V> {
+    #[inline]
+    fn status_byte(&self) -> &AtomicU8 {
+        &self.metadata[MAX_N_ENTRIES] // Last byte for status
+    }
+
+    #[inline]
+    pub(crate) fn is_frozen(&self) -> bool {
+        self.atomic_lock.load(SeqCst)
+    }
+
+    #[inline]
+    pub(crate) fn freeze(&self) {
+        loop {
+            if self
+                .atomic_lock
+                .compare_exchange(false, true, SeqCst, SeqCst)
+                .is_ok()
+            {
+                break;
+            }
+        }
+    }
+    fn thaw(&self) {
+        loop {
+            if self
+                .atomic_lock
+                .compare_exchange(true, false, SeqCst, SeqCst)
+                .is_ok()
+            {
+                break;
+            }
+        }
+    }
+}
+
+impl<K: Ord, V> RetardedLeaf<K, V> {
+    fn write(&self, index: usize, key: K, val: V) {
+        unsafe {
+            (*self.entry_array.get()).0[index].as_mut_ptr().write(key);
+            (*self.entry_array.get()).1[index].as_mut_ptr().write(val);
+        }
+    }
+    fn key_at(&self, index: usize) -> &K {
+        unsafe { &*(*self.entry_array.get()).0[index].as_ptr() }
+    }
+
+    fn compare<Q>(&self, index: usize, key: &Q) -> Ordering
+    where
+        Q: Comparable<K> + ?Sized,
+    {
+        key.compare(self.key_at(index)).reverse()
+    }
+
+    fn search_slot<Q>(&self, key: &Q, ranks: &[u8; MAX_N_ENTRIES]) -> Option<usize>
+    where
+        Q: Comparable<K> + ?Sized,
+    {
+        let mut min_max_rank = REMOVED_RANK;
+        let mut max_min_rank = 0;
+        for i in 0..MAX_N_ENTRIES {
+            let rank = ranks[i];
+            if rank == UNINIT_RANK {
+                continue;
+            }
+            if rank < min_max_rank && rank > max_min_rank {
+                match self.compare(i, key) {
+                    Ordering::Less => {
+                        if max_min_rank < rank {
+                            max_min_rank = rank;
+                        }
+                    }
+                    Ordering::Greater => {
+                        if min_max_rank > rank {
+                            min_max_rank = rank;
+                        }
+                    }
+                    Ordering::Equal => {
+                        return Some(i);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn value_at(&self, index: usize) -> &V {
+        unsafe { &*(*self.entry_array.get()).1[index].as_ptr() }
+    }
+
+    #[inline]
+    pub(super) fn search_entry<Q>(&self, key: &Q) -> Option<(&K, &V)>
+    where
+        Q: Comparable<K> + ?Sized,
+    {
+        // No need to load full metadata - search_slot handles individual loads
+        let mut ranks = [0u8; MAX_N_ENTRIES];
+        for i in 0..MAX_N_ENTRIES {
+            ranks[i] = self.metadata[i].load(SeqCst);
+        }
+
+        self.search_slot(key, &ranks)
+            .map(|i| (self.key_at(i), self.value_at(i)))
+    }
+    fn take(&self, index: usize) -> (K, V) {
+        unsafe {
+            (
+                (*self.entry_array.get()).0[index].as_ptr().read(),
+                (*self.entry_array.get()).1[index].as_ptr().read(),
+            )
+        }
+    }
+
+    fn rollback(&self, index: usize) -> InsertResult<K, V> {
+        let (key, val) = self.take(index);
+
+        // Reset the entry's rank back to UNINIT_RANK
+        self.metadata[index].store(UNINIT_RANK, Release);
+
+        // Check status byte after rollback
+        let status = self.status_byte().load(Acquire);
+        if status & RETIRED_BIT != 0 {
+            InsertResult::Retired(key, val)
+        } else if status & FROZEN_BIT != 0 {
+            InsertResult::Frozen(key, val)
+        } else {
+            InsertResult::Duplicate(key, val)
+        }
+    }
+
+    fn post_insert(&self, free_slot_index: usize) -> InsertResult<K, V> {
+        let key = self.key_at(free_slot_index);
+        let mut min_max_rank = REMOVED_RANK;
+        let mut max_min_rank = 0;
+        let mut ranks_to_adjust = Vec::with_capacity(MAX_N_ENTRIES);
+
+        // First pass: find positions and collect all needed adjustments
+        for i in 0..MAX_N_ENTRIES {
+            let rank = self.metadata[i].load(Acquire);
+            if rank == UNINIT_RANK {
+                continue;
+            }
+            if rank < min_max_rank && rank > max_min_rank {
+                match self.compare(i, key) {
+                    Ordering::Less => {
+                        if max_min_rank < rank {
+                            max_min_rank = rank;
+                        }
+                    }
+                    Ordering::Greater => {
+                        if min_max_rank > rank {
+                            min_max_rank = rank;
+                        }
+                        ranks_to_adjust.push((i, rank));
+                    }
+                    Ordering::Equal => {
+                        // Clean up before returning
+                        self.rollback(free_slot_index);
+                        let (k, v) = self.take(free_slot_index);
+                        //self.thaw(); // Move thawing here for early exits
+                        return InsertResult::Duplicate(k, v);
+                    }
+                }
+            }
+        }
+
+        let our_rank = max_min_rank + 1;
+
+        // First set our rank
+        match self.metadata[free_slot_index].compare_exchange(
+            REMOVED_RANK,
+            our_rank,
+            SeqCst,
+            SeqCst,
+        ) {
+            Ok(_) => {
+                // Now try to adjust all other ranks in their original state
+                for (i, original_rank) in ranks_to_adjust {
+                    // Atomic rank adjustment loop
+                    loop {
+                        let new_rank = original_rank + 1;
                         match self.metadata[i].compare_exchange(
-                            UNINIT_RANK,
-                            REMOVED_RANK,
-                            Acquire,
-                            Acquire,
+                            original_rank,
+                            new_rank,
+                            SeqCst,
+                            SeqCst,
                         ) {
-                            Ok(_) => {
-                                self.write(i, key, val);
-                                let insert_result = self.post_insert(i);
-                                self.thaw();
-                                return insert_result;
-                            }
+                            Ok(_) => break, // Success
                             Err(_) => {
-                                continue 'retry;
+                                // Retry rank adjustment if CAS failed
+                                continue;
                             }
                         }
                     }
                 }
 
-                // No slots found
-                let mut ranks = [0u8; MAX_N_ENTRIES];
-                for i in 0..MAX_N_ENTRIES {
-                    ranks[i] = self.metadata[i].load(Acquire);
+                // Thaw only after successfully completing all updates
+                //self.thaw();
+                return InsertResult::Success;
+            }
+            Err(_) => {
+                self.rollback(free_slot_index);
+            }
+        }
+
+        // Thaw in case of rollback or failure
+        //self.thaw();
+        self.rollback(free_slot_index)
+    }
+
+    pub(super) fn insert(&self, key: K, val: V) -> InsertResult<K, V> {
+        'retry: loop {
+            self.freeze();
+            // Step 1: Ensure this thread freezes the node
+            // if !self.try_freeze_for_insert() {
+            //     // Couldn't freeze, retry
+            //     continue 'retry;
+            // }
+
+            // Step 2: Do the actual insert while holding the freeze lock
+            for i in 0..MAX_N_ENTRIES {
+                let current = self.metadata[i].load(SeqCst);
+                if current == UNINIT_RANK {
+                    match self.metadata[i].compare_exchange(
+                        UNINIT_RANK,
+                        REMOVED_RANK,
+                        SeqCst,
+                        SeqCst,
+                    ) {
+                        Ok(_) => {
+                            // Write the key and value into the free slot
+                            self.write(i, key, val);
+                            let insert_result = self.post_insert(i);
+                            self.thaw(); // Thaw after successful insert
+                            return insert_result;
+                        }
+                        Err(_) => {
+                            continue 'retry; // Retry if compare_exchange failed
+                        }
+                    }
                 }
-                self.thaw();
-                if self.search_slot(&key, &ranks).is_some() {
-                    return InsertResult::Duplicate(key, val);
-                }
-                return InsertResult::Full(key, val);
-            };
+            }
+
+            // No slots found, release the freeze lock
+            let mut ranks = [0u8; MAX_N_ENTRIES];
+            for i in 0..MAX_N_ENTRIES {
+                ranks[i] = self.metadata[i].load(SeqCst);
+            }
+            if self.search_slot(&key, &ranks).is_some() {
+                return InsertResult::Duplicate(key, val);
+            }
+            self.thaw();
+            return InsertResult::Full(key, val);
         }
     }
 }
@@ -1311,7 +1560,7 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        let leaf = Arc::new(SimpleLeaf::<i32, ()>::new());
+        let leaf = Arc::new(Leaf::<i32, ()>::new());
         let successful_inserts = Arc::new(AtomicUsize::new(0));
         let mut handles = vec![];
 
@@ -1375,6 +1624,9 @@ mod tests {
         println!("Attempted to insert: {:?}", attempted_values);
         println!("Successfully found: {:?}", found_values);
         println!("Reported successes: {}", successful_inserts.load(Relaxed));
+        println!("Actual contents: {:?}", unsafe {
+            (*leaf.entry_array.get()).0.map(|x| x.assume_init())
+        });
 
         // Verify ordering
         let mut prev_opt = None;
