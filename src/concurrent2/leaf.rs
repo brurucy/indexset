@@ -4,12 +4,12 @@ use std::{
     cell::UnsafeCell,
     cmp::Ordering,
     fmt::Debug,
+    io::Read,
     mem::{needs_drop, MaybeUninit},
     sync::atomic::{
         AtomicBool, AtomicU8,
         Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst},
     },
-    thread::current,
 };
 
 use scc::ebr::Shared;
@@ -21,11 +21,6 @@ use super::{
     metadata::{Dimension, DIMENSION},
 };
 
-pub type EntryArray<K, V> = (
-    [MaybeUninit<K>; MAX_N_ENTRIES],
-    [MaybeUninit<V>; MAX_N_ENTRIES],
-);
-
 /// The number of entries and number of state bits per entry.
 /// [`Leaf`] is an ordered array of key-value pairs.
 ///
@@ -36,6 +31,13 @@ pub type EntryArray<K, V> = (
 ///
 /// A constructed key-value pair entry is never dropped until the entire [`Leaf`] instance is
 /// dropped.
+const MAX_N_ENTRIES: usize = 8;
+
+pub type EntryArray<K, V> = (
+    [MaybeUninit<K>; MAX_N_ENTRIES],
+    [MaybeUninit<V>; MAX_N_ENTRIES],
+);
+
 pub struct Leaf<K, V> {
     /// The metadata containing information about the [`Leaf`] and individual entries.
     ///
@@ -53,7 +55,6 @@ pub struct Leaf<K, V> {
 }
 
 type ENTRY_METADATA = AtomicU8;
-const MAX_N_ENTRIES: usize = 8;
 type LEAF_METADATA = [ENTRY_METADATA; MAX_N_ENTRIES + 1];
 
 const UNINIT_RANK: u8 = 0;
@@ -73,7 +74,7 @@ unsafe impl<K: Send, V: Send> Send for AtomicSortedArray<K, V> {}
 unsafe impl<K: Sync, V: Sync> Sync for AtomicSortedArray<K, V> {}
 
 impl<K, V> AtomicSortedArray<K, V> {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let metadata = [const { AtomicU8::new(0) }; MAX_N_ENTRIES + 1];
 
         Self {
@@ -87,7 +88,7 @@ impl<K, V> AtomicSortedArray<K, V> {
 impl<K, V> AtomicSortedArray<K, V> {
     #[inline]
     fn status_byte(&self) -> &AtomicU8 {
-        &self.metadata[MAX_N_ENTRIES] // Last byte for status
+        &self.metadata[MAX_N_ENTRIES]
     }
     #[inline]
     pub(crate) fn is_frozen(&self) -> bool {
@@ -96,17 +97,27 @@ impl<K, V> AtomicSortedArray<K, V> {
     #[inline]
     pub(crate) fn try_freeze(&self) -> bool {
         self.atomic_lock
-            .compare_exchange(false, true, SeqCst, SeqCst)
+            .compare_exchange(false, true, AcqRel, Acquire)
             .is_ok()
     }
     pub(crate) fn try_thaw(&self) -> bool {
         self.atomic_lock
-            .compare_exchange(true, false, SeqCst, SeqCst)
+            .compare_exchange(true, false, AcqRel, Acquire)
             .is_ok()
+    }
+    pub(crate) fn snapshot_metadata(&self) -> [u8; MAX_N_ENTRIES] {
+        let mut out = [0u8; MAX_N_ENTRIES];
+        for (i, rank) in self.metadata.iter().enumerate() {
+            if i < MAX_N_ENTRIES {
+                out[i] = rank.load(Acquire);
+            }
+        }
+
+        return out;
     }
 }
 
-impl<K: Ord + Debug, V: Debug> AtomicSortedArray<K, V> {
+impl<K: Ord + Clone + Debug + 'static, V: Clone + Debug + 'static> AtomicSortedArray<K, V> {
     fn write(&self, index: usize, key: K, val: V) {
         unsafe {
             (*self.entry_array.get()).0[index].as_mut_ptr().write(key);
@@ -168,7 +179,7 @@ impl<K: Ord + Debug, V: Debug> AtomicSortedArray<K, V> {
         // No need to load full metadata - search_slot handles individual loads
         let mut ranks = [0u8; MAX_N_ENTRIES];
         for i in 0..MAX_N_ENTRIES {
-            ranks[i] = self.metadata[i].load(SeqCst);
+            ranks[i] = self.metadata[i].load(Acquire);
         }
 
         self.search_slot(key, &ranks)
@@ -183,34 +194,28 @@ impl<K: Ord + Debug, V: Debug> AtomicSortedArray<K, V> {
         }
     }
 
-    fn rollback(&self, index: usize) -> InsertResult<K, V> {
+    fn rollback(&self, index: usize, rollback_data: Vec<(usize, u8)>) -> InsertResult<K, V> {
         let (key, val) = self.take(index);
 
-        // TODO Reset the entry's rank back to UNINIT_RANK. We have to undo all metadata as well.
-        self.metadata[index].store(UNINIT_RANK, SeqCst);
-
-        // Check status byte after rollback
-        let status = self.status_byte().load(SeqCst);
-        if status & RETIRED_BIT != 0 {
-            InsertResult::Retired(key, val)
-        } else if status & FROZEN_BIT != 0 {
-            InsertResult::Frozen(key, val)
-        } else {
-            InsertResult::Duplicate(key, val)
+        self.metadata[index].store(UNINIT_RANK, Release);
+        for (i, rank) in rollback_data {
+            self.metadata[i].store(rank, Release);
         }
+
+        InsertResult::Duplicate(key, val)
     }
 
     fn post_insert(&self, free_slot_index: usize) -> InsertResult<K, V> {
         let key = self.key_at(free_slot_index);
         let mut min_max_rank = REMOVED_RANK;
         let mut max_min_rank = 0;
+        let mut rollback_data = vec![];
 
         for i in 0..MAX_N_ENTRIES {
-            let rank = self.metadata[i].load(SeqCst);
+            let rank = self.metadata[i].load(Acquire);
             if rank == UNINIT_RANK {
                 continue;
             }
-            println!("Cond: {} - {} - {}", rank, min_max_rank, max_min_rank);
             if rank < REMOVED_RANK && rank > 0 {
                 match self.compare(i, key) {
                     Ordering::Less => {
@@ -222,78 +227,219 @@ impl<K: Ord + Debug, V: Debug> AtomicSortedArray<K, V> {
                         if min_max_rank > rank {
                             min_max_rank = rank;
                         }
-                        println!("{:?} Rank Increased to: {}", self.key_at(i), rank + 1);
-                        self.metadata[i].store(rank + 1, SeqCst);
+
+                        rollback_data.push((i, rank));
+                        self.metadata[i].store(rank + 1, Release);
                     }
                     Ordering::Equal => {
-                        let (k, v) = self.take(i);
-                        return InsertResult::Duplicate(k, v);
+                        return self.rollback(i, rollback_data);
                     }
                 }
             }
         }
 
-        println!("Key: {:?} Rank: {}", key, max_min_rank + 1);
-        self.metadata[free_slot_index].store(max_min_rank + 1, SeqCst);
+        self.metadata[free_slot_index].store(max_min_rank + 1, Release);
 
         return InsertResult::Success;
     }
 
     pub(super) fn insert(&self, key: K, val: V) -> InsertResult<K, V> {
-        let mut i = 0;
-
         if !self.try_freeze() {
             return InsertResult::Frozen(key, val);
         }
-        'retry: loop {
-            // Step 1: Ensure this thread freezes the node
-            // if !self.try_freeze_for_insert() {
-            //     // Couldn't freeze, retry
-            //     continue 'retry;
-            // }
-
-            // Step 2: Do the actual insert while holding the freeze lock
-            for i in 0..MAX_N_ENTRIES {
-                let current = self.metadata[i].load(SeqCst);
-                if current == UNINIT_RANK {
-                    match self.metadata[i].compare_exchange(
-                        UNINIT_RANK,
-                        REMOVED_RANK,
-                        SeqCst,
-                        SeqCst,
-                    ) {
-                        Ok(_) => {
-                            // Write the key and value into the free slot
-                            self.write(i, key, val);
-                            let insert_result = self.post_insert(i);
-                            if !self.try_thaw() {
-                                panic!("WHAT")
-                            }
-                            return insert_result;
+        // println!(
+        //     "Latest Contents: {:?}\nLatest state: {:?}",
+        //     unsafe {
+        //         self.entry_array
+        //             .get()
+        //             .read()
+        //             .0
+        //             .map(|munit| munit.assume_init())
+        //     },
+        //     self.snapshot_metadata()
+        // );
+        for i in 0..MAX_N_ENTRIES {
+            let current = self.metadata[i].load(SeqCst);
+            if current == UNINIT_RANK {
+                match self.metadata[i].compare_exchange(UNINIT_RANK, REMOVED_RANK, AcqRel, Acquire)
+                {
+                    Ok(_) => {
+                        self.write(i, key, val);
+                        let insert_result = self.post_insert(i);
+                        if !self.try_thaw() {
+                            panic!("WHAT")
                         }
-                        Err(_) => {
-                            println!("How could it fail here");
-                            continue 'retry; // Retry if compare_exchange failed
-                        }
+                        return insert_result;
+                    }
+                    Err(_) => {
+                        panic!("Failed how");
                     }
                 }
             }
-
-            // No slots found, release the freeze lock
-            let mut ranks = [0u8; MAX_N_ENTRIES];
-            for i in 0..MAX_N_ENTRIES {
-                ranks[i] = self.metadata[i].load(SeqCst);
-            }
-            println!("Searching for dupe");
-            if self.search_slot(&key, &ranks).is_some() {
-                println!("Dupe");
-                return InsertResult::Duplicate(key, val);
-            }
-            if !self.try_thaw() {
-                println!("WHAT");
-            }
-            return InsertResult::Full(key, val);
         }
+
+        // let mut ranks = [0u8; MAX_N_ENTRIES];
+        // for i in 0..MAX_N_ENTRIES {
+        //     ranks[i] = self.metadata[i].load(Acquire);
+        // }
+        if !self.try_thaw() {
+            panic!("Failed to thaw")
+        }
+        // if self.search_slot(&key, &ranks).is_some() {
+        //     return InsertResult::Duplicate(key, val);
+        // }
+
+        return InsertResult::Full(key, val);
+    }
+    fn next(index: usize, metadata: [u8; MAX_N_ENTRIES]) -> usize {
+        debug_assert_ne!(index, usize::MAX);
+        let current_entry_rank = if index == MAX_N_ENTRIES {
+            0
+        } else {
+            metadata[index] as usize
+        };
+
+        let mut next_index = MAX_N_ENTRIES;
+        if current_entry_rank < MAX_N_ENTRIES {
+            let mut next_rank = REMOVED_RANK as usize;
+            for i in 0..MAX_N_ENTRIES {
+                let rank = metadata[i] as usize;
+                if i != index {
+                    let rank = if rank != 0 && rank < next_rank {
+                        if rank == current_entry_rank + 1 {
+                            return i;
+                        } else if rank > current_entry_rank {
+                            next_rank = rank;
+                            next_index = i;
+                        }
+                    };
+                }
+            }
+        }
+        next_index
+    }
+    #[inline]
+    pub(super) fn max_entry(&self) -> Option<(&K, &V)> {
+        let mut max_rank = 0;
+        let mut max_index = MAX_N_ENTRIES;
+        for i in 0..MAX_N_ENTRIES {
+            let rank = self.snapshot_metadata()[i];
+            if rank > max_rank && rank != REMOVED_RANK {
+                max_rank = rank;
+                max_index = i;
+            }
+        }
+        if max_index != MAX_N_ENTRIES {
+            return Some((self.key_at(max_index), self.value_at(max_index)));
+        }
+        None
+    }
+    #[inline]
+    pub(super) fn max_key(&self) -> Option<&K> {
+        self.max_entry().map(|(k, _)| k)
+    }
+    #[inline]
+    pub(super) fn insert_unchecked(&self, key: K, val: V, index: usize) {
+        debug_assert!(index < MAX_N_ENTRIES);
+        self.write(index, key, val);
+        self.metadata[index].store((index + 1) as u8, Release)
+    }
+    #[inline]
+    pub(super) fn freeze_and_distribute(
+        &self,
+        low_key_leaf: &mut Option<Shared<AtomicSortedArray<K, V>>>,
+        high_key_leaf: &mut Option<Shared<AtomicSortedArray<K, V>>>,
+    ) {
+        if !self.try_freeze() {
+            panic!("Failed to wait for freeze");
+            return;
+        }
+
+        let metadata = self.snapshot_metadata();
+        let entries: Vec<_> = AtomicScanner {
+            leaf: self,
+            metadata,
+            entry_index: MAX_N_ENTRIES,
+        }
+        .collect();
+
+        let split_point = (entries.len() + 1) / 2;
+
+        for (i, (k, v)) in entries.into_iter().enumerate() {
+            if i < split_point {
+                low_key_leaf
+                    .get_or_insert_with(|| Shared::new(AtomicSortedArray::new()))
+                    .insert_unchecked(k.clone(), v.clone(), i);
+            } else {
+                high_key_leaf
+                    .get_or_insert_with(|| Shared::new(AtomicSortedArray::new()))
+                    .insert_unchecked(k.clone(), v.clone(), i - split_point);
+            };
+        }
+    }
+}
+
+pub struct AtomicScanner<'l, K, V> {
+    leaf: &'l AtomicSortedArray<K, V>,
+    metadata: [u8; MAX_N_ENTRIES],
+    entry_index: usize,
+}
+
+impl<'l, K: Ord + Clone + Debug + 'static, V: Debug + Clone + 'static> AtomicScanner<'l, K, V> {
+    /// Creates a new [`Scanner`].
+    #[inline]
+    pub(super) fn new(leaf: &'l AtomicSortedArray<K, V>) -> AtomicScanner<'l, K, V> {
+        AtomicScanner {
+            leaf,
+            metadata: leaf.snapshot_metadata(),
+            entry_index: MAX_N_ENTRIES,
+        }
+    }
+
+    #[inline]
+    pub(super) const fn metadata(&self) -> [u8; MAX_N_ENTRIES] {
+        self.metadata
+    }
+
+    /// Returns a reference to the entry that the scanner is currently pointing to
+    #[inline]
+    pub(super) fn get(&self) -> Option<(&'l K, &'l V)> {
+        if self.entry_index >= MAX_N_ENTRIES {
+            return None;
+        }
+        Some((
+            self.leaf.key_at(self.entry_index),
+            self.leaf.value_at(self.entry_index),
+        ))
+    }
+    /// Returns a reference to the max key.
+    #[inline]
+    pub(super) fn max_key(&self) -> Option<&'l K> {
+        self.leaf.max_key()
+    }
+
+    fn proceed(&mut self) {
+        if self.entry_index == usize::MAX {
+            return;
+        }
+        let index = AtomicSortedArray::<K, V>::next(self.entry_index, self.metadata);
+        if index == MAX_N_ENTRIES {
+            self.entry_index = usize::MAX;
+        } else {
+            self.entry_index = index;
+        }
+    }
+}
+
+impl<'l, K: Ord + Debug + Clone + 'static, V: Debug + Clone + 'static> Iterator
+    for AtomicScanner<'l, K, V>
+{
+    type Item = (&'l K, &'l V);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.proceed();
+        self.get()
     }
 }
 
@@ -1042,7 +1188,7 @@ mod tests {
 
     #[test]
     fn test_scanner_ordering() {
-        let leaf = Leaf::<i32, ()>::new();
+        let leaf = AtomicSortedArray::<i32, ()>::new();
 
         // Insert values in an order that would challenge rank assignment
         let values = [5, 3, 7, 1, 2, 4, 6];
@@ -1055,7 +1201,7 @@ mod tests {
         }
 
         // Use Scanner to verify iteration order
-        let scanner = Scanner::new(&leaf);
+        let scanner = AtomicScanner::new(&leaf);
         let scanned: Vec<i32> = scanner.map(|(k, _)| *k).collect();
 
         // Values should come out in sorted order
@@ -1072,14 +1218,12 @@ mod tests {
         let leaf = AtomicSortedArray::<i32, ()>::new();
         // Add debug prints:
         for i in (0..8).rev() {
-            println!("Inserting {}", i);
             let result = leaf.insert(i, ());
             // Print metadata after each insert
             assert!(matches!(result, InsertResult::Success));
         }
 
         for i in (0..8).rev() {
-            println!("Searching {}", i);
             // Print metadata after each insert
             assert!(leaf.search_entry(&i).is_some(), "with: {}", i);
         }

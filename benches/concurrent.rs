@@ -4,6 +4,7 @@ use rand::{thread_rng, Rng};
 use scc::TreeIndex;
 use std::sync::{Arc, RwLock};
 use std::thread;
+use std::time::Duration;
 
 #[derive(Clone)]
 enum Op {
@@ -11,51 +12,51 @@ enum Op {
     Write(usize),
 }
 
-const NUM_READERS: usize = 8;
-const NUM_WRITERS: usize = 8;
+const NUM_READERS: usize = 10;
+const NUM_WRITERS: usize = 1;
 const NUM_THREADS: usize = NUM_READERS + NUM_WRITERS;
 const OPERATIONS_PER_THREAD: usize = 10_000;
 const TOTAL_OPERATIONS: usize = NUM_THREADS * OPERATIONS_PER_THREAD;
 
-fn generate_operations(write_ratio: f64) -> Vec<Vec<Op>> {
-    let mut rng = thread_rng();
-    let mut all_operations: Vec<Vec<Op>> =
-        vec![Vec::with_capacity(OPERATIONS_PER_THREAD); NUM_THREADS];
-
-    for i in 0..TOTAL_OPERATIONS {
-        let thread_index = i % NUM_THREADS;
-        let value = rng.gen_range(0..TOTAL_OPERATIONS);
-        let operation = if thread_index == NUM_READERS || rng.gen::<f64>() < write_ratio {
-            Op::Write(value)
-        } else {
-            Op::Read(value)
-        };
-        all_operations[thread_index].push(operation);
-    }
-
-    all_operations
-}
-
 // fn generate_operations(write_ratio: f64) -> Vec<Vec<Op>> {
 //     let mut rng = thread_rng();
-//     let mut all_operations = vec![Vec::with_capacity(OPERATIONS_PER_THREAD); NUM_THREADS];
+//     let mut all_operations: Vec<Vec<Op>> =
+//         vec![Vec::with_capacity(OPERATIONS_PER_THREAD); NUM_THREADS];
 
-//     for thread_idx in 0..NUM_THREADS {
-//         let range_start = thread_idx * (TOTAL_OPERATIONS / NUM_THREADS);
-//         let range_end = (thread_idx + 1) * (TOTAL_OPERATIONS / NUM_THREADS);
-
-//         for _ in 0..OPERATIONS_PER_THREAD {
-//             let value = rng.gen_range(range_start..range_end);
-//             let operation = if thread_idx < NUM_WRITERS || rng.gen::<f64>() < write_ratio {
-//                 Op::Write(value)
-//             } else {
-//                 Op::Read(value)
-//             };
-//             all_operations[thread_idx].push(operation);
-//         }
+//     for i in 0..TOTAL_OPERATIONS {
+//         let thread_index = i % NUM_THREADS;
+//         let value = rng.gen_range(0..TOTAL_OPERATIONS);
+//         let operation = if thread_index == NUM_READERS || rng.gen::<f64>() < write_ratio {
+//             Op::Write(value)
+//         } else {
+//             Op::Read(value)
+//         };
+//         all_operations[thread_index].push(operation);
 //     }
+
 //     all_operations
 // }
+
+fn generate_operations(write_ratio: f64) -> Vec<Vec<Op>> {
+    let mut rng = thread_rng();
+    let mut all_operations = vec![Vec::with_capacity(OPERATIONS_PER_THREAD); NUM_THREADS];
+
+    for thread_idx in 0..NUM_THREADS {
+        let range_start = thread_idx * (TOTAL_OPERATIONS / NUM_THREADS);
+        let range_end = (thread_idx + 1) * (TOTAL_OPERATIONS / NUM_THREADS);
+
+        for _ in 0..OPERATIONS_PER_THREAD {
+            let value = rng.gen_range(range_start..range_end);
+            let operation = if thread_idx < NUM_WRITERS || rng.gen::<f64>() < write_ratio {
+                Op::Write(value)
+            } else {
+                Op::Read(value)
+            };
+            all_operations[thread_idx].push(operation);
+        }
+    }
+    all_operations
+}
 
 fn concurrent_operations<T: Send + Sync + 'static>(
     set: Arc<T>,
@@ -75,6 +76,8 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
     let operations = Arc::new(generate_operations(write_ratio));
 
     let mut group = c.benchmark_group(format!("Write Ratio: {:.2}", write_ratio));
+    group.warm_up_time(Duration::from_millis(500));
+    group.measurement_time(Duration::from_millis(500));
 
     group.bench_function(BenchmarkId::new("scc::TreeIndex", write_ratio), |b| {
         b.iter(|| {

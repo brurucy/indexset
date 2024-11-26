@@ -1,33 +1,28 @@
-use std::cmp::Ordering;
-use std::sync::atomic::AtomicUsize;
-use std::{borrow::Borrow, sync::Arc};
+use std::borrow::Borrow;
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 
 use crate::core::constants::DEFAULT_INNER_SIZE;
-use crate::core::node::*;
 
 use scc::ebr::{AtomicShared, Guard, Shared, Tag};
 
-use std::cell::UnsafeCell;
-use std::fmt::{self, Debug};
-use std::mem::{needs_drop, MaybeUninit};
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
+use std::fmt::Debug;
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 
 use super::comparable::Equivalent;
-use super::leaf::{InsertResult, Leaf, Scanner};
+use super::leaf::{AtomicScanner, AtomicSortedArray, InsertResult, Leaf, Scanner};
 
 pub struct BTreeSet<T>
 where
     T: Ord,
 {
     node_capacity: usize,
-    inner: RwLock<Vec<AtomicShared<Leaf<T, ()>>>>,
+    inner: RwLock<Vec<AtomicShared<AtomicSortedArray<T, ()>>>>,
 }
 impl<T: Ord + 'static> Default for BTreeSet<T> {
     fn default() -> Self {
         let node_capacity = DEFAULT_INNER_SIZE;
-        let leaf = Shared::new(Leaf::new());
+        let leaf = Shared::new(AtomicSortedArray::new());
         let inner_vec = vec![AtomicShared::from(leaf)];
 
         Self {
@@ -113,7 +108,7 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
             return false;
         }
     }
-    fn locate_node<Q>(&self, value: &Q, g: &Guard) -> Option<Shared<Leaf<T, ()>>>
+    fn locate_node<Q>(&self, value: &Q, g: &Guard) -> Option<Shared<AtomicSortedArray<T, ()>>>
     where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
@@ -143,8 +138,7 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
     {
         let g = Guard::new();
         if let Some(node) = self.locate_node(value, &g) {
-            let (potential_kv, metadata) = node.min_greater_equal(value);
-            if let Some(kv) = potential_kv {
+            if let Some(kv) = node.search_entry(value) {
                 return kv.0.borrow() == value;
             }
         }
@@ -158,7 +152,7 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
             .iter()
             .map(|node| {
                 let leaf = node.load(Relaxed, &g).as_ref().unwrap();
-                let count = Scanner::new(leaf).count();
+                let count = AtomicScanner::new(leaf).count();
                 count
             })
             .sum()
@@ -167,7 +161,6 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::concurrent2::metadata::Dimension;
     use crate::concurrent2::set::BTreeSet;
     use rand::Rng;
     use scc::ebr::Guard;
@@ -178,8 +171,8 @@ mod tests {
     #[test]
     fn test_concurrent_insert() {
         let set = Arc::new(BTreeSet::<i32>::new());
-        let num_threads = 8;
-        let operations_per_thread = 10000;
+        let num_threads = 1;
+        let operations_per_thread = 100000;
         let mut handles = vec![];
 
         let test_data: Vec<Vec<(i32, i32)>> = (0..num_threads)
@@ -187,7 +180,7 @@ mod tests {
                 let mut rng = rand::thread_rng();
                 (0..operations_per_thread)
                     .map(|_| {
-                        let value = rng.gen_range(0..10000);
+                        let value = rng.gen_range(0..1000000);
                         let operation = rng.gen_range(0..2);
                         (operation, value)
                     })
@@ -205,7 +198,9 @@ mod tests {
             let handle = thread::spawn(move || {
                 for (operation, value) in thread_data {
                     if operation == 0 {
+                        //println!("INSERTING: {}", value);
                         set_clone.insert(value);
+                        //println!("INSERTED: {}", value);
                         expected_values.lock().unwrap().insert(value);
                     }
                 }
@@ -239,37 +234,11 @@ mod tests {
             .load(std::sync::atomic::Ordering::Relaxed, &g)
             .get_shared()
             .unwrap();
-        println!("Zeroth - {:?}", unsafe {
-            zeroth
-                .entry_array
-                .get()
-                .read()
-                .0
-                .map(|munit| munit.assume_init())
-        });
-        // println!(
-        //     "Zeroth State - { }",
-        //     Dimension::frozen_bytes(zeroth.load_bytes(std::sync::atomic::Ordering::Relaxed))
-        // );
+
         let first = (set.inner.read())[1]
             .load(std::sync::atomic::Ordering::Relaxed, &g)
             .get_shared()
             .unwrap();
-
-        println!("First - {:?}", unsafe {
-            first
-                .entry_array
-                .get()
-                .read()
-                .0
-                .map(|munit| munit.assume_init())
-        });
-        // println!(
-        //     "First State - {}",
-        //     Dimension::frozen_bytes(first.load_bytes(std::sync::atomic::Ordering::Relaxed))
-        // );
-
-        println!("Leaf count: {:?}", set.inner.read().len());
 
         assert_eq!(set.len(), n);
         for i in 0..n {

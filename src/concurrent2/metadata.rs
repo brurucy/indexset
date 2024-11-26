@@ -633,9 +633,6 @@ mod tests {
         metadata = dim.augment(metadata, 1, value);
         let metadata_bytes = dim.augment_bytes([0u8; 8], 1, value);
 
-        println!("Metadata bytes: {:?}", Dimension::to_bytes(metadata));
-        println!("Direct bytes: {:?}", metadata_bytes);
-
         assert_eq!(
             dim.rank(metadata, 1),
             dim.rank_bytes(metadata_bytes, 1),
