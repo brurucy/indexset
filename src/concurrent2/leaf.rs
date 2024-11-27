@@ -232,7 +232,7 @@ impl<K: Ord + Clone + Debug + 'static, V: Clone + Debug + 'static> AtomicSortedA
                         self.metadata[i].store(rank + 1, Release);
                     }
                     Ordering::Equal => {
-                        return self.rollback(i, rollback_data);
+                        return self.rollback(free_slot_index, rollback_data);
                     }
                 }
             }
@@ -365,7 +365,18 @@ impl<K: Ord + Clone + Debug + 'static, V: Clone + Debug + 'static> AtomicSortedA
 
         let split_point = (entries.len() + 1) / 2;
 
+        //println!("Distributing {} entries", entries.len());
+        //println!("Out of {:?}", unsafe {
+        //    (*(self.entry_array.get()))
+        //        .borrow()
+        //        .0
+        //        .iter()
+        //        .map(|x| x.assume_init_read())
+        //        .collect::<Vec<_>>()
+        //});
+        //println!("With metadata {:?}", self.metadata);
         for (i, (k, v)) in entries.into_iter().enumerate() {
+            //println!("inserting {:?} {:?} at {}", k, v, i);
             if i < split_point {
                 low_key_leaf
                     .get_or_insert_with(|| Shared::new(AtomicSortedArray::new()))

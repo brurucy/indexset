@@ -82,6 +82,7 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
                                 if let (Some(low), Some(high)) =
                                     (low_key_leaf_shared, high_key_leaf_shared)
                                 {
+
                                     global_write_lock[node_idx]
                                         .swap((Some(low), Tag::None), Release);
                                     global_write_lock
@@ -98,11 +99,10 @@ impl<T: Ord + Clone + 'static + Debug> BTreeSet<T> {
                         if split_result {
                             continue;
                         }
-                        return self.insert(k);
                     }
-                    InsertResult::Frozen(k, _)
-                    | InsertResult::Retired(k, _)
-                    | InsertResult::Retry(k, _) => return self.insert(k),
+                    InsertResult::Frozen(_, _)
+                    | InsertResult::Retired(_, _)
+                    | InsertResult::Retry(_, _) => continue,
                 }
             }
             return false;
@@ -171,8 +171,8 @@ mod tests {
     #[test]
     fn test_concurrent_insert() {
         let set = Arc::new(BTreeSet::<i32>::new());
-        let num_threads = 1;
-        let operations_per_thread = 100000;
+        let num_threads = 16;
+        let operations_per_thread = 10000;
         let mut handles = vec![];
 
         let test_data: Vec<Vec<(i32, i32)>> = (0..num_threads)
@@ -223,27 +223,39 @@ mod tests {
     #[test]
     fn test_insert_st() {
         let set = Arc::new(BTreeSet::<usize>::new());
-        let n = 1024;
+        let n = 100000;
         let range = 0..n;
-        for i in range.rev() {
-            set.insert(i);
+        let mut unique_values = HashSet::new();
+        for _ in range {
+            let mut rng = rand::thread_rng();
+            let value = rng.gen_range(0..10000);
+            set.insert(value);
+            unique_values.insert(value);
+        }
+
+        assert_eq!(set.len(), unique_values.len());
+        for i in unique_values.iter() {
+            assert!(set.contains(i), "{} wasn't found", i);
+        }
+    }
+
+    #[test]
+    fn pathological_case() {
+        let set = Arc::new(BTreeSet::<usize>::new());
+        let weird_values = vec![20, 6, 8, 2, 27, 3, 0, 3, 8, 29, 19, 3, 18, 11, 16, 16, 18, 24, 1, 23];
+        for i in weird_values.iter() {
+            set.insert(i.clone());
+        }
+
+        for i in weird_values.iter() {
+            assert!(set.contains(i), "{} wasn't found", i);
         }
 
         let g = Guard::new();
-        let zeroth = (set.inner.read())[0]
-            .load(std::sync::atomic::Ordering::Relaxed, &g)
-            .get_shared()
-            .unwrap();
+        println!(
+            "Metadata: {:?}",
+            set.inner.read()[0].load(std::sync::atomic::Ordering::Relaxed, &g).as_ref().unwrap().metadata
+        );
 
-        let first = (set.inner.read())[1]
-            .load(std::sync::atomic::Ordering::Relaxed, &g)
-            .get_shared()
-            .unwrap();
-
-        assert_eq!(set.len(), n);
-        for i in 0..n {
-            assert!(set.contains(&i), "{} wasn't found", i);
-        }
-        assert!(!set.contains(&n));
     }
 }
