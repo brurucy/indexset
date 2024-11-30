@@ -2,8 +2,7 @@ use std::fmt::Debug;
 use std::{borrow::Borrow, sync::Arc};
 
 use crossbeam_skiplist::SkipMap;
-use parking_lot::Mutex;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use crate::core::constants::DEFAULT_INNER_SIZE;
 use crate::core::node::*;
@@ -36,7 +35,7 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
     }
     pub fn insert(&self, value: T) -> bool {
         loop {
-            let mut _index_write_guard = self.index_lock.read();
+            let global_guard = self.index_lock.read();
             let target_node = match self.index.lower_bound(std::ops::Bound::Included(&value)) {
                 Some(entry) => entry.value().clone(),
                 None => self
@@ -47,19 +46,19 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
                     .unwrap(),
             };
 
-            let mut node_write_lock = target_node.lock();
-            if node_write_lock.len() >= self.node_capacity {
-                if NodeLike::insert(&mut *node_write_lock, value.clone()) {
-                    drop(node_write_lock);
-                    drop(_index_write_guard);
-                    let _index_write_guard = self.index_lock.write();
-                    node_write_lock = target_node.lock();
+            let mut node_guard = target_node.lock();
+            if node_guard.len() >= self.node_capacity {
+                if NodeLike::insert(&mut *node_guard, value.clone()) {
+                    drop(global_guard);
+                    drop(node_guard);
+                    let _global_guard = self.index_lock.write();
+                    let mut node_guard = target_node.lock();
 
-                    if let Some(old_max) = node_write_lock.last().cloned() {
+                    if let Some(old_max) = node_guard.last().cloned() {
                         self.index.remove(&old_max);
                     }
-                    let new_node_vec = node_write_lock.halve();
-                    if let Some(max) = node_write_lock.last().cloned() {
+                    let new_node_vec = node_guard.halve();
+                    if let Some(max) = node_guard.last().cloned() {
                         self.index.insert(max, target_node.clone());
                     }
 
@@ -73,14 +72,14 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
 
                 break;
             } else {
-                let old_max = node_write_lock.last().cloned();
-                let inserted = NodeLike::insert(&mut *node_write_lock, value.clone());
+                let old_max = node_guard.last().cloned();
+                let inserted = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {
-                    if let Some(new_max) = node_write_lock.last().cloned() {
-                        drop(node_write_lock);
+                    if let Some(new_max) = node_guard.last().cloned() {
                         if Some(&new_max) != old_max.as_ref() {
-                            drop(_index_write_guard);
-                            let _index_write_guard = self.index_lock.write();
+                            drop(global_guard);
+                            drop(node_guard);
+                            let _global_guard = self.index_lock.write();
                             if let Some(old_max) = old_max {
                                 self.index.remove(&old_max);
                             }
