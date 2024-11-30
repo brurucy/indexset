@@ -1,6 +1,7 @@
 use std::{borrow::Borrow, sync::Arc};
 
 use parking_lot::{Mutex, RwLock};
+use scc::TreeIndex;
 
 use crate::core::constants::DEFAULT_INNER_SIZE;
 use crate::core::node::*;
@@ -8,20 +9,23 @@ use crate::core::node::*;
 #[derive(Debug)]
 pub struct BTreeSet<T>
 where
-    T: Ord,
+    T: Ord + Clone + 'static,
 {
     node_capacity: usize,
     inner: RwLock<Vec<Arc<Mutex<Vec<T>>>>>,
+    index: TreeIndex<T, usize>,
 }
-impl<T: Ord> Default for BTreeSet<T> {
+impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
     fn default() -> Self {
-        let node_capacity = DEFAULT_INNER_SIZE / 8;
+        let node_capacity = DEFAULT_INNER_SIZE;
+        let index = TreeIndex::new();
 
         Self {
             node_capacity,
             inner: RwLock::new(vec![Arc::new(Mutex::new(Vec::with_capacity(
                 node_capacity,
             )))]),
+            index,
         }
     }
 }
@@ -55,7 +59,11 @@ impl<T: Ord + Clone> BTreeSet<T> {
                     return true;
                 }
             } else {
-                return NodeLike::insert(&mut *node_write_lock, value);
+                return if NodeLike::insert(&mut *node_write_lock, value) {
+                    true
+                } else {
+                    false
+                };
             }
         }
 
