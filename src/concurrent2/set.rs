@@ -36,7 +36,7 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
     }
     pub fn insert(&self, value: T) -> bool {
         loop {
-            let _index_write_guard = self.index_lock.write();
+            let mut _index_write_guard = self.index_lock.read();
             let target_node = match self.index.lower_bound(std::ops::Bound::Included(&value)) {
                 Some(entry) => entry.value().clone(),
                 None => self
@@ -49,8 +49,12 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
 
             let mut node_write_lock = target_node.lock();
             if node_write_lock.len() >= self.node_capacity {
-                //println!("Before split: {:?}", self.index.iter().collect::<Vec<_>>());
                 if NodeLike::insert(&mut *node_write_lock, value.clone()) {
+                    drop(node_write_lock);
+                    drop(_index_write_guard);
+                    let _index_write_guard = self.index_lock.write();
+                    node_write_lock = target_node.lock();
+
                     if let Some(old_max) = node_write_lock.last().cloned() {
                         self.index.remove(&old_max);
                     }
@@ -69,17 +73,14 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
 
                 break;
             } else {
-                // println!(
-                //     "Before insertion: {:?}",
-                //     self.index.iter().collect::<Vec<_>>()
-                // );
-
                 let old_max = node_write_lock.last().cloned();
                 let inserted = NodeLike::insert(&mut *node_write_lock, value.clone());
                 if inserted {
                     if let Some(new_max) = node_write_lock.last().cloned() {
+                        drop(node_write_lock);
                         if Some(&new_max) != old_max.as_ref() {
-                            //let _index_write_guard = self.index_lock.write();
+                            drop(_index_write_guard);
+                            let _index_write_guard = self.index_lock.write();
                             if let Some(old_max) = old_max {
                                 self.index.remove(&old_max);
                             }
@@ -88,11 +89,6 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
                         }
                     }
                 }
-
-                // println!(
-                //     "After insertion: {:?}",
-                //     self.index.iter().collect::<Vec<_>>()
-                // );
 
                 return inserted;
             }
@@ -153,7 +149,7 @@ mod tests {
                 let mut rng = rand::thread_rng();
                 (0..operations_per_thread)
                     .map(|_| {
-                        let value = rng.gen_range(0..100);
+                        let value = rng.gen_range(0..10000);
                         let operation = rng.gen_range(0..2);
                         (operation, value)
                     })
