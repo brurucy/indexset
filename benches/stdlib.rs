@@ -4,9 +4,11 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use scc::TreeIndex;
 use std::hint::black_box;
+use std::time::Duration;
 
 fn criterion_benchmark(c: &mut Criterion) {
-    let mut input: Vec<usize> = (0..100000).collect();
+    let n = 100000;
+    let mut input: Vec<usize> = (0..n).collect();
     input.shuffle(&mut thread_rng());
 
     c.bench_function("stdlib insert 100k", |b| {
@@ -15,7 +17,9 @@ fn criterion_benchmark(c: &mut Criterion) {
 
             input.iter().for_each(|item| {
                 black_box(btreeset.insert(item));
-            })
+            });
+
+            assert_eq!(btreeset.len(), n);
         })
     });
     c.bench_function("indexset insert 100k", |b| {
@@ -23,8 +27,10 @@ fn criterion_benchmark(c: &mut Criterion) {
             let indexset = BTreeSet::new();
 
             input.iter().for_each(|item| {
-                black_box(indexset.insert(item));
-            })
+                black_box(indexset.insert(*item));
+            });
+
+            assert_eq!(indexset.len(), n);
         })
     });
     c.bench_function("treeindex insert 100k", |b| {
@@ -33,7 +39,9 @@ fn criterion_benchmark(c: &mut Criterion) {
 
             input.iter().for_each(|item| {
                 black_box(treeindex.insert(*item, ()).unwrap());
-            })
+            });
+
+            assert_eq!(treeindex.len(), n);
         })
     });
 

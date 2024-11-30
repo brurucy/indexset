@@ -11,7 +11,7 @@ enum Op {
     Write(usize),
 }
 
-const NUM_READERS: usize = 10;
+const NUM_READERS: usize = 20;
 const NUM_WRITERS: usize = 4;
 const NUM_THREADS: usize = NUM_READERS + NUM_WRITERS;
 const OPERATIONS_PER_THREAD: usize = 10_000;
@@ -41,7 +41,7 @@ fn generate_operations(write_ratio: f64) -> Vec<Vec<Op>> {
 //     let mut all_operations = vec![Vec::with_capacity(OPERATIONS_PER_THREAD); NUM_THREADS];
 
 //     for thread_idx in 0..NUM_THREADS {
-//         let range_start = thread_idx * (TOTAL_OPERATIONS / NUM_THREADS);
+//         let range_start = thread_idx * (TOTAL_OPERATIONS / NUM_THREADS);x
 //         let range_end = (thread_idx + 1) * (TOTAL_OPERATIONS / NUM_THREADS);
 
 //         for _ in 0..OPERATIONS_PER_THREAD {

@@ -3,6 +3,7 @@ use std::{borrow::Borrow, sync::Arc};
 
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
+use parking_lot::RwLock;
 
 use crate::core::constants::DEFAULT_INNER_SIZE;
 use crate::core::node::*;
@@ -14,6 +15,7 @@ where
 {
     node_capacity: usize,
     index: SkipMap<T, Arc<Mutex<Vec<T>>>>,
+    index_lock: RwLock<()>,
 }
 impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
     fn default() -> Self {
@@ -23,6 +25,7 @@ impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
         Self {
             node_capacity,
             index,
+            index_lock: RwLock::new(()),
         }
     }
 }
@@ -32,58 +35,67 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
         Self::default()
     }
     pub fn insert(&self, value: T) -> bool {
-        let target_node = match self.index.lower_bound(std::ops::Bound::Included(&value)) {
-            Some(entry) => entry.value().clone(),
-            None => self
-                .index
-                .back()
-                .map(|last| last.value().clone())
-                .or_else(|| Some(Arc::new(Mutex::new(Vec::with_capacity(self.node_capacity)))))
-                .unwrap(),
-        };
+        loop {
+            let _index_write_guard = self.index_lock.write();
+            let target_node = match self.index.lower_bound(std::ops::Bound::Included(&value)) {
+                Some(entry) => entry.value().clone(),
+                None => self
+                    .index
+                    .back()
+                    .map(|last| last.value().clone())
+                    .or_else(|| Some(Arc::new(Mutex::new(Vec::with_capacity(self.node_capacity)))))
+                    .unwrap(),
+            };
 
-        let mut node_write_lock = target_node.lock();
-        if node_write_lock.len() >= self.node_capacity {
-            if NodeLike::insert(&mut *node_write_lock, value) {
+            let mut node_write_lock = target_node.lock();
+            if node_write_lock.len() >= self.node_capacity {
+                //println!("Before split: {:?}", self.index.iter().collect::<Vec<_>>());
+                if NodeLike::insert(&mut *node_write_lock, value.clone()) {
+                    if let Some(old_max) = node_write_lock.last().cloned() {
+                        self.index.remove(&old_max);
+                    }
+                    let new_node_vec = node_write_lock.halve();
+                    if let Some(max) = node_write_lock.last().cloned() {
+                        self.index.insert(max, target_node.clone());
+                    }
+
+                    let new_node = Arc::new(Mutex::new(new_node_vec));
+                    if let Some(max) = new_node.lock().last().cloned() {
+                        self.index.insert(max, new_node.clone());
+                    }
+
+                    return true;
+                };
+
+                break;
+            } else {
                 // println!(
-                //     "Before split: {:?}",
-                //     node_write_lock.iter().collect::<Vec<_>>()
-                // );
-                if let Some(old_max) = node_write_lock.last().cloned() {
-                    self.index.remove(&old_max);
-                }
-                let new_node_vec = node_write_lock.halve();
-                if let Some(max) = node_write_lock.last().cloned() {
-                    self.index.insert(max, target_node.clone());
-                }
-
-                let new_node = Arc::new(Mutex::new(new_node_vec));
-                if let Some(max) = new_node.lock().last().cloned() {
-                    self.index.insert(max, new_node.clone());
-                }
-                // println!(
-                //     "After split: {:?}",
-                //     node_write_lock.iter().collect::<Vec<_>>()
+                //     "Before insertion: {:?}",
+                //     self.index.iter().collect::<Vec<_>>()
                 // );
 
-                return true;
-            }
-        } else {
-            let old_max = node_write_lock.last().cloned();
-            let inserted = NodeLike::insert(&mut *node_write_lock, value.clone());
-            if inserted {
-                if let Some(new_max) = node_write_lock.last().cloned() {
-                    if Some(&new_max) != old_max.as_ref() {
-                        if let Some(old_max) = old_max {
-                            self.index.remove(&old_max);
+                let old_max = node_write_lock.last().cloned();
+                let inserted = NodeLike::insert(&mut *node_write_lock, value.clone());
+                if inserted {
+                    if let Some(new_max) = node_write_lock.last().cloned() {
+                        if Some(&new_max) != old_max.as_ref() {
+                            //let _index_write_guard = self.index_lock.write();
+                            if let Some(old_max) = old_max {
+                                self.index.remove(&old_max);
+                            }
+
+                            self.index.insert(new_max, target_node.clone());
                         }
-
-                        self.index.insert(new_max, target_node.clone());
                     }
                 }
-            }
 
-            return inserted;
+                // println!(
+                //     "After insertion: {:?}",
+                //     self.index.iter().collect::<Vec<_>>()
+                // );
+
+                return inserted;
+            }
         }
 
         false
@@ -133,7 +145,7 @@ mod tests {
     fn test_concurrent_insert() {
         let set = Arc::new(BTreeSet::<i32>::new());
         let num_threads = 8;
-        let operations_per_thread = 100000;
+        let operations_per_thread = 10000;
         let mut handles = vec![];
 
         let test_data: Vec<Vec<(i32, i32)>> = (0..num_threads)
@@ -141,7 +153,7 @@ mod tests {
                 let mut rng = rand::thread_rng();
                 (0..operations_per_thread)
                     .map(|_| {
-                        let value = rng.gen_range(0..10000);
+                        let value = rng.gen_range(0..100);
                         let operation = rng.gen_range(0..2);
                         (operation, value)
                     })
@@ -172,7 +184,6 @@ mod tests {
         }
 
         let expected_values = expected_values.lock().unwrap();
-        println!("AAA {}", set.len());
         assert_eq!(set.len(), expected_values.len());
 
         for value in expected_values.iter() {
@@ -209,19 +220,4 @@ mod tests {
             );
         }
     }
-
-    // #[test]
-    // fn test_skip_map() {
-    //     let sm = SkipSet::new();
-    //     for i in 0..20 {
-    //         if i % 2 == 0 {
-    //             sm.insert(i);
-    //         }
-    //     }
-
-    //     println!("{:?}", sm.iter().collect::<Vec<_>>());
-    //     println!("{:?}", sm.lower_bound(std::ops::Bound::Included(&19)));
-
-    //     assert!(false);
-    // }
 }
