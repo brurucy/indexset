@@ -61,7 +61,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     }
     #[inline]
     fn halve(&mut self) -> Self {
-        self.split_off(self.capacity() / DEFAULT_CUTOFF)
+        self.split_off(DEFAULT_CUTOFF)
     }
     #[inline]
     fn len(&self) -> usize {

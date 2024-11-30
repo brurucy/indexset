@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::{borrow::Borrow, sync::Arc};
 
 use crossbeam_skiplist::SkipMap;
@@ -26,7 +27,7 @@ impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
     }
 }
 
-impl<T: Ord + Clone + Send> BTreeSet<T> {
+impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -42,23 +43,28 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
         };
 
         let mut node_write_lock = target_node.lock();
-        if node_write_lock.len() == self.node_capacity {
+        if node_write_lock.len() >= self.node_capacity {
             if NodeLike::insert(&mut *node_write_lock, value) {
-                drop(node_write_lock);
-                let mut node_write_lock = target_node.lock();
-
+                // println!(
+                //     "Before split: {:?}",
+                //     node_write_lock.iter().collect::<Vec<_>>()
+                // );
                 if let Some(old_max) = node_write_lock.last().cloned() {
                     self.index.remove(&old_max);
                 }
                 let new_node_vec = node_write_lock.halve();
-                let new_node = Arc::new(Mutex::new(new_node_vec));
-
                 if let Some(max) = node_write_lock.last().cloned() {
                     self.index.insert(max, target_node.clone());
                 }
+
+                let new_node = Arc::new(Mutex::new(new_node_vec));
                 if let Some(max) = new_node.lock().last().cloned() {
                     self.index.insert(max, new_node.clone());
                 }
+                // println!(
+                //     "After split: {:?}",
+                //     node_write_lock.iter().collect::<Vec<_>>()
+                // );
 
                 return true;
             }
@@ -179,16 +185,21 @@ mod tests {
         let set = Arc::new(BTreeSet::<i32>::new());
         let mut rng = rand::thread_rng();
 
-        let range = 0..10000;
+        let range = 0..100000;
         let mut inserted_values = HashSet::new();
         for _ in range {
-            let value = rng.gen_range(0..10000);
+            let value = rng.gen_range(0..100000);
             if inserted_values.insert(value) {
                 assert!(set.insert(value));
             }
         }
 
-        assert_eq!(set.len(), inserted_values.len());
+        assert_eq!(
+            set.len(),
+            inserted_values.len(),
+            "Length did not match: {:?}",
+            set.index.iter().collect::<Vec<_>>()
+        );
         for i in inserted_values {
             assert!(
                 set.contains(&i),
