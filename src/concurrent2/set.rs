@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn test_concurrent_insert() {
         let set = Arc::new(BTreeSet::<i32>::new());
-        let num_threads = 8;
+        let num_threads = 16;
         let operations_per_thread = 10000;
         let mut handles = vec![];
 

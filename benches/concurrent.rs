@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use parking_lot::RwLock;
+use crossbeam_skiplist::SkipSet;
 use rand::{thread_rng, Rng};
 use scc::TreeIndex;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ enum Op {
 const NUM_READERS: usize = 20;
 const NUM_WRITERS: usize = 4;
 const NUM_THREADS: usize = NUM_READERS + NUM_WRITERS;
-const OPERATIONS_PER_THREAD: usize = 10_000;
+const OPERATIONS_PER_THREAD: usize = 100_000;
 const TOTAL_OPERATIONS: usize = NUM_THREADS * OPERATIONS_PER_THREAD;
 
 fn generate_operations(write_ratio: f64) -> Vec<Vec<Op>> {
@@ -138,9 +138,9 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
         });
     });
 
-    group.bench_function(BenchmarkId::new("RwLock<BTreeSet>", write_ratio), |b| {
+    group.bench_function(BenchmarkId::new("SkipSet", write_ratio), |b| {
         b.iter(|| {
-            let set = Arc::new(RwLock::new(indexset::BTreeSet::new()));
+            let set = Arc::new(SkipSet::new());
             let mut handles = vec![];
 
             for thread_ops in operations.iter() {
@@ -151,10 +151,10 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
                         set,
                         thread_ops,
                         |set, item| {
-                            set.read().contains(&item);
+                            set.contains(&item);
                         },
                         |set, item| {
-                            set.write().insert(item);
+                            set.insert(item);
                         },
                     );
                 });
@@ -167,37 +167,37 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
         });
     });
 
-    group.bench_function(
-        BenchmarkId::new("RwLock<std::BTreeSet>", write_ratio),
-        |b| {
-            b.iter(|| {
-                let set = Arc::new(RwLock::new(std::collections::BTreeSet::new()));
-                let mut handles = vec![];
+    // group.bench_function(
+    //     BenchmarkId::new("RwLock<std::BTreeSet>", write_ratio),
+    //     |b| {
+    //         b.iter(|| {
+    //             let set = Arc::new(RwLock::new(std::collections::BTreeSet::new()));
+    //             let mut handles = vec![];
 
-                for thread_ops in operations.iter() {
-                    let set = Arc::clone(&set);
-                    let thread_ops = thread_ops.clone();
-                    let handle = thread::spawn(move || {
-                        concurrent_operations(
-                            set,
-                            thread_ops,
-                            |set, item| {
-                                set.read().contains(&item);
-                            },
-                            |set, item| {
-                                set.write().insert(item);
-                            },
-                        );
-                    });
-                    handles.push(handle);
-                }
+    //             for thread_ops in operations.iter() {
+    //                 let set = Arc::clone(&set);
+    //                 let thread_ops = thread_ops.clone();
+    //                 let handle = thread::spawn(move || {
+    //                     concurrent_operations(
+    //                         set,
+    //                         thread_ops,
+    //                         |set, item| {
+    //                             set.read().contains(&item);
+    //                         },
+    //                         |set, item| {
+    //                             set.write().insert(item);
+    //                         },
+    //                     );
+    //                 });
+    //                 handles.push(handle);
+    //             }
 
-                for handle in handles {
-                    handle.join().unwrap();
-                }
-            });
-        },
-    );
+    //             for handle in handles {
+    //                 handle.join().unwrap();
+    //             }
+    //         });
+    //     },
+    // );
 
     group.finish();
 }
