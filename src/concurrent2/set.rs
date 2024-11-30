@@ -1,7 +1,7 @@
 use std::{borrow::Borrow, sync::Arc};
 
-use parking_lot::{Mutex, RwLock};
-use scc::TreeIndex;
+use crossbeam_skiplist::SkipMap;
+use parking_lot::Mutex;
 
 use crate::core::constants::DEFAULT_INNER_SIZE;
 use crate::core::node::*;
@@ -12,59 +12,72 @@ where
     T: Ord + Clone + 'static,
 {
     node_capacity: usize,
-    inner: RwLock<Vec<Arc<Mutex<Vec<T>>>>>,
-    index: TreeIndex<T, usize>,
+    index: SkipMap<T, Arc<Mutex<Vec<T>>>>,
 }
 impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
     fn default() -> Self {
         let node_capacity = DEFAULT_INNER_SIZE;
-        let index = TreeIndex::new();
+        let index = SkipMap::new();
 
         Self {
             node_capacity,
-            inner: RwLock::new(vec![Arc::new(Mutex::new(Vec::with_capacity(
-                node_capacity,
-            )))]),
             index,
         }
     }
 }
 
-impl<T: Ord + Clone> BTreeSet<T> {
+impl<T: Ord + Clone + Send> BTreeSet<T> {
     pub fn new() -> Self {
         Self::default()
     }
     pub fn insert(&self, value: T) -> bool {
-        let global_read_lock = self.inner.read();
-        let mut node_idx = global_read_lock.partition_point(|node| {
-            if let Some(&max) = node.lock().last().as_ref() {
-                return max.borrow() < &value;
-            };
-            false
-        });
-        if global_read_lock.get(node_idx).is_none() {
-            node_idx -= 1
-        }
-        if let Some(node) = global_read_lock.get(node_idx).cloned() {
-            let mut node_write_lock = node.lock();
-            if node_write_lock.len() == self.node_capacity {
-                if NodeLike::insert(&mut *node_write_lock, value) {
-                    drop(global_read_lock);
-                    drop(node_write_lock);
-                    let mut global_write_lock = self.inner.write();
-                    let mut node_write_lock = node.lock();
-                    let new_node = node_write_lock.halve();
-                    global_write_lock.insert(node_idx + 1, Arc::new(Mutex::new(new_node)));
+        let target_node = match self.index.lower_bound(std::ops::Bound::Included(&value)) {
+            Some(entry) => entry.value().clone(),
+            None => self
+                .index
+                .back()
+                .map(|last| last.value().clone())
+                .or_else(|| Some(Arc::new(Mutex::new(Vec::with_capacity(self.node_capacity)))))
+                .unwrap(),
+        };
 
-                    return true;
+        let mut node_write_lock = target_node.lock();
+        if node_write_lock.len() == self.node_capacity {
+            if NodeLike::insert(&mut *node_write_lock, value) {
+                drop(node_write_lock);
+                let mut node_write_lock = target_node.lock();
+
+                if let Some(old_max) = node_write_lock.last().cloned() {
+                    self.index.remove(&old_max);
                 }
-            } else {
-                return if NodeLike::insert(&mut *node_write_lock, value) {
-                    true
-                } else {
-                    false
-                };
+                let new_node_vec = node_write_lock.halve();
+                let new_node = Arc::new(Mutex::new(new_node_vec));
+
+                if let Some(max) = node_write_lock.last().cloned() {
+                    self.index.insert(max, target_node.clone());
+                }
+                if let Some(max) = new_node.lock().last().cloned() {
+                    self.index.insert(max, new_node.clone());
+                }
+
+                return true;
             }
+        } else {
+            let old_max = node_write_lock.last().cloned();
+            let inserted = NodeLike::insert(&mut *node_write_lock, value.clone());
+            if inserted {
+                if let Some(new_max) = node_write_lock.last().cloned() {
+                    if Some(&new_max) != old_max.as_ref() {
+                        if let Some(old_max) = old_max {
+                            self.index.remove(&old_max);
+                        }
+
+                        self.index.insert(new_max, target_node.clone());
+                    }
+                }
+            }
+
+            return inserted;
         }
 
         false
@@ -74,21 +87,14 @@ impl<T: Ord + Clone> BTreeSet<T> {
         T: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        let global_read_lock = self.inner.read();
-        let mut node_idx = global_read_lock.partition_point(|node| {
-            if let Some(&max) = node.lock().last().as_ref() {
-                return max.borrow() < value;
-            };
-            false
-        });
-        // When value is greater than all elements inside inner[node_idx], then len
-        // of inner[node_idx], which is not a valid place for insertion, is returned. It will
-        // never return less than 0, so it is only necessary to check whether it is out of bounds
-        // from the right
-        if global_read_lock.get(node_idx).is_none() {
-            node_idx -= 1
+        match self.index.lower_bound(std::ops::Bound::Included(&value)) {
+            Some(entry) => Some(entry.value().clone()),
+            None => self
+                .index
+                .back()
+                .map(|last| last.value().clone())
+                .or_else(|| self.index.front().map(|first| first.value().clone())),
         }
-        global_read_lock.get(node_idx).cloned()
     }
     pub fn contains<Q>(&self, value: &Q) -> bool
     where
@@ -98,11 +104,14 @@ impl<T: Ord + Clone> BTreeSet<T> {
         if let Some(node) = self.locate_node(value) {
             return node.lock().contains(value);
         }
+
         false
     }
     pub fn len(&self) -> usize {
-        let global_read_lock = self.inner.read();
-        global_read_lock.iter().map(|node| node.lock().len()).sum()
+        self.index
+            .iter()
+            .map(|node| node.value().lock().len())
+            .sum()
     }
 }
 
@@ -118,7 +127,7 @@ mod tests {
     fn test_concurrent_insert() {
         let set = Arc::new(BTreeSet::<i32>::new());
         let num_threads = 8;
-        let operations_per_thread = 1000;
+        let operations_per_thread = 100000;
         let mut handles = vec![];
 
         let test_data: Vec<Vec<(i32, i32)>> = (0..num_threads)
@@ -145,9 +154,7 @@ mod tests {
                 for (operation, value) in thread_data {
                     if operation == 0 {
                         set_clone.insert(value);
-                        //if set_clone.insert(value) {
                         expected_values.lock().unwrap().insert(value);
-                        //}
                     }
                 }
             });
@@ -170,14 +177,40 @@ mod tests {
     #[test]
     fn test_insert_st() {
         let set = Arc::new(BTreeSet::<i32>::new());
-        let range = 0..100_000;
-        for i in range {
-            set.insert(i);
+        let mut rng = rand::thread_rng();
+
+        let range = 0..10000;
+        let mut inserted_values = HashSet::new();
+        for _ in range {
+            let value = rng.gen_range(0..10000);
+            if inserted_values.insert(value) {
+                assert!(set.insert(value));
+            }
         }
 
-        assert_eq!(set.len(), 100_000);
-        for i in 0..100_000 {
-            set.contains(&i);
+        assert_eq!(set.len(), inserted_values.len());
+        for i in inserted_values {
+            assert!(
+                set.contains(&i),
+                "Did not find: {} with index: {:?}",
+                i,
+                set.index.iter().collect::<Vec<_>>(),
+            );
         }
     }
+
+    // #[test]
+    // fn test_skip_map() {
+    //     let sm = SkipSet::new();
+    //     for i in 0..20 {
+    //         if i % 2 == 0 {
+    //             sm.insert(i);
+    //         }
+    //     }
+
+    //     println!("{:?}", sm.iter().collect::<Vec<_>>());
+    //     println!("{:?}", sm.lower_bound(std::ops::Bound::Included(&19)));
+
+    //     assert!(false);
+    // }
 }
