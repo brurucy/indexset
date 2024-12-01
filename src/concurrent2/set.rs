@@ -106,7 +106,7 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
     }
     pub fn insert(&self, value: T) -> bool {
         loop {
-            let mut _global_guard = self.index_lock.upgradable_read();
+            let mut _global_guard = self.index_lock.read();
             let target_node_entry = match self.index.lower_bound(std::ops::Bound::Included(&value))
             {
                 Some(entry) => entry,
@@ -119,9 +119,10 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
 
                         let first_node = Arc::new(Mutex::new(first_vec));
 
-                        if let Some(_) = _global_guard
-                            .try_with_upgraded(|_| self.index.insert(value.clone(), first_node))
-                        {
+                        drop(_global_guard);
+                        if let Some(_) = self.index_lock.try_write() {
+                            self.index.insert(value.clone(), first_node);
+
                             return true;
                         }
 
@@ -214,7 +215,7 @@ mod tests {
     fn test_concurrent_insert() {
         let set = Arc::new(BTreeSet::<i32>::new());
         let num_threads = 128;
-        let operations_per_thread = 10000;
+        let operations_per_thread = 100000;
         let mut handles = vec![];
 
         let test_data: Vec<Vec<(i32, i32)>> = (0..num_threads)
