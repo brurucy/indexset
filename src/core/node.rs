@@ -16,6 +16,10 @@ pub trait NodeLike<T: Ord> {
     where
         T: Borrow<Q>;
     #[allow(dead_code)]
+    fn try_select<Q: Ord + ?Sized>(&self, value: &Q) -> Option<usize>
+    where
+        T: Borrow<Q>;
+    #[allow(dead_code)]
     fn delete<Q: Ord + ?Sized>(&mut self, value: &Q) -> Option<T>
     where
         T: Borrow<Q>;
@@ -38,7 +42,7 @@ where
         let p = haystack.as_ptr().cast::<T>();
         let mut m = j >> 1;
         while i != j {
-            match (*p.add(m)).borrow().cmp(needle) {
+            match (*p.add(m)).borrow().cmp(&needle) {
                 Ordering::Equal => return Ok(m),
                 Ordering::Less => {
                     i = m + 1;
@@ -87,6 +91,17 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         match search(&self, &value) {
             Ok(_) => true,
             Err(_) => false,
+        }
+    }
+    #[inline]
+    fn try_select<Q>(&self, value: &Q) -> Option<usize>
+    where
+        T: Borrow<Q> + Ord,
+        Q: Ord + ?Sized,
+    {
+        match search(&self, &value) {
+            Ok(index) => Some(index),
+            Err(_) => None,
         }
     }
     #[inline]

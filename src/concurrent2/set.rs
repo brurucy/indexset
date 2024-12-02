@@ -2,7 +2,8 @@ use std::fmt::Debug;
 use std::{borrow::Borrow, sync::Arc};
 
 use crossbeam_skiplist::SkipMap;
-use parking_lot::{Mutex, RwLock};
+use crossbeam_utils::sync::ShardedLock;
+use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
 
 use crate::core::constants::DEFAULT_INNER_SIZE;
 use crate::core::node::*;
@@ -16,7 +17,7 @@ where
 {
     node_capacity: usize,
     index: SkipMap<T, Node<T>>,
-    index_lock: RwLock<()>,
+    index_lock: ShardedLock<()>,
 }
 impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
     fn default() -> Self {
@@ -26,16 +27,15 @@ impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
         Self {
             node_capacity,
             index,
-            index_lock: RwLock::new(()),
+            index_lock: ShardedLock::new(()),
         }
     }
 }
 
-type NewVersion<T> = Node<T>;
 type OldVersion<T> = Node<T>;
 type CurrentVersion<T> = Node<T>;
 
-enum Operation<T> {
+enum Operation<T: Send> {
     Split(OldVersion<T>, T, T),
     UpdateMax(CurrentVersion<T>, T),
 }
@@ -44,7 +44,7 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
     fn commit(self, index: &SkipMap<T, Node<T>>) -> bool {
         match self {
             Operation::Split(old_node, old_max, value) => {
-                let mut guard = old_node.lock();
+                let mut guard = old_node.lock_arc();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &old_node) {
                         index.remove(&old_max);
@@ -77,13 +77,13 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                 false
             }
             Operation::UpdateMax(node, old_max) => {
-                let guard = node.lock();
+                let guard = node.lock_arc();
                 let new_max = guard.last().unwrap();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &node) {
                         match new_max.cmp(&old_max) {
                             std::cmp::Ordering::Less => panic!("new_max is smaller than old_max?"),
-                            std::cmp::Ordering::Equal => panic!("new_max is equal to old_max?"),
+                            std::cmp::Ordering::Equal => return true,
                             std::cmp::Ordering::Greater => {
                                 index.remove(&old_max);
                                 index.insert(new_max.clone(), node.clone());
@@ -97,6 +97,17 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                 false
             }
         }
+    }
+}
+
+pub struct Ref<T: Ord + Clone + Send> {
+    node_guard: ArcMutexGuard<RawMutex, Vec<T>>,
+    position: usize,
+}
+
+impl<T: Ord + Clone + Send> Ref<T> {
+    fn get(&self) -> &T {
+        self.node_guard.get(self.position).unwrap()
     }
 }
 
@@ -120,7 +131,7 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
                         let first_node = Arc::new(Mutex::new(first_vec));
 
                         drop(_global_guard);
-                        if let Some(_) = self.index_lock.try_write() {
+                        if let Ok(_) = self.index_lock.try_write() {
                             self.index.insert(value.clone(), first_node);
 
                             return true;
@@ -131,7 +142,7 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
                 }
             };
 
-            let mut node_guard = target_node_entry.value().lock();
+            let mut node_guard = target_node_entry.value().lock_arc();
             let mut operation = None;
             if node_guard.len() < self.node_capacity {
                 let old_max = node_guard.last().cloned();
@@ -195,11 +206,105 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
 
         false
     }
+    pub fn get<'a, Q>(&'a self, value: &'a Q) -> Option<Ref<T>>
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        if let Some(node) = self.locate_node(value) {
+            let node_guard = node.lock_arc();
+            let potential_position = node_guard.try_select(value);
+
+            if let Some(position) = potential_position {
+                return Some(Ref {
+                    node_guard,
+                    position,
+                });
+            }
+        }
+
+        None
+    }
     pub fn len(&self) -> usize {
         self.index
             .iter()
             .map(|node| node.value().lock().len())
             .sum()
+    }
+}
+
+impl<T> FromIterator<T> for BTreeSet<T>
+where
+    T: Ord + Clone + Send + Debug,
+{
+    fn from_iter<K: IntoIterator<Item = T>>(iter: K) -> Self {
+        let btree = BTreeSet::new();
+        iter.into_iter().for_each(|item| {
+            btree.insert(item);
+        });
+
+        btree
+    }
+}
+
+impl<T, const N: usize> From<[T; N]> for BTreeSet<T>
+where
+    T: Ord + Clone + Send + Debug,
+{
+    fn from(value: [T; N]) -> Self {
+        let btree: BTreeSet<T> = Default::default();
+
+        value.into_iter().for_each(|item| {
+            btree.insert(item);
+        });
+
+        btree
+    }
+}
+
+pub struct Iter<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    btree: &'a BTreeSet<T>,
+    index_iter: crossbeam_skiplist::map::Iter<'a, T, Arc<Mutex<Vec<T>>>>,
+    current_front_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Vec<T>>>>>,
+    current_front_entry_guard: Option<ArcMutexGuard<RawMutex, Vec<T>>>,
+    current_front_entry_iter: Option<std::slice::Iter<'a, T>>,
+    current_back_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Vec<T>>>>>,
+    current_back_entry_guard: Option<ArcMutexGuard<RawMutex, Vec<T>>>,
+    current_back_entry_iter: Option<std::slice::Iter<'a, T>>,
+}
+
+impl<'a, T> Iter<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    pub fn new(btree: &'a BTreeSet<T>) -> Self {
+        let mut index_iter = btree.index.iter();
+        let current_front_entry = index_iter.next();
+        let current_front_entry_guard = if let Some(current_entry) = current_front_entry.clone() {
+            Some(current_entry.value().lock_arc())
+        } else {
+            None
+        };
+        let current_front_entry_iter =
+            if let Some(current_entry_iter) = current_front_entry_guard.clone() {
+                Some(current_entry_iter.iter())
+            } else {
+                None
+            };
+
+        let current_back_entry = index_iter.next_back();
+
+        Self {
+            btree,
+            index_iter,
+            current_front_entry,
+            current_front_entry_guard,
+            current_front_entry_iter,
+            current_back_entry,
+        }
     }
 }
 
