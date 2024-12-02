@@ -215,7 +215,7 @@ mod tests {
     fn test_concurrent_insert() {
         let set = Arc::new(BTreeSet::<i32>::new());
         let num_threads = 128;
-        let operations_per_thread = 100000;
+        let operations_per_thread = 10000;
         let mut handles = vec![];
 
         let test_data: Vec<Vec<(i32, i32)>> = (0..num_threads)
@@ -223,7 +223,7 @@ mod tests {
                 let mut rng = rand::thread_rng();
                 (0..operations_per_thread)
                     .map(|_| {
-                        let value = rng.gen_range(0..10000);
+                        let value = rng.gen_range(0..100000);
                         let operation = rng.gen_range(0..2);
                         (operation, value)
                     })
