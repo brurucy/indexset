@@ -3,7 +3,6 @@ pub mod concurrent;
 
 pub mod concurrent2;
 mod core;
-pub mod tiny;
 
 use crate::Entry::{Occupied, Vacant};
 use core::constants::{DEFAULT_CUTOFF, DEFAULT_INNER_SIZE};

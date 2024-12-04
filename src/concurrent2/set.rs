@@ -4,6 +4,7 @@ use std::{borrow::Borrow, sync::Arc};
 use crossbeam_skiplist::SkipMap;
 use crossbeam_utils::sync::ShardedLock;
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
+use std::iter::FusedIterator;
 
 use crate::core::constants::DEFAULT_INNER_SIZE;
 use crate::core::node::*;
@@ -266,7 +267,7 @@ pub struct Iter<'a, T>
 where
     T: Ord + Clone + Send + 'static,
 {
-    btree: &'a BTreeSet<T>,
+    _btree: &'a BTreeSet<T>,
     index_iter: crossbeam_skiplist::map::Iter<'a, T, Arc<Mutex<Vec<T>>>>,
     current_front_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Vec<T>>>>>,
     current_front_entry_guard: Option<ArcMutexGuard<RawMutex, Vec<T>>>,
@@ -274,6 +275,8 @@ where
     current_back_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Vec<T>>>>>,
     current_back_entry_guard: Option<ArcMutexGuard<RawMutex, Vec<T>>>,
     current_back_entry_iter: Option<std::slice::Iter<'a, T>>,
+    last_front: Option<T>,
+    last_back: Option<T>,
 }
 
 impl<'a, T> Iter<'a, T>
@@ -283,28 +286,168 @@ where
     pub fn new(btree: &'a BTreeSet<T>) -> Self {
         let mut index_iter = btree.index.iter();
         let current_front_entry = index_iter.next();
-        let current_front_entry_guard = if let Some(current_entry) = current_front_entry.clone() {
-            Some(current_entry.value().lock_arc())
-        } else {
-            None
-        };
-        let current_front_entry_iter =
-            if let Some(current_entry_iter) = current_front_entry_guard.clone() {
-                Some(current_entry_iter.iter())
+        let (current_front_entry_guard, current_front_entry_iter) =
+            if let Some(current_entry) = current_front_entry.clone() {
+                let guard = current_entry.value().lock_arc();
+                let iter = unsafe { std::mem::transmute(guard.iter()) };
+
+                (Some(guard), Some(iter))
             } else {
-                None
+                (None, None)
             };
 
         let current_back_entry = index_iter.next_back();
+        let (current_back_entry_guard, current_back_entry_iter) =
+            if let Some(current_entry) = current_back_entry.clone() {
+                let guard = current_entry.value().lock_arc();
+                let iter = unsafe { std::mem::transmute(guard.iter()) };
+
+                (Some(guard), Some(iter))
+            } else {
+                (None, None)
+            };
 
         Self {
-            btree,
+            _btree: btree,
             index_iter,
             current_front_entry,
             current_front_entry_guard,
             current_front_entry_iter,
             current_back_entry,
+            current_back_entry_guard,
+            current_back_entry_iter,
+            last_front: None,
+            last_back: None,
         }
+    }
+}
+
+impl<'a, T> Iterator for Iter<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if (self.last_front.is_some() || self.last_back.is_some())
+            && self.last_front == self.last_back
+        {
+            return None;
+        }
+
+        loop {
+            if self.current_front_entry_iter.is_none() {
+                if let Some(next_entry) = self.index_iter.next() {
+                    let guard = next_entry.value().lock_arc();
+                    let iter = unsafe { std::mem::transmute(guard.iter()) };
+
+                    self.current_front_entry = Some(next_entry);
+                    self.current_front_entry_guard = Some(guard);
+                    self.current_front_entry_iter = Some(iter);
+
+                    continue;
+                }
+
+                if let Some(next_value) = self
+                    .current_front_entry_iter
+                    .as_mut()
+                    .and_then(|i| i.next())
+                {
+                    self.last_front = Some(next_value.clone());
+
+                    return Some(next_value);
+                }
+
+                return None;
+            }
+
+            if let Some(next_value) = self
+                .current_front_entry_iter
+                .as_mut()
+                .and_then(|i| i.next())
+            {
+                self.last_front = Some(next_value.clone());
+
+                return Some(next_value);
+            } else {
+                self.current_front_entry_iter.take();
+                self.current_front_entry_guard.take();
+                self.current_front_entry.take();
+
+                continue;
+            }
+        }
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for Iter<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if (self.last_front.is_some() || self.last_back.is_some())
+            && self.last_front == self.last_back
+        {
+            return None;
+        }
+
+        loop {
+            if self.current_back_entry_iter.is_none() {
+                if let Some(next_entry) = self.index_iter.next_back() {
+                    let guard = next_entry.value().lock_arc();
+                    let iter = unsafe { std::mem::transmute(guard.iter()) };
+
+                    self.current_back_entry = Some(next_entry);
+                    self.current_back_entry_guard = Some(guard);
+                    self.current_back_entry_iter = Some(iter);
+
+                    continue;
+                }
+
+                if let Some(next_value) = self
+                    .current_front_entry_iter
+                    .as_mut()
+                    .and_then(|i| i.next_back())
+                {
+                    self.last_back = Some(next_value.clone());
+
+                    return Some(next_value);
+                }
+
+                return None;
+            }
+
+            if let Some(next_value) = self
+                .current_back_entry_iter
+                .as_mut()
+                .and_then(|i| i.next_back())
+            {
+                self.last_back = Some(next_value.clone());
+
+                return Some(next_value);
+            } else {
+                self.current_back_entry_iter.take();
+                self.current_back_entry_guard.take();
+                self.current_back_entry.take();
+
+                continue;
+            }
+        }
+    }
+}
+
+impl<'a, T: Ord + Clone + Send> FusedIterator for Iter<'a, T> where T: Ord {}
+
+impl<'a, T> IntoIterator for &'a BTreeSet<T>
+where
+    T: Ord + Send + Clone,
+{
+    type Item = &'a T;
+
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Iter::new(self)
     }
 }
 
@@ -400,5 +543,59 @@ mod tests {
                 set.index.iter().collect::<Vec<_>>(),
             );
         }
+    }
+
+    #[test]
+    fn test_single_element() {
+        let set = BTreeSet::new();
+        set.insert(1);
+        let mut iter = set.into_iter();
+        assert_eq!(iter.next(), Some(&1));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn test_multiple_elements() {
+        let set = BTreeSet::new();
+        set.insert(1);
+        set.insert(2);
+        set.insert(3);
+        let mut iter = set.into_iter();
+        assert_eq!(iter.next(), Some(&1));
+        assert_eq!(iter.next_back(), Some(&3));
+        assert_eq!(iter.next(), Some(&2));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn test_bidirectional_iteration() {
+        let set = BTreeSet::new();
+        for i in 1..=100000 {
+            set.insert(i);
+        }
+        let mut iter = set.into_iter();
+        for i in 1..=50000 {
+            assert_eq!(
+                iter.next(),
+                Some(&i),
+                "Tree: {:?}",
+                set.index.iter().collect::<Vec<_>>()
+            );
+            assert_eq!(iter.next_back(), Some(&(100001 - i)));
+        }
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn test_fused_iterator() {
+        let set = BTreeSet::new();
+        set.insert(1);
+        let mut iter = set.into_iter();
+        assert_eq!(iter.next(), Some(&1));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next(), None);
     }
 }
