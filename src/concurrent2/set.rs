@@ -268,7 +268,6 @@ where
     T: Ord + Clone + Send + 'static,
 {
     _btree: &'a BTreeSet<T>,
-    index_iter: crossbeam_skiplist::map::Iter<'a, T, Arc<Mutex<Vec<T>>>>,
     current_front_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Vec<T>>>>>,
     current_front_entry_guard: Option<ArcMutexGuard<RawMutex, Vec<T>>>,
     current_front_entry_iter: Option<std::slice::Iter<'a, T>>,
@@ -309,7 +308,6 @@ where
 
         Self {
             _btree: btree,
-            index_iter,
             current_front_entry,
             current_front_entry_guard,
             current_front_entry_iter,
@@ -337,19 +335,27 @@ where
 
         loop {
             if self.current_front_entry_iter.is_none() {
-                if let Some(next_entry) = self.index_iter.next() {
-                    let guard = next_entry.value().lock_arc();
-                    let iter = unsafe { std::mem::transmute(guard.iter()) };
+                if let Some(next_entry) = self.current_front_entry.take().and_then(|e| e.next()) {
+                    if let Some(next_entry_equals_to_next_back_entry) = self
+                        .current_back_entry
+                        .as_ref()
+                        .and_then(|next_back_entry| Some(next_entry.key() == next_back_entry.key()))
+                    {
+                        if !next_entry_equals_to_next_back_entry {
+                            let guard = next_entry.value().lock_arc();
+                            let iter = unsafe { std::mem::transmute(guard.iter()) };
 
-                    self.current_front_entry = Some(next_entry);
-                    self.current_front_entry_guard = Some(guard);
-                    self.current_front_entry_iter = Some(iter);
+                            self.current_front_entry = Some(next_entry);
+                            self.current_front_entry_guard = Some(guard);
+                            self.current_front_entry_iter = Some(iter);
 
-                    continue;
+                            continue;
+                        }
+                    }
                 }
 
                 if let Some(next_value) = self
-                    .current_front_entry_iter
+                    .current_back_entry_iter
                     .as_mut()
                     .and_then(|i| i.next())
                 {
@@ -372,7 +378,6 @@ where
             } else {
                 self.current_front_entry_iter.take();
                 self.current_front_entry_guard.take();
-                self.current_front_entry.take();
 
                 continue;
             }
@@ -393,15 +398,23 @@ where
 
         loop {
             if self.current_back_entry_iter.is_none() {
-                if let Some(next_entry) = self.index_iter.next_back() {
-                    let guard = next_entry.value().lock_arc();
-                    let iter = unsafe { std::mem::transmute(guard.iter()) };
+                if let Some(next_back_entry) = self.current_back_entry.take().and_then(|e| e.prev()) {
+                    if let Some(next_entry_equals_to_next_back_entry) = self
+                        .current_front_entry
+                        .as_ref()
+                        .and_then(|next_entry| Some(next_entry.key() == next_back_entry.key()))
+                    {
+                        if !next_entry_equals_to_next_back_entry {
+                            let guard = next_back_entry.value().lock_arc();
+                            let iter = unsafe { std::mem::transmute(guard.iter()) };
 
-                    self.current_back_entry = Some(next_entry);
-                    self.current_back_entry_guard = Some(guard);
-                    self.current_back_entry_iter = Some(iter);
+                            self.current_back_entry = Some(next_back_entry);
+                            self.current_back_entry_guard = Some(guard);
+                            self.current_back_entry_iter = Some(iter);
 
-                    continue;
+                            continue;
+                        }
+                    }
                 }
 
                 if let Some(next_value) = self
@@ -428,7 +441,6 @@ where
             } else {
                 self.current_back_entry_iter.take();
                 self.current_back_entry_guard.take();
-                self.current_back_entry.take();
 
                 continue;
             }
@@ -450,6 +462,8 @@ where
         Iter::new(self)
     }
 }
+
+
 
 #[cfg(test)]
 mod tests {
@@ -489,7 +503,7 @@ mod tests {
             let handle = thread::spawn(move || {
                 for (operation, value) in thread_data {
                     if operation == 0 {
-                        set_clone.insert(value);
+                        let _a = set_clone.insert(value);
                         expected_values.lock().unwrap().insert(value);
                     }
                 }
@@ -505,7 +519,7 @@ mod tests {
         assert_eq!(set.len(), expected_values.len());
 
         for value in expected_values.iter() {
-            assert!(set.contains(value), "Missing value: {}", value);
+            assert!(set.contains(value));
         }
     }
 
