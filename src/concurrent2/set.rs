@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::ops::RangeBounds;
 use std::{borrow::Borrow, sync::Arc};
 
 use crossbeam_skiplist::SkipMap;
@@ -283,8 +284,7 @@ where
     T: Ord + Clone + Send + 'static,
 {
     pub fn new(btree: &'a BTreeSet<T>) -> Self {
-        let mut index_iter = btree.index.iter();
-        let current_front_entry = index_iter.next();
+        let current_front_entry = btree.index.front();
         let (current_front_entry_guard, current_front_entry_iter) =
             if let Some(current_entry) = current_front_entry.clone() {
                 let guard = current_entry.value().lock_arc();
@@ -295,13 +295,21 @@ where
                 (None, None)
             };
 
-        let current_back_entry = index_iter.next_back();
+        let current_back_entry = btree.index.back();
         let (current_back_entry_guard, current_back_entry_iter) =
             if let Some(current_entry) = current_back_entry.clone() {
-                let guard = current_entry.value().lock_arc();
-                let iter = unsafe { std::mem::transmute(guard.iter()) };
+                let mut guard = None;
+                let mut iter = None;
 
-                (Some(guard), Some(iter))
+                if let Some(front_entry) = current_front_entry.as_ref() {
+                    if !Arc::ptr_eq(current_entry.value(), front_entry.value()) {
+                        let new_guard = current_entry.value().lock_arc();
+                        iter = Some(unsafe { std::mem::transmute(new_guard.iter()) });
+                        guard = Some(new_guard);
+                    }
+                }
+
+                (guard, iter)
             } else {
                 (None, None)
             };
@@ -344,7 +352,6 @@ where
                         if !next_entry_equals_to_next_back_entry {
                             let guard = next_entry.value().lock_arc();
                             let iter = unsafe { std::mem::transmute(guard.iter()) };
-
                             self.current_front_entry = Some(next_entry);
                             self.current_front_entry_guard = Some(guard);
                             self.current_front_entry_iter = Some(iter);
@@ -463,7 +470,91 @@ where
     }
 }
 
+pub struct Range<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    iter: Iter<'a, T>,
+}
 
+// impl<'a, T> Range<'a, T>
+// where
+//     T: Ord + Clone + Send + 'static,
+// {
+//     pub fn new(btree: &'a BTreeSet<T>, range: std::ops::RangeFrom<T>) -> Self {
+//         let _global_guard = btree.index_lock.read();
+// 
+//         let start_bound = range.start_bound();
+//         let current_front_entry = btree.index.lower_bound(start_bound).and_then(|entry| entry.prev());
+//         let (current_front_entry_guard, current_front_entry_iter) =
+//             if let Some(current_entry) = current_front_entry.clone() {
+//                 let guard = current_entry.value().lock_arc();
+//                 let iter = unsafe { std::mem::transmute(guard.iter()) };
+//                 if let Some(position) = guard.try_select(start_bound) {
+//                     iter.nth(position);
+//                 }
+// 
+//                 (Some(guard), Some(iter))
+//             } else {
+//                 (None, None)
+//             };
+// 
+//         let end_bound = range.end_bound();
+//         let current_back_entry = btree.index.lower_bound(end_bound).and_then(|entry| entry.prev());
+//         let (current_back_entry_guard, current_back_entry_iter) =
+//             if let Some(current_entry) = current_back_entry.clone() {
+//                 let guard = current_entry.value().lock_arc();
+//                 let iter = unsafe { std::mem::transmute(guard.iter()) };
+//                 if let Some(position) = guard.try_select(&range) {
+//                     iter.nth(position);
+//                 }
+// 
+//                 (Some(guard), Some(iter))
+//             } else {
+//                 (None, None)
+//             };
+// 
+// 
+//         Self {
+//             iter: Iter {
+//                 _btree: btree,
+//                 current_front_entry,
+//                 current_front_entry_guard,
+//                 current_front_entry_iter,
+//                 current_back_entry,
+//                 current_back_entry_guard,
+//                 current_back_entry_iter,
+//                 last_front: None,
+//                 last_back: None,
+//             },
+//         }
+//     }
+// }
+
+impl<'a, T> Iterator for Range<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for Range<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.iter.next_back()
+    }
+}
+
+impl<'a, T> FusedIterator for Range<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{}
 
 #[cfg(test)]
 mod tests {
