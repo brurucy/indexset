@@ -477,59 +477,90 @@ where
     iter: Iter<'a, T>,
 }
 
-// impl<'a, T> Range<'a, T>
-// where
-//     T: Ord + Clone + Send + 'static,
-// {
-//     pub fn new(btree: &'a BTreeSet<T>, range: std::ops::RangeFrom<T>) -> Self {
-//         let _global_guard = btree.index_lock.read();
-// 
-//         let start_bound = range.start_bound();
-//         let current_front_entry = btree.index.lower_bound(start_bound).and_then(|entry| entry.prev());
-//         let (current_front_entry_guard, current_front_entry_iter) =
-//             if let Some(current_entry) = current_front_entry.clone() {
-//                 let guard = current_entry.value().lock_arc();
-//                 let iter = unsafe { std::mem::transmute(guard.iter()) };
-//                 if let Some(position) = guard.try_select(start_bound) {
-//                     iter.nth(position);
-//                 }
-// 
-//                 (Some(guard), Some(iter))
-//             } else {
-//                 (None, None)
-//             };
-// 
-//         let end_bound = range.end_bound();
-//         let current_back_entry = btree.index.lower_bound(end_bound).and_then(|entry| entry.prev());
-//         let (current_back_entry_guard, current_back_entry_iter) =
-//             if let Some(current_entry) = current_back_entry.clone() {
-//                 let guard = current_entry.value().lock_arc();
-//                 let iter = unsafe { std::mem::transmute(guard.iter()) };
-//                 if let Some(position) = guard.try_select(&range) {
-//                     iter.nth(position);
-//                 }
-// 
-//                 (Some(guard), Some(iter))
-//             } else {
-//                 (None, None)
-//             };
-// 
-// 
-//         Self {
-//             iter: Iter {
-//                 _btree: btree,
-//                 current_front_entry,
-//                 current_front_entry_guard,
-//                 current_front_entry_iter,
-//                 current_back_entry,
-//                 current_back_entry_guard,
-//                 current_back_entry_iter,
-//                 last_front: None,
-//                 last_back: None,
-//             },
-//         }
-//     }
-// }
+impl<'a, T> Range<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    pub fn new<Q, R>(btree: &'a BTreeSet<T>, range: R) -> Self
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+        R: RangeBounds<Q>,
+    {
+        let _global_guard = btree.index_lock.read();
+
+        let start_bound = range.start_bound();
+        let current_front_entry = btree
+            .index
+            .lower_bound(start_bound)
+            .or_else(|| btree.index.front())
+            .and_then(|entry| entry.prev().or_else(|| Some(entry)));
+
+        let (current_front_entry_guard, mut current_front_entry_iter) =
+            if let Some(current_entry) = current_front_entry.clone() {
+                let guard = current_entry.value().lock_arc();
+                let mut iter: std::slice::Iter<'_, T> = unsafe { std::mem::transmute(guard.iter()) };
+                let position = guard.rank(start_bound, true);
+                if position < guard.len() && position > 0 {
+                    iter.nth(position - 1);
+                }
+
+                (Some(guard), Some(iter))
+            } else {
+                (None, None)
+            };
+
+        let end_bound = range.end_bound();
+        let current_back_entry = btree
+            .index
+            .lower_bound(end_bound)
+            .and_then(|entry| entry.prev().or_else(|| Some(entry)));
+        let (current_back_entry_guard, current_back_entry_iter) =
+            if let Some(current_entry) = current_back_entry.clone() {
+                let mut guard = None;
+                let mut iter = None;
+
+                if let Some(front_entry) = current_front_entry.as_ref() {
+                    if !Arc::ptr_eq(current_entry.value(), front_entry.value()) {
+                        let new_guard = current_entry.value().lock_arc();
+                        let mut iter_local: std::slice::Iter<'_, T> = unsafe { std::mem::transmute(new_guard.iter()) };
+                        let position = new_guard.rank(end_bound, false);
+                        if position < new_guard.len() && position > 0 {
+                            iter_local.nth_back(new_guard.len() - position);
+                        }
+
+                        iter = Some(iter_local);
+                        guard = Some(new_guard);
+                    } else {
+                        if let Some((len, position)) = current_front_entry_guard
+                            .as_ref()
+                            .and_then(|g| Some((g.len(), g.rank(end_bound, false))))
+                        {
+                            current_front_entry_iter.as_mut().and_then(|i| i.nth_back(len - position));
+                        }
+                    }
+                }
+
+                (guard, iter)
+            } else {
+                (None, None)
+            };
+
+        Self {
+            iter: Iter {
+                _btree: btree,
+                current_front_entry,
+                current_front_entry_guard,
+                current_front_entry_iter,
+                current_back_entry,
+                current_back_entry_guard,
+                current_back_entry_iter,
+                last_front: None,
+                last_back: None,
+            },
+        }
+    }
+}
 
 impl<'a, T> Iterator for Range<'a, T>
 where
@@ -556,10 +587,29 @@ where
     T: Ord + Clone + Send + 'static,
 {}
 
+impl<'a, T> BTreeSet<T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    pub fn iter(&'a self) -> Iter<'a, T> {
+        Iter::new(self)
+    }
+
+    pub fn range<Q, R>(&'a self, range: R) -> Range<'a, T>
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+        R: RangeBounds<Q>,
+    {
+        Range::new(self, range)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::concurrent2::set::BTreeSet;
+    use crate::concurrent2::set::{BTreeSet, DEFAULT_INNER_SIZE};
     use rand::Rng;
+    use std::ops::Bound::Included;
     use std::collections::HashSet;
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -702,5 +752,79 @@ mod tests {
         assert_eq!(iter.next(), Some(&1));
         assert_eq!(iter.next(), None);
         assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_out_of_bounds_range() {
+        let btree: BTreeSet<usize> = BTreeSet::from_iter(0..10);
+        assert_eq!(btree.range((Included(5), Included(10))).count(), 5);
+        assert_eq!(btree.range((Included(5), Included(11))).count(), 5);
+        assert_eq!(
+            btree
+                .range((Included(5), Included(10 + DEFAULT_INNER_SIZE)))
+                .count(),
+            5
+        );
+        assert_eq!(btree.range((Included(0), Included(11))).count(), 10);
+    }
+
+    #[test]
+    fn test_iterating_over_blocks() {
+        let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 10)).into_iter());
+        assert_eq!(btree.iter().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
+        assert_eq!(
+            btree.range(0..DEFAULT_INNER_SIZE).count(),
+            (0..DEFAULT_INNER_SIZE).count()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE).count(),
+            (0..=DEFAULT_INNER_SIZE).count()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE + 1).count(),
+            (0..=DEFAULT_INNER_SIZE + 1).count()
+        );
+
+        assert_eq!(
+            btree.iter().rev().count(),
+            (0..(DEFAULT_INNER_SIZE + 10)).count()
+        );
+        assert_eq!(
+            btree.range(0..DEFAULT_INNER_SIZE).rev().count(),
+            (0..DEFAULT_INNER_SIZE).count()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE).rev().count(),
+            (0..=DEFAULT_INNER_SIZE).count()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE + 1).rev().count(),
+            (0..=DEFAULT_INNER_SIZE + 1).count()
+        );
+    }
+
+    #[test]
+    fn test_empty_set() {
+        let btree: BTreeSet<usize> = BTreeSet::new();
+        assert_eq!(btree.iter().count(), 0);
+        assert_eq!(btree.range(0..0).count(), 0);
+        assert_eq!(btree.range(0..).count(), 0);
+        assert_eq!(btree.range(..0).count(), 0);
+        assert_eq!(btree.range(..).count(), 0);
+        assert_eq!(btree.range(0..=0).count(), 0);
+        assert_eq!(btree.range(..1).count(), 0);
+
+        assert_eq!(btree.iter().rev().count(), 0);
+        assert_eq!(btree.range(0..0).rev().count(), 0);
+        assert_eq!(btree.range(..).rev().count(), 0);
+        assert_eq!(btree.range(..1).rev().count(), 0);
+
+        assert_eq!(btree.range(..DEFAULT_INNER_SIZE).count(), 0);
+        assert_eq!(
+            btree
+                .range(DEFAULT_INNER_SIZE..DEFAULT_INNER_SIZE * 2)
+                .count(),
+            0
+        );
     }
 }
