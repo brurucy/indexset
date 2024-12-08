@@ -479,7 +479,7 @@ where
 
 impl<'a, T> Range<'a, T>
 where
-    T: Ord + Clone + Send + 'static,
+    T: Ord + Clone + Send + 'static + Debug,
 {
     pub fn new<Q, R>(btree: &'a BTreeSet<T>, range: R) -> Self
     where
@@ -493,16 +493,19 @@ where
         let current_front_entry = btree
             .index
             .lower_bound(start_bound)
-            .or_else(|| btree.index.front())
-            .and_then(|entry| entry.prev().or_else(|| Some(entry)));
+            .and_then(|entry| entry.prev().or_else(|| Some(entry)))
+            .or_else(|| btree.index.back());
 
         let (current_front_entry_guard, mut current_front_entry_iter) =
             if let Some(current_entry) = current_front_entry.clone() {
                 let guard = current_entry.value().lock_arc();
                 let mut iter: std::slice::Iter<'_, T> = unsafe { std::mem::transmute(guard.iter()) };
                 let position = guard.rank(start_bound, true);
-                if position < guard.len() && position > 0 {
-                    iter.nth(position - 1);
+                if position < guard.len() {
+                    match start_bound {
+                        std::ops::Bound::Included(_) if position == 0 => {},
+                        _ =>  { iter.nth(position - 1); }
+                    }
                 }
 
                 (Some(guard), Some(iter))
@@ -514,7 +517,9 @@ where
         let current_back_entry = btree
             .index
             .lower_bound(end_bound)
-            .and_then(|entry| entry.prev().or_else(|| Some(entry)));
+            .and_then(|entry| entry.prev().or_else(|| Some(entry)))
+            .or_else(|| btree.index.back());
+
         let (current_back_entry_guard, current_back_entry_iter) =
             if let Some(current_entry) = current_back_entry.clone() {
                 let mut guard = None;
@@ -524,9 +529,16 @@ where
                     if !Arc::ptr_eq(current_entry.value(), front_entry.value()) {
                         let new_guard = current_entry.value().lock_arc();
                         let mut iter_local: std::slice::Iter<'_, T> = unsafe { std::mem::transmute(new_guard.iter()) };
-                        let position = new_guard.rank(end_bound, false);
-                        if position < new_guard.len() && position > 0 {
-                            iter_local.nth_back(new_guard.len() - position);
+                        let position = new_guard.rank(end_bound, false); 
+                        if position < new_guard.len() {
+                            match end_bound {
+                                std::ops::Bound::Included(_) => { 
+                                    if position < new_guard.len() {
+                                        iter_local.nth_back(new_guard.len() - position - 2); 
+                                    }
+                                },
+                                _ => { iter_local.nth_back(new_guard.len() - position); }
+                            }
                         }
 
                         iter = Some(iter_local);
@@ -536,7 +548,9 @@ where
                             .as_ref()
                             .and_then(|g| Some((g.len(), g.rank(end_bound, false))))
                         {
-                            current_front_entry_iter.as_mut().and_then(|i| i.nth_back(len - position));
+                            if position < len {
+                                current_front_entry_iter.as_mut().and_then(|i| i.nth_back(len - position - 1));
+                            }
                         }
                     }
                 }
@@ -597,7 +611,7 @@ where
 
     pub fn range<Q, R>(&'a self, range: R) -> Range<'a, T>
     where
-        T: Borrow<Q>,
+        T: Borrow<Q> + Debug,
         Q: Ord + ?Sized,
         R: RangeBounds<Q>,
     {
@@ -773,18 +787,17 @@ mod tests {
         let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 10)).into_iter());
         assert_eq!(btree.iter().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
         assert_eq!(
-            btree.range(0..DEFAULT_INNER_SIZE).count(),
-            (0..DEFAULT_INNER_SIZE).count()
+            btree.range(0..DEFAULT_INNER_SIZE).into_iter().cloned().collect::<Vec<_>>(),
+            (0..DEFAULT_INNER_SIZE).collect::<Vec<_>>()
         );
         assert_eq!(
-            btree.range(0..=DEFAULT_INNER_SIZE).count(),
-            (0..=DEFAULT_INNER_SIZE).count()
+            btree.range(0..=DEFAULT_INNER_SIZE).into_iter().cloned().collect::<Vec<_>>(),
+            (0..=DEFAULT_INNER_SIZE).collect::<Vec<_>>()
         );
         assert_eq!(
             btree.range(0..=DEFAULT_INNER_SIZE + 1).count(),
             (0..=DEFAULT_INNER_SIZE + 1).count()
         );
-
         assert_eq!(
             btree.iter().rev().count(),
             (0..(DEFAULT_INNER_SIZE + 10)).count()
