@@ -536,11 +536,11 @@ where
                             match end_bound {
                                 std::ops::Bound::Included(_) => {
                                     if position < new_guard.len() {
-                                        iter_local.nth_back(new_guard.len() - position - 2);
+                                        iter_local.nth_back(new_guard.len().wrapping_sub(position).wrapping_sub(2));
                                     }
                                 }
                                 _ => {
-                                    iter_local.nth_back(new_guard.len() - position);
+                                    iter_local.nth_back(new_guard.len().wrapping_sub(position));
                                 }
                             }
                         }
@@ -555,7 +555,7 @@ where
                             if position < len {
                                 current_front_entry_iter
                                     .as_mut()
-                                    .and_then(|i| i.nth_back(len - position - 1));
+                                    .and_then(|i| i.nth_back(len.wrapping_sub(position).wrapping_sub(1)));
                             }
                         }
                     }
@@ -638,15 +638,11 @@ where
         let end_bound = range.end_bound();
         let potential_front_entry = self
             .index
-            .lower_bound(start_bound)
-            .and_then(|entry| entry.prev().or_else(|| Some(entry)))
-            .or_else(|| self.index.back());
+            .lower_bound(start_bound);
 
         let potential_back_entry = self
             .index
-            .lower_bound(end_bound)
-            .and_then(|entry| entry.prev().or_else(|| Some(entry)))
-            .or_else(|| self.index.back());
+            .lower_bound(end_bound);
 
         let (potential_front_entry_guard, potential_front_position) =
             if let Some(front_entry) = potential_front_entry.clone() {
@@ -655,12 +651,7 @@ where
                 let guard = front_entry.value().lock_arc();
                 let position = guard.rank(start_bound, true);
                 if position < guard.len() {
-                    match start_bound {
-                        std::ops::Bound::Included(_) if position == 0 => {}
-                        _ => {
-                            front_position = position - 1;
-                        }
-                    }
+                    front_position = position;
                 }
 
                 (Some(guard), front_position)
@@ -676,31 +667,27 @@ where
                 if let Some(front_entry) = potential_front_entry.as_ref() {
                     if !Arc::ptr_eq(back_entry.value(), front_entry.value()) {
                         let new_guard = back_entry.value().lock_arc();
-                        let position = new_guard.rank(end_bound, false);
-                        if position < new_guard.len() {
-                            match end_bound {
-                                std::ops::Bound::Included(_) => {
-                                    if position < new_guard.len() {
-                                        back_position = new_guard.len() - position - 2;
-                                    } else {
-                                        back_position = new_guard.len();
-                                    }
-                                }
-                                _ => {
-                                    back_position = new_guard.len() - position;
-                                }
+                        let position = new_guard.rank(end_bound, true);
+                        back_position =  {
+                            if position > 0 {
+                                position - 1
+                            } else {
+                                new_guard.len()
                             }
-                        }
+                        };
+
                         guard = Some(new_guard);
                     } else {
                         if let Some((len, position)) = potential_front_entry_guard
                             .as_ref()
-                            .and_then(|g| Some((g.len(), g.rank(end_bound, false))))
+                            .and_then(|g| Some((g.len(), g.rank(end_bound, true))))
                         {
-                            if position < len {
-                                back_position = len - position - 1;
-                            } else {
-                                back_position = len;
+                            back_position = {
+                                if position > 0 {
+                                    position - 1
+                                } else {
+                                    len
+                                }
                             }
                         }
                     }
@@ -717,7 +704,8 @@ where
             // But no back entry
             if let None = potential_back_entry_guard {
                 // Then we drain the front entry
-                front_entry_guard.drain(potential_front_position..potential_back_position);
+                let adjusted_back_position = { if potential_front_position > potential_back_position { front_entry_guard.len() } else { potential_back_position } };
+                front_entry_guard.drain(potential_front_position..adjusted_back_position);
                 // Clone the mutex
                 let old_entry_value = front_entry.value().clone();
                 // Remove the entry
@@ -736,7 +724,7 @@ where
                 // Otherwise we remove every single node between them
                 loop {
                     if let Some(next_entry) = front_entry.next() {
-                        if Arc::ptr_eq(next_entry.value(), back_entry.value()) {
+                        if next_entry.key() == back_entry.key() {
                             break;
                         }
 
@@ -757,7 +745,7 @@ where
 
                 // The back from the right
                 back_entry.remove();
-                back_entry_guard.drain(..=potential_back_position);
+                back_entry_guard.drain(..potential_back_position);
                 if !back_entry_guard.is_empty() {
                     let new_back_max = back_entry_guard.last().unwrap().clone();
                     self.index.insert(new_back_max, back_entry.value().clone());
@@ -1002,35 +990,46 @@ mod tests {
 
     #[test]
     fn test_remove_range() {
-        let btree = BTreeSet::from_iter(0..=(DEFAULT_INNER_SIZE * 2));
-
-        btree.remove_range(5..15);
-        let expected_len = (DEFAULT_INNER_SIZE * 2) - 9;
+        // We have DEFAULT_INNER_SIZE * 2 elements
+        let btree = BTreeSet::from_iter(0..(DEFAULT_INNER_SIZE * 2));
+        let expected_len = DEFAULT_INNER_SIZE * 2;
         let actual_len = btree.len();
         assert_eq!(expected_len, actual_len);
 
+        // We remove 10 elements from the beginning, 5 included up to 15 excluded.
+        btree.remove_range(5..15);
+        let expected_len = expected_len - 10;
+        let actual_len = btree.len();
+        assert_eq!(expected_len, actual_len);
+
+        // Then take more 10 from the middle
         btree.remove_range(DEFAULT_INNER_SIZE - 5..DEFAULT_INNER_SIZE + 5);
         let expected_len = expected_len - 10;
         let actual_len = btree.len();
         assert_eq!(expected_len, actual_len);
 
+        // And then remove 512
         btree.remove_range(..DEFAULT_INNER_SIZE / 2);
-        let expected_len = expected_len - ((DEFAULT_INNER_SIZE / 2) - 10);
+        // We add +10 here because we are removing everything up to 512, but we already removed 5..15.
+        let expected_len = expected_len - (DEFAULT_INNER_SIZE / 2) + 10;
         let actual_len = btree.len();
         assert_eq!(expected_len, actual_len);
 
-        btree.remove_range(DEFAULT_INNER_SIZE * 3 / 2..);
+        // And then more (512 * 3) / 2
+        let from = (DEFAULT_INNER_SIZE * 3) / 2;
+        btree.remove_range(from..);
         let expected_len =
-            expected_len - ((DEFAULT_INNER_SIZE * 2) - ((DEFAULT_INNER_SIZE * 3) / 2) + 1);
+            expected_len - (DEFAULT_INNER_SIZE) - 5 + 10;
         let actual_len = btree.len();
         assert_eq!(expected_len, actual_len);
 
         btree.remove_range(..);
         assert_eq!(btree.len(), 0);
 
-        for i in 0..=(DEFAULT_INNER_SIZE * 2) {
+        for i in 0..(DEFAULT_INNER_SIZE * 2) {
             btree.insert(i);
         }
+        assert_eq!(btree.len(), DEFAULT_INNER_SIZE * 2);
 
         btree.remove_range((std::ops::Bound::Excluded(5), std::ops::Bound::Excluded(15)));
         assert_eq!(
@@ -1043,8 +1042,8 @@ mod tests {
             std::ops::Bound::Excluded(DEFAULT_INNER_SIZE + 10),
         ));
         assert_eq!(
-            btree.range(0..=DEFAULT_INNER_SIZE * 2).count(),
-            DEFAULT_INNER_SIZE * 2 - 18
+            btree.range(0..DEFAULT_INNER_SIZE * 2).count(),
+            DEFAULT_INNER_SIZE * 2 - 19
         );
 
         let original_count = btree.len();
@@ -1052,6 +1051,6 @@ mod tests {
         assert_eq!(btree.len(), original_count);
 
         btree.remove_range(DEFAULT_INNER_SIZE * 2 - 5..DEFAULT_INNER_SIZE * 3);
-        assert_eq!(btree.len(), original_count - 6);
+        assert_eq!(btree.len(), original_count - 5);
     }
 }
