@@ -8,7 +8,7 @@ use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
 use std::iter::FusedIterator;
 
 use crate::core::constants::DEFAULT_INNER_SIZE;
-use crate::core::node::*;
+use crate::core::node::{self, *};
 
 type Node<T> = Arc<Mutex<Vec<T>>>;
 
@@ -40,6 +40,7 @@ type CurrentVersion<T> = Node<T>;
 enum Operation<T: Send> {
     Split(OldVersion<T>, T, T),
     UpdateMax(CurrentVersion<T>, T),
+    MakeUnreachable(CurrentVersion<T>, T)
 }
 
 impl<T: Ord + Send + Clone + 'static> Operation<T> {
@@ -50,13 +51,12 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &old_node) {
                         index.remove(&old_max);
-
                         let mut new_vec = guard.halve();
 
                         let mut inserted = false;
                         let mut insert_attempted = false;
                         if let Some(max) = guard.last().cloned() {
-                            if max >= value {
+                            if max > value {
                                 inserted = NodeLike::insert(&mut *guard, value.clone());
                                 insert_attempted = true;
                             }
@@ -64,9 +64,12 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                             index.insert(max, old_node.clone());
                         }
 
-                        if let Some(max) = new_vec.last().cloned() {
+                        if let Some(mut max) = new_vec.last().cloned() {
                             if !insert_attempted {
                                 inserted = NodeLike::insert(&mut new_vec, value.clone());
+                                if inserted && value > max {
+                                    max = value;
+                                }
                             }
 
                             index.insert(max, Arc::new(Mutex::new(new_vec)));
@@ -80,6 +83,7 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
             }
             Operation::UpdateMax(node, old_max) => {
                 let guard = node.lock_arc();
+                let entries = index.iter().collect::<Vec<_>>();
                 let new_max = guard.last().unwrap();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &node) {
@@ -96,6 +100,27 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                 }
 
                 false
+            }
+            Operation::MakeUnreachable(node, old_max) => {
+                let guard = node.lock_arc();
+                let new_max = guard.last();
+                if let Some(entry) = index.get(&old_max) {
+                    if Arc::ptr_eq(entry.value(), &node) {
+                        match new_max.cmp(&Some(&old_max)) {
+                            std::cmp::Ordering::Less => {
+                                index.remove(&old_max);
+
+                                return true
+                            },
+                            _ => {
+                                return false
+                            }
+                        }
+                    }
+                }
+
+                false
+
             }
         }
     }
@@ -181,6 +206,47 @@ impl<T: Ord + Clone + Send + Debug> BTreeSet<T> {
 
             continue;
         }
+    }
+    pub fn remove<Q>(&self, value: &Q) -> Option<T>
+    where 
+        T: Borrow<Q>,
+        Q: Ord + ?Sized, 
+    {
+        loop {
+            let mut _global_guard = self.index_lock.read();
+            if let Some(target_node_entry) = self.index.lower_bound(std::ops::Bound::Included(&value)) {
+                let mut node_guard = target_node_entry.value().lock_arc();
+                let mut operation = None;
+                let old_max = node_guard.last().cloned();
+                let deleted = NodeLike::delete(&mut *node_guard, value);
+                if deleted.is_none() {
+                    return None;
+                }
+
+                if node_guard.len() > 0 {
+                    if old_max.as_ref() == node_guard.last() {
+                        return deleted
+                    }
+
+                    operation = Some(Operation::UpdateMax(target_node_entry.value().clone(), old_max.unwrap()))
+                } else {
+                    operation = Some(Operation::MakeUnreachable(target_node_entry.value().clone(), old_max.unwrap()))
+                }
+
+                drop(_global_guard);
+                drop(node_guard);
+                let _global_guard = self.index_lock.write();
+
+                if operation.unwrap().commit(&self.index) {
+                    return deleted;
+                }
+                drop(_global_guard);
+            }
+
+            break;            
+        }
+
+        return None
     }
     fn locate_node<Q>(&self, value: &Q) -> Option<Arc<Mutex<Vec<T>>>>
     where
@@ -491,7 +557,6 @@ where
         let current_front_entry = btree
             .index
             .lower_bound(start_bound)
-            .and_then(|entry| entry.prev().or_else(|| Some(entry)))
             .or_else(|| btree.index.back());
 
         let (current_front_entry_guard, mut current_front_entry_iter) = if let Some(current_entry) =
@@ -518,7 +583,6 @@ where
         let current_back_entry = btree
             .index
             .lower_bound(end_bound)
-            .and_then(|entry| entry.prev().or_else(|| Some(entry)))
             .or_else(|| btree.index.back());
 
         let (current_back_entry_guard, current_back_entry_iter) =
@@ -925,12 +989,14 @@ mod tests {
     fn test_iterating_over_blocks() {
         let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 10)).into_iter());
         assert_eq!(btree.iter().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
-        assert_eq!(
-            btree
+        let start = btree
                 .range(0..DEFAULT_INNER_SIZE)
                 .into_iter()
                 .cloned()
-                .collect::<Vec<_>>(),
+                .collect::<Vec<_>>();
+
+        assert_eq!(
+            start,
             (0..DEFAULT_INNER_SIZE).collect::<Vec<_>>()
         );
         assert_eq!(
@@ -1053,4 +1119,107 @@ mod tests {
         btree.remove_range(DEFAULT_INNER_SIZE * 2 - 5..DEFAULT_INNER_SIZE * 3);
         assert_eq!(btree.len(), original_count - 5);
     }
+
+    #[test]
+    fn test_remove_single_element() {
+        let set = BTreeSet::<i32>::new();
+        set.insert(5);
+        assert!(set.contains(&5));
+        assert!(set.remove(&5).is_some());
+        assert!(!set.contains(&5));
+        assert!(!set.remove(&5).is_some());
+    }
+
+    #[test]
+    fn test_remove_multiple_elements() {
+        let set = BTreeSet::<i32>::new();
+        for i in 0..2048 {
+            set.insert(i);
+        }
+        for i in 0..2048 {
+            assert!(set.remove(&i).is_some());
+            assert!(!set.contains(&i));
+        }
+        assert_eq!(set.len(), 0);
+    }
+
+    #[test]
+    fn test_remove_non_existent() {
+        let set = BTreeSet::<i32>::new();
+        set.insert(5);
+        assert!(!set.remove(&10).is_some());
+        assert!(set.contains(&5));
+    }
+    #[test]
+    fn test_remove_stress() {
+        let set = Arc::new(BTreeSet::<i32>::new());
+        const NUM_ELEMENTS: i32 = 10000;
+
+        for i in 0..NUM_ELEMENTS {
+            assert!(set.insert(i), "Failed to insert {}", i);
+        }
+        assert_eq!(
+            set.len(),
+            NUM_ELEMENTS as usize,
+            "Incorrect size after insertion"
+        );
+
+        let num_threads = 8;
+        let elements_per_thread = NUM_ELEMENTS / num_threads;
+        let handles: Vec<_> = (0..num_threads)
+            .map(|t| {
+                let set = Arc::clone(&set);
+                thread::spawn(move || {
+                    for i in (t * elements_per_thread)..((t + 1) * elements_per_thread) {
+                        if i % 2 == 1 {
+                            assert!(set.remove(&i).is_some(), "Failed to remove {}", i);
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(
+            set.len(),
+            NUM_ELEMENTS as usize / 2,
+            "Incorrect size after removal"
+        );
+
+        for i in 0..NUM_ELEMENTS {
+            if i % 2 == 0 {
+                assert!(set.contains(&i), "Even number {} should be in the set", i);
+            } else {
+                assert!(
+                    !set.contains(&i),
+                    "Odd number {} should not be in the set",
+                    i
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_remove_all_elements() {
+        let set = BTreeSet::<i32>::new();
+        let n = 2048;
+
+        for i in 0..n {
+            set.insert(i);
+        }
+
+        for i in 0..n {
+            assert!(set.remove(&i).is_some(), "Failed to remove {}", i);
+        }
+
+        assert_eq!(set.len(), 0, "Set should be empty");
+
+        for i in 0..n {
+            assert!(!set.contains(&i), "Element {} should not be in the set", i);
+        }
+    }
+
 }
