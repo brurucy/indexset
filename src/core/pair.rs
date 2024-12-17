@@ -47,3 +47,11 @@ impl<K: Ord, V> Borrow<K> for Pair<K, V> {
         &self.key
     }
 }
+
+impl<K: Ord, V> Pair<K, V> {
+    pub fn replace(&mut self, value: V) -> V {
+        let old_value = std::mem::replace(&mut self.value, value);
+
+        old_value
+    }
+}

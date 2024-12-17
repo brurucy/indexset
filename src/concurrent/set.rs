@@ -1,12 +1,16 @@
+use std::fmt::Debug;
+use std::ops::RangeBounds;
+use std::{borrow::Borrow, sync::Arc};
+
+use crossbeam_skiplist::SkipMap;
+use crossbeam_utils::sync::ShardedLock;
+use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
+use std::iter::FusedIterator;
+
 use crate::core::constants::DEFAULT_INNER_SIZE;
-use crate::core::node::NodeLike;
-use arc_swap::{ArcSwap, Guard};
-use core::borrow::Borrow;
-use core::iter::FusedIterator;
-use core::ops::Bound;
-use core::ops::RangeBounds;
-use std::ops::Deref;
-use std::sync::Arc;
+use crate::core::node::*;
+
+type Node<T> = Arc<Mutex<Vec<T>>>;
 
 /// A **persistent** concurrent ordered set based on a B-Tree.
 ///
@@ -66,366 +70,200 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct BTreeSet<T>
 where
-    T: Ord,
+    T: Ord + Clone + 'static,
 {
-    node_capacity: usize,
-    inner: ArcSwap<Vec<Arc<ArcSwap<Vec<T>>>>>,
+    index: SkipMap<T, Node<T>>,
+    index_lock: ShardedLock<()>,
 }
-
-impl<T: Ord> Default for BTreeSet<T> {
+impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
     fn default() -> Self {
+        let index = SkipMap::new();
+
         Self {
-            node_capacity: DEFAULT_INNER_SIZE,
-            inner: ArcSwap::from_pointee(vec![Arc::new(ArcSwap::from_pointee(
-                Vec::with_capacity(DEFAULT_INNER_SIZE),
-            ))]),
+            index,
+            index_lock: ShardedLock::new(()),
         }
     }
 }
 
-type FrozenBTree<T> = Vec<Arc<Vec<T>>>;
+type OldVersion<T> = Node<T>;
+type CurrentVersion<T> = Node<T>;
 
-fn unfreeze<T: Ord + Clone>(snapshot: FrozenBTree<T>) -> Arc<Vec<Arc<ArcSwap<Vec<T>>>>> {
-    Arc::new(
-        snapshot
-            .iter()
-            .map(|node_snapshot| Arc::new(ArcSwap::new(node_snapshot.clone())))
-            .collect(),
-    )
+enum Operation<T: Send> {
+    Split(OldVersion<T>, T, T),
+    UpdateMax(CurrentVersion<T>, T),
+    MakeUnreachable(CurrentVersion<T>, T)
 }
 
-fn freeze<T: Ord + Clone>(btree: &ArcSwap<Vec<Arc<ArcSwap<Vec<T>>>>>) -> FrozenBTree<T> {
-    btree
-        .load_full()
-        .iter()
-        .map(|node| node.load_full())
-        .collect()
-}
+impl<T: Ord + Send + Clone + 'static> Operation<T> {
+    fn commit(self, index: &SkipMap<T, Node<T>>) -> Result<Option<T>, ()> {
+        match self {
+            Operation::Split(old_node, old_max, value) => {
+                let mut guard = old_node.lock_arc();
+                if let Some(entry) = index.get(&old_max) {
+                    if Arc::ptr_eq(entry.value(), &old_node) {
+                        index.remove(&old_max);
+                        let mut new_vec = guard.halve();
 
-fn freeze_nodes<T: Ord + Clone>(
-    partially_frozen_btree: &Arc<Vec<Arc<ArcSwap<Vec<T>>>>>,
-) -> Vec<Arc<Vec<T>>> {
-    partially_frozen_btree
-        .iter()
-        .map(|node_ref| node_ref.load_full())
-        .collect()
-}
+                        let mut old_value: Option<T> = None;
+                        let mut insert_attempted = false;
+                        if let Some(max) = guard.last().cloned() {
+                            if max > value {
+                                let (inserted, idx) = NodeLike::insert(&mut *guard, value.clone());
+                                insert_attempted = true;
+                                if !inserted {
+                                    old_value = NodeLike::replace(&mut *guard, idx, value.clone())  
+                                }
+                            }
 
-fn locate_node<T: Ord, P, Q, K>(snapshot: K, mut cmp: P) -> (usize, Arc<Vec<T>>)
-where
-    K: Borrow<FrozenBTree<T>>,
-    T: Borrow<Q>,
-    Q: Ord + ?Sized,
-    P: FnMut(&Q) -> bool,
-{
-    let snapshot = snapshot.borrow();
+                            index.insert(max, old_node.clone());
+                        }
 
-    let mut node_idx = snapshot.partition_point(|node| {
-        if let Some(max) = node.last() {
-            return cmp(max.borrow());
-        }
+                        if let Some(mut max) = new_vec.last().cloned() {
+                            if !insert_attempted {
+                                let (inserted, idx) = NodeLike::insert(&mut new_vec, value.clone());
+                                if inserted {
+                                    if value > max {
+                                        max = value;
+                                    }
+                                } else {
+                                    old_value = NodeLike::replace(&mut new_vec, idx, value);
+                                }
+                            }
+                            index.insert(max, Arc::new(Mutex::new(new_vec)));
+                        }
+                        
+                        return Ok(old_value);
+                    }
 
-        true
-    });
+                }
 
-    if snapshot.get(node_idx).is_none() {
-        node_idx -= 1;
-    }
-
-    (node_idx, snapshot[node_idx].clone())
-}
-
-fn locate_value<T: Ord, P, Q>(snapshot: &FrozenBTree<T>, cmp: P) -> (Arc<Vec<T>>, usize)
-where
-    T: Borrow<Q>,
-    Q: Ord + ?Sized,
-    P: Fn(&Q) -> bool,
-{
-    let (_, node) = locate_node(snapshot, &cmp);
-    let position_within_node = node.partition_point(|item| cmp(item.borrow()));
-
-    (node, position_within_node)
-}
-
-fn locate_node_no_freezing<T: Ord, P, Q, K>(
-    current_tree: K,
-    mut cmp: P,
-) -> (usize, Guard<Arc<Vec<T>>>)
-where
-    K: Borrow<ArcSwap<Vec<Arc<ArcSwap<Vec<T>>>>>>,
-    T: Borrow<Q>,
-    Q: Ord + ?Sized,
-    P: FnMut(&Q) -> bool,
-{
-    let snapshot = current_tree.borrow().load();
-
-    let mut node_idx = snapshot.partition_point(|node| {
-        if let Some(max) = node.load().last() {
-            return cmp(max.borrow());
-        }
-
-        true
-    });
-
-    if snapshot.get(node_idx).is_none() {
-        node_idx -= 1;
-    }
-
-    (node_idx, snapshot.get(node_idx).unwrap().load())
-}
-
-fn locate_node_unsafe<T: Ord, P, Q, K>(
-    partial_snapshot: K,
-    mut cmp: P,
-) -> (usize, Arc<ArcSwap<Vec<T>>>)
-where
-    K: Borrow<Arc<Vec<Arc<ArcSwap<Vec<T>>>>>>,
-    T: Borrow<Q>,
-    Q: Ord + ?Sized,
-    P: FnMut(&Q) -> bool,
-{
-    let snapshot = partial_snapshot.borrow();
-
-    let mut node_idx = snapshot.partition_point(|node| {
-        if let Some(max) = node.load().last() {
-            return cmp(max.borrow());
-        }
-
-        true
-    });
-
-    if snapshot.get(node_idx).is_none() {
-        node_idx -= 1;
-    }
-
-    (node_idx, snapshot.get(node_idx).unwrap().clone())
-}
-
-fn locate_value_no_freezing<T: Ord, P, Q, K>(
-    current_btree: K,
-    cmp: P,
-) -> (Guard<Arc<Vec<T>>>, usize)
-where
-    K: Borrow<ArcSwap<Vec<Arc<ArcSwap<Vec<T>>>>>>,
-    T: Borrow<Q>,
-    Q: Ord + ?Sized,
-    P: Fn(&Q) -> bool,
-{
-    let (_, node) = locate_node_no_freezing(current_btree, &cmp);
-    let position_within_node = node.partition_point(|item| cmp(item.borrow()));
-
-    (node, position_within_node)
-}
-
-fn resolve_range<T, R>(
-    snapshot: &FrozenBTree<T>,
-    range: R,
-) -> ((usize, usize, usize), (usize, usize, usize))
-where
-    R: RangeBounds<usize>,
-{
-    let mut global_front_idx: usize = 0;
-    let mut global_back_idx: usize = snapshot
-        .iter()
-        .map(|xs| xs.len())
-        .sum::<usize>()
-        .saturating_sub(1);
-
-    // Solving global indexes
-    let start = range.start_bound();
-    match start {
-        Bound::Included(bound) => {
-            global_front_idx = *bound;
-        }
-        Bound::Excluded(bound) => {
-            global_front_idx = *bound + 1;
-        }
-        Bound::Unbounded => (),
-    }
-
-    let end = range.end_bound();
-    match end {
-        Bound::Included(bound) => {
-            global_back_idx = *bound;
-        }
-        Bound::Excluded(bound) => {
-            global_back_idx = *bound - 1;
-        }
-        Bound::Unbounded => (),
-    }
-
-    let (front_node_idx, front_start_idx) = locate_ith(snapshot, global_front_idx);
-    let (back_node_idx, back_start_idx) = locate_ith(snapshot, global_back_idx);
-    (
-        (global_front_idx, front_node_idx, front_start_idx),
-        (global_back_idx, back_node_idx, back_start_idx),
-    )
-}
-
-fn range_idx<T, R>(btree: &BTreeSet<T>, range: R) -> Range<T>
-where
-    R: RangeBounds<usize>,
-    T: Ord + Clone,
-{
-    let snapshot = freeze(&btree.inner);
-
-    let (
-        (global_front_idx, front_node_idx, front_start_idx),
-        (global_back_idx, back_node_idx, back_start_idx),
-    ) = resolve_range(&snapshot, range);
-
-    let mut iter = Iter::new(Arc::new(snapshot));
-    iter.current_front_node_idx = front_node_idx;
-    iter.current_front_idx = global_front_idx;
-    iter.current_back_node_idx = back_node_idx;
-    iter.current_back_idx = global_back_idx + 1;
-
-    let front_iter = if front_node_idx < iter.guards.len() {
-        let front_node_size = iter.guards[front_node_idx].len();
-        if front_start_idx < front_node_size {
-            Some(unsafe {
-                std::mem::transmute(iter.guards[front_node_idx][front_start_idx..].iter())
-            })
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let back_iter = if back_node_idx < iter.guards.len() {
-        let back_node_size = iter.guards[back_node_idx].len();
-        if back_start_idx < back_node_size {
-            Some(unsafe {
-                std::mem::transmute(iter.guards[back_node_idx][..=back_start_idx].iter())
-            })
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    iter.current_front_iterator = front_iter;
-    iter.current_back_iterator = back_iter;
-
-    Range { iter }
-}
-
-fn rank<T, Q>(snapshot: &FrozenBTree<T>, value: &Q) -> usize
-where
-    Q: Ord + ?Sized,
-    T: Borrow<Q> + Ord,
-{
-    let (mut node_idx, _) = locate_node(snapshot, |item| item < value);
-    let (_node, position_within_node) = locate_value(snapshot, |item| item < value);
-    let mut node_sizes: Vec<usize> = snapshot.iter().map(|xs| xs.len()).collect();
-    node_sizes.insert(0, 0);
-    let mut acc = 0;
-    for x in &mut node_sizes {
-        acc += *x;
-        *x = acc;
-    }
-
-    if snapshot.get(node_idx).is_none() {
-        node_idx -= 1;
-    }
-
-    node_sizes[node_idx] + position_within_node
-}
-
-fn locate_ith<T>(snapshot: &FrozenBTree<T>, idx: usize) -> (usize, usize) {
-    let mut node_sizes: Vec<usize> = snapshot.iter().map(|xs| xs.len()).collect();
-    node_sizes.insert(0, 0);
-    let mut acc = 0;
-    for x in &mut node_sizes {
-        acc += *x;
-        *x = acc;
-    }
-
-    let mut node_idx = node_sizes.partition_point(|node_size_cumsum| *node_size_cumsum < idx);
-
-    //if snapshot.get(node_idx).is_none() {
-    node_idx = node_idx.saturating_sub(1);
-    //}
-
-    (node_idx, idx.saturating_sub(node_sizes[node_idx]))
-}
-
-impl<T: Ord + Clone> BTreeSet<T> {
-    /// Makes a new, empty, concurrent `BTreeSet`.
-    ///
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use indexset::concurrent::set::BTreeSet;
-    ///
-    /// let set: BTreeSet<i32> = BTreeSet::new();
-    /// ```
-    pub fn new() -> Self {
-        Self {
-            ..Default::default()
-        }
-    }
-    pub fn with_maximum_node_size(maximum_node_size: usize) -> Self {
-        Self {
-            node_capacity: maximum_node_size,
-            inner: ArcSwap::from_pointee(vec![Arc::new(ArcSwap::from_pointee(
-                Vec::with_capacity(maximum_node_size),
-            ))]),
-        }
-    }
-    pub(crate) fn get<P, Q, R, S>(&self, cmp: P, cmp2: R, mut f: S)
-    where
-        T: Borrow<Q>,
-        Q: Ord + ?Sized,
-        P: Fn(&Q) -> bool,
-        R: Fn(&T) -> bool,
-        S: FnMut(&T),
-    {
-        let (expected_node, expected_place) = locate_value(&freeze(&self.inner), cmp);
-        if let Some(candidate_value) = expected_node.get(expected_place) {
-            if (&cmp2)(candidate_value) {
-                f(candidate_value)
+                Err(())
             }
-        };
-    }
-    pub(crate) fn contains_cmp<P, Q, R>(&self, cmp: P, cmp2: R) -> bool
-    where
-        T: Borrow<Q>,
-        Q: Ord + ?Sized,
-        P: Fn(&Q) -> bool,
-        R: Fn(&T) -> bool,
-    {
-        let (expected_node, expected_place) = locate_value_no_freezing(&self.inner, cmp);
-        if let Some(candidate_value) = expected_node.get(expected_place) {
-            return (&cmp2)(candidate_value);
-        };
+            Operation::UpdateMax(node, old_max) => {
+                let guard = node.lock_arc();
+                let new_max = guard.last().unwrap();
+                if let Some(entry) = index.get(&old_max) {
+                    if Arc::ptr_eq(entry.value(), &node) {
+                        return Ok(match new_max.cmp(&old_max) {
+                            std::cmp::Ordering::Equal => None,
+                            std::cmp::Ordering::Greater | std::cmp::Ordering::Less => {
+                                index.remove(&old_max);
+                                index.insert(new_max.clone(), node.clone());
 
-        false
+                                None
+                            }
+                        })
+                    }
+                }
+
+                Err(())
+            }
+            Operation::MakeUnreachable(node, old_max) => {
+                let guard = node.lock_arc();
+                let new_max = guard.last();
+                if let Some(entry) = index.get(&old_max) {
+                    if Arc::ptr_eq(entry.value(), &node) {
+                        return match new_max.cmp(&Some(&old_max)) {
+                            std::cmp::Ordering::Less => {
+                                index.remove(&old_max);
+
+                                Ok(None)
+                            },
+                            _ => {
+                                Err(())
+                            }
+                        }
+                    }
+                }
+
+                Err(())
+            }
+        }
     }
-    /// Returns `true` if the set contains an element equal to the value.
-    ///
-    /// The value may be any borrowed form of the set's element type,
-    /// but the ordering on the borrowed form *must* match the
-    /// ordering on the element type.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use indexset::concurrent::set::BTreeSet;
-    ///
-    /// let set = BTreeSet::from_iter([1, 2, 3]);
-    /// assert_eq!(set.contains(&1), true);
-    /// assert_eq!(set.contains(&4), false);
-    /// ```
-    pub fn contains<Q>(&self, value: &Q) -> bool
-    where
-        T: Borrow<Q> + Ord,
-        Q: Ord + ?Sized,
-    {
-        self.contains_cmp(|item| item.borrow() < value, |item| item.borrow() == value)
+}
+
+pub struct Ref<T: Ord + Clone + Send> {
+    node_guard: ArcMutexGuard<RawMutex, Vec<T>>,
+    position: usize,
+}
+
+impl<T: Ord + Clone + Send> Ref<T> {
+    pub fn get(&self) -> &T {
+        self.node_guard.get(self.position).unwrap()
+    }
+}
+
+impl<T: Ord + Clone + Send> BTreeSet<T> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub(crate) fn put(&self, value: T) -> Option<T> {
+        loop {
+            let mut _global_guard = self.index_lock.read();
+            let target_node_entry = match self.index.lower_bound(std::ops::Bound::Included(&value))
+            {
+                Some(entry) => entry,
+                None => {
+                    if let Some(last) = self.index.back() {
+                        last
+                    } else {
+                        let mut first_vec = Vec::with_capacity(DEFAULT_INNER_SIZE);
+                        first_vec.push(value.clone());
+
+                        let first_node = Arc::new(Mutex::new(first_vec));
+
+                        drop(_global_guard);
+                        if let Ok(_) = self.index_lock.try_write() {
+                            self.index.insert(value.clone(), first_node);
+
+                            return Some(value);
+                        }
+
+                        continue;
+                    }
+                }
+            };
+
+            let mut node_guard = target_node_entry.value().lock_arc();
+            let mut operation = None;
+            if node_guard.len() < DEFAULT_INNER_SIZE {
+                let old_max = node_guard.last().cloned();
+                let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
+                if inserted {
+                    if node_guard.last().cloned() == old_max {
+                        return Some(value);
+                    }
+
+                    if old_max.is_some() {
+                        operation = Some(Operation::UpdateMax(
+                            target_node_entry.value().clone(),
+                            old_max.unwrap(),
+                        ))
+                    }
+                } else {
+                    return NodeLike::replace(&mut *node_guard, idx, value.clone());
+                }
+            } else {
+                operation = Some(Operation::Split(
+                    target_node_entry.value().clone(),
+                    target_node_entry.key().clone(),
+                    value.clone(),
+                ))
+            }
+
+            drop(_global_guard);
+            drop(node_guard);
+            let _global_guard = self.index_lock.write();
+
+            if let Ok(value) = operation.unwrap().commit(&self.index) {
+                return value;
+            }
+            drop(_global_guard);
+
+            continue;
+        }
+
     }
     /// Adds a value to the set.
     ///
@@ -448,136 +286,12 @@ impl<T: Ord + Clone> BTreeSet<T> {
     /// assert_eq!(set.len(), 1);
     /// ```
     pub fn insert(&self, value: T) -> bool {
-        let mut update = false;
+        if let None = self.put(value) {
+            return true
+        }
 
-        self.inner.rcu(|current_btree| {
-            let mut new_snapshot = freeze_nodes(current_btree);
-            let (node_idx, node_snapshot) = locate_node(&new_snapshot, |x| *x < value);
-            let mut node = (*node_snapshot).clone();
-            let local_value = value.clone();
-            if node.len() < self.node_capacity {
-                if NodeLike::insert(&mut node, local_value) {
-                    update = true;
-
-                    new_snapshot[node_idx] = Arc::new(node);
-                }
-
-                return unfreeze(new_snapshot.clone());
-            }
-
-            let mut new_node = node.halve();
-            if value >= new_node[0] {
-                if NodeLike::insert(&mut new_node, local_value) {
-                    update = true;
-                };
-            } else {
-                if NodeLike::insert(&mut node, local_value) {
-                    update = true;
-                }
-            }
-
-            new_snapshot[node_idx] = Arc::new(node);
-            new_snapshot.insert(node_idx + 1, Arc::new(new_node));
-
-            unfreeze(new_snapshot)
-        });
-
-        update
+        false
     }
-    /// Adds a value to the set, under the assumption that the current thread is the only one
-    /// that is currently inserting (no problems with readers though). Super unsafe, stay clear
-    /// unless you know what you are doing.
-    pub fn insert_spmc(&self, value: T) -> bool {
-        let mut update = false;
-
-        self.inner.rcu(|current_btree| {
-            let (node_idx, node_snapshot) = locate_node_unsafe(current_btree, |x| *x < value);
-            let local_value = value.clone();
-            let node = node_snapshot.load_full();
-            if node.len() < self.node_capacity {
-                if !NodeLike::contains(node.as_ref(), &value) {
-                    let mut node = (*node).clone();
-
-                    NodeLike::insert(&mut node, local_value);
-                    update = true;
-                    current_btree[node_idx].store(Arc::new(node));
-                };
-
-                return current_btree.clone();
-            }
-
-            let mut node = (*node).clone();
-            let mut new_node = node.halve();
-            if value >= new_node[0] {
-                if NodeLike::insert(&mut new_node, local_value) {
-                    update = true;
-                };
-            } else {
-                if NodeLike::insert(&mut node, local_value) {
-                    update = true;
-                }
-            }
-
-            let mut new_snapshot = (**current_btree).clone();
-            new_snapshot[node_idx].store(Arc::new(node));
-            new_snapshot.insert(node_idx + 1, Arc::new(ArcSwap::from_pointee(new_node)));
-
-            Arc::new(new_snapshot)
-        });
-
-        update
-    }
-    // pub(crate) fn delete_cmp<Q, P, R>(&self, cmp: P, cmp2: R) -> (bool, Option<T>)
-    // where
-    //     T: Borrow<Q>,
-    //     Q: Ord + ?Sized,
-    //     P: Fn(&Q) -> bool,
-    //     R: Fn(&T) -> bool,
-    // {
-    //     let mut update = false;
-    //     let mut deleted_value = None;
-
-    //     self.inner.rcu(|top_level| {
-    //         let mut new_snapshot = freeze_nodes(top_level);
-
-    //         let (node_idx, node_borrow) = locate_node(&new_snapshot, &cmp);
-
-    //         let position_within_node = node_borrow.partition_point(|x| cmp(x.borrow()));
-    //         if let Some(candidate_value) = node_borrow.get(position_within_node) {
-    //             if !cmp2(candidate_value) {
-    //                 return unfreeze(new_snapshot);
-    //             }
-    //         } else {
-    //             return unfreeze(new_snapshot);
-    //         }
-
-    //         update = true;
-
-    //         let mut node = (*node_borrow).clone();
-    //         deleted_value = Some(node.delete(position_within_node));
-
-    //         if node.len() == 0 {
-    //             if new_snapshot.len() > 1 {
-    //                 new_snapshot.remove(node_idx);
-
-    //                 return unfreeze(new_snapshot);
-    //             }
-    //         };
-
-    //         new_snapshot[node_idx] = Arc::new(node);
-
-    //         unfreeze(new_snapshot)
-    //     });
-
-    //     (update, deleted_value)
-    // }
-    // pub(crate) fn delete<Q>(&self, value: &Q) -> (bool, Option<T>)
-    // where
-    //     T: Borrow<Q> + Ord,
-    //     Q: Ord + ?Sized,
-    // {
-    //     self.delete_cmp(|x| x < value, |x| x.borrow() == value)
-    // }
     /// If the set contains an element equal to the value, removes it from the
     /// set and drops it. Returns whether such an element was present.
     ///
@@ -596,28 +310,489 @@ impl<T: Ord + Clone> BTreeSet<T> {
     /// assert_eq!(set.remove(&2), true);
     /// assert_eq!(set.remove(&2), false);
     /// ```
-    // pub fn remove<Q>(&self, value: &Q) -> bool
-    // where
-    //     T: Borrow<Q> + Ord,
-    //     Q: Ord + ?Sized,
-    // {
-    //     self.delete(value).0
-    // }
-    /// Returns the number of elements in the set.
+    pub fn remove<Q>(&self, value: &Q) -> Option<T>
+    where 
+        T: Borrow<Q>,
+        Q: Ord + ?Sized, 
+    {
+        loop {
+            let mut _global_guard = self.index_lock.read();
+            if let Some(target_node_entry) = self.index.lower_bound(std::ops::Bound::Included(&value)) {
+                let mut node_guard = target_node_entry.value().lock_arc();
+                let mut operation = None;
+                let old_max = node_guard.last().cloned();
+                let deleted = NodeLike::delete(&mut *node_guard, value);
+                if deleted.is_none() {
+                    return None;
+                }
+
+                if node_guard.len() > 0 {
+                    if old_max.as_ref() == node_guard.last() {
+                        return deleted
+                    }
+
+                    operation = Some(Operation::UpdateMax(target_node_entry.value().clone(), old_max.unwrap()))
+                } else {
+                    operation = Some(Operation::MakeUnreachable(target_node_entry.value().clone(), old_max.unwrap()))
+                }
+
+                drop(_global_guard);
+                drop(node_guard);
+                let _global_guard = self.index_lock.write();
+
+                if let Ok(_) = operation.unwrap().commit(&self.index) {
+                    return deleted;
+                }
+
+                drop(_global_guard);
+
+                continue;
+            }
+
+            break;            
+        }
+
+        return None
+    }
+    fn locate_node<Q>(&self, value: &Q) -> Option<Arc<Mutex<Vec<T>>>>
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        match self.index.lower_bound(std::ops::Bound::Included(&value)) {
+            Some(entry) => Some(entry.value().clone()),
+            None => self
+                .index
+                .back()
+                .map(|last| last.value().clone())
+                .or_else(|| self.index.front().map(|first| first.value().clone())),
+        }
+    }
+     /// Returns `true` if the set contains an element equal to the value.
+    ///
+    /// The value may be any borrowed form of the set's element type,
+    /// but the ordering on the borrowed form *must* match the
+    /// ordering on the element type.
     ///
     /// # Examples
     ///
     /// ```
     /// use indexset::concurrent::set::BTreeSet;
     ///
-    /// let mut v = BTreeSet::new();
-    /// assert_eq!(v.len(), 0);
-    /// v.insert(1);
-    /// assert_eq!(v.len(), 1);
+    /// let set = BTreeSet::from_iter([1, 2, 3]);
+    /// assert_eq!(set.contains(&1), true);
+    /// assert_eq!(set.contains(&4), false);
     /// ```
-    pub fn len(&self) -> usize {
-        self.inner.load().iter().map(|node| node.load().len()).sum()
+    pub fn contains<Q>(&self, value: &Q) -> bool
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        if let Some(node) = self.locate_node(value) {
+            return node.lock().contains(value);
+        }
+
+        false
     }
+    pub fn get<'a, Q>(&'a self, value: &'a Q) -> Option<Ref<T>>
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        if let Some(node) = self.locate_node(value) {
+            let node_guard = node.lock_arc();
+            let potential_position = node_guard.try_select(value);
+
+            if let Some(position) = potential_position {
+                return Some(Ref {
+                    node_guard,
+                    position,
+                });
+            }
+        }
+
+        None
+    }
+    pub fn len(&self) -> usize {
+        self.index
+            .iter()
+            .map(|node| node.value().lock().len())
+            .sum()
+    }
+}
+
+impl<T> FromIterator<T> for BTreeSet<T>
+where
+    T: Ord + Clone + Send,
+{
+    fn from_iter<K: IntoIterator<Item = T>>(iter: K) -> Self {
+        let btree = BTreeSet::new();
+        iter.into_iter().for_each(|item| {
+            btree.insert(item);
+        });
+
+        btree
+    }
+}
+
+impl<T, const N: usize> From<[T; N]> for BTreeSet<T>
+where
+    T: Ord + Clone + Send,
+{
+    fn from(value: [T; N]) -> Self {
+        let btree: BTreeSet<T> = Default::default();
+
+        value.into_iter().for_each(|item| {
+            btree.insert(item);
+        });
+
+        btree
+    }
+}
+
+pub struct Iter<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    _btree: &'a BTreeSet<T>,
+    current_front_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Vec<T>>>>>,
+    current_front_entry_guard: Option<ArcMutexGuard<RawMutex, Vec<T>>>,
+    current_front_entry_iter: Option<std::slice::Iter<'a, T>>,
+    current_back_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Vec<T>>>>>,
+    current_back_entry_guard: Option<ArcMutexGuard<RawMutex, Vec<T>>>,
+    current_back_entry_iter: Option<std::slice::Iter<'a, T>>,
+    last_front: Option<T>,
+    last_back: Option<T>,
+}
+
+impl<'a, T> Iter<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    pub fn new(btree: &'a BTreeSet<T>) -> Self {
+        let current_front_entry = btree.index.front();
+        let (current_front_entry_guard, current_front_entry_iter) =
+            if let Some(current_entry) = current_front_entry.clone() {
+                let guard = current_entry.value().lock_arc();
+                let iter = unsafe { std::mem::transmute(guard.iter()) };
+
+                (Some(guard), Some(iter))
+            } else {
+                (None, None)
+            };
+
+        let current_back_entry = btree.index.back();
+        let (current_back_entry_guard, current_back_entry_iter) =
+            if let Some(current_entry) = current_back_entry.clone() {
+                let mut guard = None;
+                let mut iter = None;
+
+                if let Some(front_entry) = current_front_entry.as_ref() {
+                    if !Arc::ptr_eq(current_entry.value(), front_entry.value()) {
+                        let new_guard = current_entry.value().lock_arc();
+                        iter = Some(unsafe { std::mem::transmute(new_guard.iter()) });
+                        guard = Some(new_guard);
+                    }
+                }
+
+                (guard, iter)
+            } else {
+                (None, None)
+            };
+
+        Self {
+            _btree: btree,
+            current_front_entry,
+            current_front_entry_guard,
+            current_front_entry_iter,
+            current_back_entry,
+            current_back_entry_guard,
+            current_back_entry_iter,
+            last_front: None,
+            last_back: None,
+        }
+    }
+}
+
+impl<'a, T> Iterator for Iter<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if (self.last_front.is_some() || self.last_back.is_some())
+            && self.last_front == self.last_back
+        {
+            return None;
+        }
+
+        loop {
+            if self.current_front_entry_iter.is_none() {
+                if let Some(next_entry) = self.current_front_entry.take().and_then(|e| e.next()) {
+                    if let Some(next_entry_equals_to_next_back_entry) = self
+                        .current_back_entry
+                        .as_ref()
+                        .and_then(|next_back_entry| Some(next_entry.key() == next_back_entry.key()))
+                    {
+                        if !next_entry_equals_to_next_back_entry {
+                            let guard = next_entry.value().lock_arc();
+                            let iter = unsafe { std::mem::transmute(guard.iter()) };
+                            self.current_front_entry = Some(next_entry);
+                            self.current_front_entry_guard = Some(guard);
+                            self.current_front_entry_iter = Some(iter);
+
+                            continue;
+                        }
+                    }
+                }
+
+                if let Some(next_value) =
+                    self.current_back_entry_iter.as_mut().and_then(|i| i.next())
+                {
+                    self.last_front = Some(next_value.clone());
+
+                    return Some(next_value);
+                }
+
+                return None;
+            }
+
+            if let Some(next_value) = self
+                .current_front_entry_iter
+                .as_mut()
+                .and_then(|i| i.next())
+            {
+                self.last_front = Some(next_value.clone());
+
+                return Some(next_value);
+            } else {
+                self.current_front_entry_iter.take();
+                self.current_front_entry_guard.take();
+
+                continue;
+            }
+        }
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for Iter<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if (self.last_front.is_some() || self.last_back.is_some())
+            && self.last_front == self.last_back
+        {
+            return None;
+        }
+
+        loop {
+            if self.current_back_entry_iter.is_none() {
+                if let Some(next_back_entry) = self.current_back_entry.take().and_then(|e| e.prev())
+                {
+                    if let Some(next_entry_equals_to_next_back_entry) = self
+                        .current_front_entry
+                        .as_ref()
+                        .and_then(|next_entry| Some(next_entry.key() == next_back_entry.key()))
+                    {
+                        if !next_entry_equals_to_next_back_entry {
+                            let guard = next_back_entry.value().lock_arc();
+                            let iter = unsafe { std::mem::transmute(guard.iter()) };
+
+                            self.current_back_entry = Some(next_back_entry);
+                            self.current_back_entry_guard = Some(guard);
+                            self.current_back_entry_iter = Some(iter);
+
+                            continue;
+                        }
+                    }
+                }
+
+                if let Some(next_value) = self
+                    .current_front_entry_iter
+                    .as_mut()
+                    .and_then(|i| i.next_back())
+                {
+                    self.last_back = Some(next_value.clone());
+
+                    return Some(next_value);
+                }
+
+                return None;
+            }
+
+            if let Some(next_value) = self
+                .current_back_entry_iter
+                .as_mut()
+                .and_then(|i| i.next_back())
+            {
+                self.last_back = Some(next_value.clone());
+
+                return Some(next_value);
+            } else {
+                self.current_back_entry_iter.take();
+                self.current_back_entry_guard.take();
+
+                continue;
+            }
+        }
+    }
+}
+
+impl<'a, T: Ord + Clone + Send> FusedIterator for Iter<'a, T> where T: Ord {}
+
+impl<'a, T> IntoIterator for &'a BTreeSet<T>
+where
+    T: Ord + Send + Clone,
+{
+    type Item = &'a T;
+
+    type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Iter::new(self)
+    }
+}
+
+pub struct Range<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    iter: Iter<'a, T>,
+}
+
+impl<'a, T> Range<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    pub fn new<Q, R>(btree: &'a BTreeSet<T>, range: R) -> Self
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+        R: RangeBounds<Q>,
+    {
+        let _global_guard = btree.index_lock.read();
+
+        let start_bound = range.start_bound();
+        let current_front_entry = btree
+            .index
+            .lower_bound(start_bound)
+            .or_else(|| btree.index.back());
+
+        let (current_front_entry_guard, mut current_front_entry_iter) = if let Some(current_entry) =
+            current_front_entry.clone()
+        {
+            let guard = current_entry.value().lock_arc();
+            let mut iter: std::slice::Iter<'_, T> = unsafe { std::mem::transmute(guard.iter()) };
+            let position = guard.rank(start_bound, true);
+            if position < guard.len() {
+                match start_bound {
+                    std::ops::Bound::Included(_) if position == 0 => {}
+                    _ => {
+                        iter.nth(position - 1);
+                    }
+                }
+            }
+
+            (Some(guard), Some(iter))
+        } else {
+            (None, None)
+        };
+
+        let end_bound = range.end_bound();
+        let current_back_entry = btree
+            .index
+            .lower_bound(end_bound)
+            .or_else(|| btree.index.back());
+
+        let (current_back_entry_guard, current_back_entry_iter) =
+            if let Some(current_entry) = current_back_entry.clone() {
+                let mut guard = None;
+                let mut iter = None;
+
+                if let Some(front_entry) = current_front_entry.as_ref() {
+                    if !Arc::ptr_eq(current_entry.value(), front_entry.value()) {
+                        let new_guard = current_entry.value().lock_arc();
+                        let mut iter_local: std::slice::Iter<'_, T> =
+                            unsafe { std::mem::transmute(new_guard.iter()) };
+                        let position = new_guard.rank(end_bound, false);
+                        if position < new_guard.len() {
+                            match end_bound {
+                                std::ops::Bound::Included(_) => {
+                                    if position < new_guard.len() {
+                                        iter_local.nth_back(new_guard.len().wrapping_sub(position).wrapping_sub(2));
+                                    }
+                                }
+                                _ => {
+                                    iter_local.nth_back(new_guard.len().wrapping_sub(position));
+                                }
+                            }
+                        }
+
+                        iter = Some(iter_local);
+                        guard = Some(new_guard);
+                    } else {
+                        if let Some((len, position)) = current_front_entry_guard
+                            .as_ref()
+                            .and_then(|g| Some((g.len(), g.rank(end_bound, false))))
+                        {
+                            if position < len {
+                                current_front_entry_iter
+                                    .as_mut()
+                                    .and_then(|i| i.nth_back(len.wrapping_sub(position).wrapping_sub(1)));
+                            }
+                        }
+                    }
+                }
+
+                (guard, iter)
+            } else {
+                (None, None)
+            };
+
+        Self {
+            iter: Iter {
+                _btree: btree,
+                current_front_entry,
+                current_front_entry_guard,
+                current_front_entry_iter,
+                current_back_entry,
+                current_back_entry_guard,
+                current_back_entry_iter,
+                last_front: None,
+                last_back: None,
+            },
+        }
+    }
+}
+
+impl<'a, T> Iterator for Range<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for Range<'a, T>
+where
+    T: Ord + Clone + Send + 'static,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.iter.next_back()
+    }
+}
+
+impl<'a, T> FusedIterator for Range<'a, T> where T: Ord + Clone + Send + 'static {}
+
+impl<'a, T> BTreeSet<T>
+where
+    T: Ord + Clone + Send + 'static,
+{
     /// Gets an iterator that visits the elements in the `BTreeSet` in ascending
     /// order.
     ///
@@ -646,726 +821,554 @@ impl<T: Ord + Clone> BTreeSet<T> {
     /// assert_eq!(set_iter.next(), Some(&3));
     /// assert_eq!(set_iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter<T> {
-        Iter::new(Arc::new(freeze(&self.inner)))
+    pub fn iter(&'a self) -> Iter<'a, T> {
+        Iter::new(self)
     }
-    /// Constructs a double-ended iterator over a sub-range of elements in the set.
-    /// The simplest way is to use the range syntax `min..max`, thus `range(min..max)` will
-    /// yield elements from min (inclusive) to max (exclusive).
-    /// The range may also be entered as `(Bound<T>, Bound<T>)`, so for example
-    /// `range((Excluded(4), Included(10)))` will yield a left-exclusive, right-inclusive
-    /// range from 4 to 10.
-    ///
-    /// # Panics
-    ///
-    /// Panics if range `start > end`.
-    /// Panics if range `start == end` and both bounds are `Excluded`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use indexset::concurrent::set::BTreeSet;
-    /// use std::ops::Bound::Included;
-    ///
-    /// let mut set = BTreeSet::new();
-    /// set.insert(3);
-    /// set.insert(5);
-    /// set.insert(8);
-    /// for &elem in set.range((Included(&4), Included(&8))) {
-    ///     println!("{elem}");
-    /// }
-    /// assert_eq!(Some(&5), set.range(4..).next());
-    /// ```
-    pub fn range<R, Q>(&self, range: R) -> Range<'_, T>
+
+    pub fn range<Q, R>(&'a self, range: R) -> Range<'a, T>
     where
-        Q: Ord + ?Sized,
         T: Borrow<Q>,
+        Q: Ord + ?Sized,
         R: RangeBounds<Q>,
     {
-        let snapshot = Arc::new(freeze(&self.inner));
-
-        let start_idx = match range.start_bound() {
-            Bound::Included(bound) => rank(&snapshot, bound),
-            Bound::Excluded(bound) => rank(&snapshot, bound) + 1,
-            Bound::Unbounded => 0,
-        };
-        let end_idx = match range.end_bound() {
-            Bound::Included(bound) => rank(&snapshot, bound),
-            Bound::Excluded(bound) => rank(&snapshot, bound).saturating_sub(1),
-            Bound::Unbounded => self.len().saturating_sub(1),
-        };
-
-        range_idx(&self, start_idx..=end_idx)
+        Range::new(self, range)
     }
+}
+
+impl<T> BTreeSet<T>
+where
+    T: Ord + Clone + Send + 'static,
+{
     pub fn remove_range<R, Q>(&self, range: R)
     where
         Q: Ord + ?Sized,
         T: Borrow<Q>,
         R: RangeBounds<Q>,
     {
-        self.inner.rcu(|top_level| {
-            let mut snapshot = freeze_nodes(top_level);
+        let _global_guard = self.index_lock.write();
 
-            let start_idx = match range.start_bound() {
-                Bound::Included(bound) => rank(&snapshot, bound),
-                Bound::Excluded(bound) => rank(&snapshot, bound) + 1,
-                Bound::Unbounded => 0,
-            };
-            let end_idx = match range.end_bound() {
-                Bound::Included(bound) => rank(&snapshot, bound),
-                Bound::Excluded(bound) => rank(&snapshot, bound).saturating_sub(1),
-                Bound::Unbounded => self.len().saturating_sub(1),
-            };
+        let start_bound = range.start_bound();
+        let end_bound = range.end_bound();
+        let potential_front_entry = self
+            .index
+            .lower_bound(start_bound);
 
-            let (
-                (_global_front_idx, front_node_idx, front_start_idx),
-                (_global_back_idx, back_node_idx, back_start_idx),
-            ) = resolve_range(&snapshot, start_idx..=end_idx);
+        let potential_back_entry = self
+            .index
+            .lower_bound(end_bound);
 
-            let mut empty_front = false;
-            let mut empty_back = false;
+        let (potential_front_entry_guard, potential_front_position) =
+            if let Some(front_entry) = potential_front_entry.clone() {
+                let mut front_position = 0;
 
-            let number_of_nodes_to_be_popped = back_node_idx - front_node_idx;
-            if number_of_nodes_to_be_popped == 0 {
-                let front_node_size = snapshot[front_node_idx].len();
-                if front_start_idx < front_node_size {
-                    let mut front_node_copy = (*snapshot[front_node_idx]).clone();
-                    front_node_copy.drain(front_start_idx..=back_start_idx);
-
-                    if front_node_copy.len() == 0 {
-                        empty_front = true
-                    }
-                    snapshot[front_node_idx] = Arc::new(front_node_copy);
+                let guard = front_entry.value().lock_arc();
+                let position = guard.rank(start_bound, true);
+                if position < guard.len() {
+                    front_position = position;
                 }
+
+                (Some(guard), front_position)
             } else {
-                if front_node_idx < snapshot.len() {
-                    let front_node_size = snapshot[front_node_idx].len();
-                    if front_start_idx < front_node_size {
-                        let mut front_node_copy = (*snapshot[front_node_idx]).clone();
-                        front_node_copy.drain(front_start_idx..);
-
-                        if front_node_copy.len() == 0 {
-                            empty_front = true;
-                        }
-                        snapshot[front_node_idx] = Arc::new(front_node_copy);
-                    }
-                };
-
-                if back_node_idx < snapshot.len() {
-                    let back_node_size = snapshot[back_node_idx].len();
-                    if back_start_idx < back_node_size {
-                        let mut back_node_copy = (*snapshot[back_node_idx]).clone();
-                        back_node_copy.drain(0..=back_start_idx);
-
-                        if back_node_copy.len() == 0 {
-                            empty_back = true;
-                        }
-                        snapshot[back_node_idx] = Arc::new(back_node_copy);
-                    }
-                };
-
-                if number_of_nodes_to_be_popped > 1 {
-                    for _ in 0..number_of_nodes_to_be_popped {
-                        snapshot.remove(front_node_idx + 1);
-                    }
-                }
-            }
-
-            if empty_front && snapshot.len() > 1 {
-                snapshot.remove(front_node_idx);
-            }
-
-            if empty_back && snapshot.len() > 1 {
-                if number_of_nodes_to_be_popped > 1 {
-                    if empty_front {
-                        snapshot.remove(front_node_idx);
-                    } else {
-                        snapshot.remove(front_node_idx + 1);
-                    }
-                } else {
-                    snapshot.remove(back_node_idx);
-                }
-            }
-
-            unfreeze(snapshot)
-        });
-    }
-}
-
-impl<T, const N: usize> From<[T; N]> for BTreeSet<T>
-where
-    T: Ord + Clone,
-{
-    fn from(value: [T; N]) -> Self {
-        let btree: BTreeSet<T> = Default::default();
-
-        value.into_iter().for_each(|item| {
-            btree.insert(item);
-        });
-
-        btree
-    }
-}
-
-impl<T> FromIterator<T> for BTreeSet<T>
-where
-    T: Ord + Clone,
-{
-    fn from_iter<K: IntoIterator<Item = T>>(iter: K) -> Self {
-        let btree = BTreeSet::new();
-        iter.into_iter().for_each(|item| {
-            btree.insert(item);
-        });
-
-        btree
-    }
-}
-
-/// An iterator over the items of a `BTreeSet`.
-///
-/// This `struct` is created by the [`iter`] method on [`crate::concurrent::set::BTreeSet`].
-/// See its documentation for more.
-///
-/// [`iter`]: crate::concurrent::set::BTreeSet::iter
-pub struct Iter<'a, T: 'a>
-where
-    T: Ord + 'a,
-{
-    guards: Arc<Vec<Arc<Vec<T>>>>,
-    current_front_node_idx: usize,
-    current_front_idx: usize,
-    current_back_node_idx: usize,
-    current_back_idx: usize,
-    current_front_iterator: Option<std::slice::Iter<'a, T>>,
-    current_back_iterator: Option<std::slice::Iter<'a, T>>,
-}
-
-impl<'a, T> Iter<'a, T>
-where
-    T: Ord,
-{
-    pub fn new(guards: Arc<Vec<Arc<Vec<T>>>>) -> Self {
-        let node_count = guards.len();
-        let front_iter = if node_count > 0 {
-            Some(unsafe { std::mem::transmute(guards[0].iter()) })
-        } else {
-            None
-        };
-        let back_iter = if node_count > 0 {
-            Some(unsafe { std::mem::transmute(guards[node_count - 1].iter()) })
-        } else {
-            None
-        };
-
-        let element_count: usize = guards.iter().map(|xs| xs.len()).sum();
-
-        Self {
-            guards,
-            current_front_node_idx: 0,
-            current_front_idx: 0,
-            current_back_node_idx: node_count.saturating_sub(1),
-            current_back_idx: element_count,
-            current_front_iterator: front_iter,
-            current_back_iterator: back_iter,
-        }
-    }
-}
-
-impl<'a, T> Iterator for Iter<'a, T>
-where
-    T: Ord + Clone,
-{
-    type Item = &'a T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.current_front_idx == self.current_back_idx {
-            return None;
-        }
-
-        if let Some(value) = self.current_front_iterator.as_mut().and_then(|i| i.next()) {
-            self.current_front_idx += 1;
-
-            Some(value)
-        } else {
-            self.current_front_node_idx += 1;
-
-            if self.current_front_node_idx >= self.guards.len() {
-                return None;
-            }
-
-            self.current_front_iterator = Some(unsafe {
-                std::mem::transmute(self.guards[self.current_front_node_idx].iter())
-            });
-
-            self.next()
-        }
-    }
-}
-
-impl<'a, T> DoubleEndedIterator for Iter<'a, T>
-where
-    T: Ord + Clone,
-{
-    fn next_back(&mut self) -> Option<Self::Item> {
-        if self.current_front_idx == self.current_back_idx {
-            return None;
-        }
-        if let Some(value) = self
-            .current_back_iterator
-            .as_mut()
-            .and_then(|i| i.next_back())
-        {
-            self.current_back_idx -= 1;
-            Some(value)
-        } else {
-            if self.current_back_node_idx == 0 {
-                return None;
+                (None, 0)
             };
-            self.current_back_node_idx -= 1;
-            self.current_back_iterator = Some(unsafe {
-                std::mem::transmute(self.guards[self.current_back_node_idx].iter())
-            });
 
-            self.next_back()
+        let (potential_back_entry_guard, potential_back_position) =
+            if let Some(back_entry) = potential_back_entry.clone() {
+                let mut back_position = 0;
+                let mut guard = None;
+
+                if let Some(front_entry) = potential_front_entry.as_ref() {
+                    if !Arc::ptr_eq(back_entry.value(), front_entry.value()) {
+                        let new_guard = back_entry.value().lock_arc();
+                        let position = new_guard.rank(end_bound, true);
+                        back_position =  {
+                            if position > 0 {
+                                position - 1
+                            } else {
+                                new_guard.len()
+                            }
+                        };
+
+                        guard = Some(new_guard);
+                    } else {
+                        if let Some((len, position)) = potential_front_entry_guard
+                            .as_ref()
+                            .and_then(|g| Some((g.len(), g.rank(end_bound, true))))
+                        {
+                            back_position = {
+                                if position > 0 {
+                                    position - 1
+                                } else {
+                                    len
+                                }
+                            }
+                        }
+                    }
+                }
+
+                (guard, back_position)
+            } else {
+                (None, 0)
+            };
+
+        // If there is a front entry
+        if let Some(mut front_entry_guard) = potential_front_entry_guard {
+            let front_entry = potential_front_entry.unwrap();
+            // But no back entry
+            if let None = potential_back_entry_guard {
+                // Then we drain the front entry
+                let adjusted_back_position = { if potential_front_position > potential_back_position { front_entry_guard.len() } else { potential_back_position } };
+                front_entry_guard.drain(potential_front_position..adjusted_back_position);
+                // Clone the mutex
+                let old_entry_value = front_entry.value().clone();
+                // Remove the entry
+                front_entry.remove();
+                // If it is empty, that's it
+                if front_entry_guard.is_empty() {
+                    return;
+                }
+                // Otherwise we insert it again with a new max
+                let new_max = front_entry_guard.last().unwrap().clone();
+                self.index.insert(new_max, old_entry_value);
+
+                return;
+            } else if let Some(mut back_entry_guard) = potential_back_entry_guard {
+                let back_entry = potential_back_entry.unwrap();
+                // Otherwise we remove every single node between them
+                loop {
+                    if let Some(next_entry) = front_entry.next() {
+                        if next_entry.key() == back_entry.key() {
+                            break;
+                        }
+
+                        next_entry.remove();
+                    } else {
+                        break;
+                    }
+                }
+
+                // And then trim the front from the left
+                front_entry.remove();
+                front_entry_guard.drain(potential_front_position..);
+                if !front_entry_guard.is_empty() {
+                    let new_front_max = front_entry_guard.last().unwrap().clone();
+                    self.index
+                        .insert(new_front_max, front_entry.value().clone());
+                }
+
+                // The back from the right
+                back_entry.remove();
+                back_entry_guard.drain(..potential_back_position);
+                if !back_entry_guard.is_empty() {
+                    let new_back_max = back_entry_guard.last().unwrap().clone();
+                    self.index.insert(new_back_max, back_entry.value().clone());
+                }
+
+                // And that's it
+                return;
+            }
         }
     }
 }
 
-impl<'a, T> FusedIterator for Iter<'a, T> where T: Ord + Clone {}
+#[cfg(test)]
+mod tests {
+    use crate::concurrent2::set::{BTreeSet, DEFAULT_INNER_SIZE};
+    use rand::Rng;
+    use std::collections::HashSet;
+    use std::ops::Bound::Included;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
 
-impl<'a, T> IntoIterator for &'a BTreeSet<T>
-where
-    T: Ord + Clone,
-{
-    type Item = &'a T;
+    #[test]
+    fn test_concurrent_insert() {
+        let set = Arc::new(BTreeSet::<i32>::new());
+        let num_threads = 128;
+        let operations_per_thread = 10000;
+        let mut handles = vec![];
 
-    type IntoIter = Iter<'a, T>;
+        let test_data: Vec<Vec<(i32, i32)>> = (0..num_threads)
+            .map(|_| {
+                let mut rng = rand::thread_rng();
+                (0..operations_per_thread)
+                    .map(|_| {
+                        let value = rng.gen_range(0..100000);
+                        let operation = rng.gen_range(0..2);
+                        (operation, value)
+                    })
+                    .collect()
+            })
+            .collect();
 
-    fn into_iter(self) -> Self::IntoIter {
-        let guards = Arc::new(freeze(&self.inner));
+        let expected_values = Arc::new(Mutex::new(HashSet::new()));
 
-        Iter::new(guards)
+        for thread_idx in 0..num_threads {
+            let set_clone = Arc::clone(&set);
+            let expected_values = Arc::clone(&expected_values);
+            let thread_data = test_data[thread_idx].clone();
+
+            let handle = thread::spawn(move || {
+                for (operation, value) in thread_data {
+                    if operation == 0 {
+                        let _a = set_clone.insert(value);
+                        expected_values.lock().unwrap().insert(value);
+                    }
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let expected_values = expected_values.lock().unwrap();
+        assert_eq!(set.len(), expected_values.len());
+
+        for value in expected_values.iter() {
+            assert!(set.contains(value));
+        }
     }
-}
 
-/// An iterator over a sub-range of items in a `BTreeSet`.
-///
-/// This `struct` is created by the [`range`] method on [`crate::concurrent::set::BTreeSet`].
-/// See its documentation for more.
-///
-/// [`range`]: crate::concurrent::set::BTreeSet::range
-pub struct Range<'a, T>
-where
-    T: Ord + Clone,
-{
-    iter: Iter<'a, T>,
-}
+    #[test]
+    fn test_insert_st() {
+        let set = Arc::new(BTreeSet::<i32>::new());
+        let mut rng = rand::thread_rng();
 
-impl<'a, T> Iterator for Range<'a, T>
-where
-    T: Ord + Clone,
-{
-    type Item = &'a T;
+        let n = 2048 * 100;
+        let range = 0..n;
+        let mut inserted_values = HashSet::new();
+        for _ in range {
+            let value = rng.gen_range(0..n);
+            if inserted_values.insert(value) {
+                set.insert(value);
+            }
+        }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next()
+        assert_eq!(
+            set.len(),
+            inserted_values.len(),
+            "Length did not match, missing: {:?}",
+            set.index
+                .iter()
+                .flat_map(|entry| entry.value().lock().iter().cloned().collect::<Vec<_>>())
+                .collect::<HashSet<_>>()
+                .symmetric_difference(&inserted_values)
+                .collect::<Vec<_>>()
+        );
+        for i in inserted_values {
+            assert!(
+                set.contains(&i),
+                "Did not find: {} with index: {:?}",
+                i,
+                set.index.iter().collect::<Vec<_>>(),
+            );
+        }
     }
-}
 
-impl<'a, T> DoubleEndedIterator for Range<'a, T>
-where
-    T: Ord + Clone,
-{
-    fn next_back(&mut self) -> Option<Self::Item> {
-        self.iter.next_back()
+    #[test]
+    fn test_single_element() {
+        let set = BTreeSet::new();
+        set.insert(1);
+        let mut iter = set.into_iter();
+        assert_eq!(iter.next(), Some(&1));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
     }
+
+    #[test]
+    fn test_multiple_elements() {
+        let set = BTreeSet::new();
+        set.insert(1);
+        set.insert(2);
+        set.insert(3);
+        let mut iter = set.into_iter();
+        assert_eq!(iter.next(), Some(&1));
+        assert_eq!(iter.next_back(), Some(&3));
+        assert_eq!(iter.next(), Some(&2));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn test_bidirectional_iteration() {
+        let set = BTreeSet::new();
+        for i in 1..=100000 {
+            set.insert(i);
+        }
+        let mut iter = set.into_iter();
+        for i in 1..=50000 {
+            assert_eq!(
+                iter.next(),
+                Some(&i),
+                "Tree: {:?}",
+                set.index.iter().collect::<Vec<_>>()
+            );
+            assert_eq!(iter.next_back(), Some(&(100001 - i)));
+        }
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn test_fused_iterator() {
+        let set = BTreeSet::new();
+        set.insert(1);
+        let mut iter = set.into_iter();
+        assert_eq!(iter.next(), Some(&1));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_out_of_bounds_range() {
+        let btree: BTreeSet<usize> = BTreeSet::from_iter(0..10);
+        assert_eq!(btree.range((Included(5), Included(10))).count(), 5);
+        assert_eq!(btree.range((Included(5), Included(11))).count(), 5);
+        assert_eq!(
+            btree
+                .range((Included(5), Included(10 + DEFAULT_INNER_SIZE)))
+                .count(),
+            5
+        );
+        assert_eq!(btree.range((Included(0), Included(11))).count(), 10);
+    }
+
+    #[test]
+    fn test_iterating_over_blocks() {
+        let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 10)).into_iter());
+        assert_eq!(btree.iter().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
+        let start = btree
+                .range(0..DEFAULT_INNER_SIZE)
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>();
+
+        assert_eq!(
+            start,
+            (0..DEFAULT_INNER_SIZE).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            btree
+                .range(0..=DEFAULT_INNER_SIZE)
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            (0..=DEFAULT_INNER_SIZE).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE + 1).count(),
+            (0..=DEFAULT_INNER_SIZE + 1).count()
+        );
+        assert_eq!(
+            btree.iter().rev().count(),
+            (0..(DEFAULT_INNER_SIZE + 10)).count()
+        );
+        assert_eq!(
+            btree.range(0..DEFAULT_INNER_SIZE).rev().count(),
+            (0..DEFAULT_INNER_SIZE).count()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE).rev().count(),
+            (0..=DEFAULT_INNER_SIZE).count()
+        );
+        assert_eq!(
+            btree.range(0..=DEFAULT_INNER_SIZE + 1).rev().count(),
+            (0..=DEFAULT_INNER_SIZE + 1).count()
+        );
+    }
+
+    #[test]
+    fn test_empty_set() {
+        let btree: BTreeSet<usize> = BTreeSet::new();
+        assert_eq!(btree.iter().count(), 0);
+        assert_eq!(btree.range(0..0).count(), 0);
+        assert_eq!(btree.range(0..).count(), 0);
+        assert_eq!(btree.range(..0).count(), 0);
+        assert_eq!(btree.range(..).count(), 0);
+        assert_eq!(btree.range(0..=0).count(), 0);
+        assert_eq!(btree.range(..1).count(), 0);
+
+        assert_eq!(btree.iter().rev().count(), 0);
+        assert_eq!(btree.range(0..0).rev().count(), 0);
+        assert_eq!(btree.range(..).rev().count(), 0);
+        assert_eq!(btree.range(..1).rev().count(), 0);
+
+        assert_eq!(btree.range(..DEFAULT_INNER_SIZE).count(), 0);
+        assert_eq!(
+            btree
+                .range(DEFAULT_INNER_SIZE..DEFAULT_INNER_SIZE * 2)
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn test_remove_range() {
+        // We have DEFAULT_INNER_SIZE * 2 elements
+        let btree = BTreeSet::from_iter(0..(DEFAULT_INNER_SIZE * 2));
+        let expected_len = DEFAULT_INNER_SIZE * 2;
+        let actual_len = btree.len();
+        assert_eq!(expected_len, actual_len);
+
+        // We remove 10 elements from the beginning, 5 included up to 15 excluded.
+        btree.remove_range(5..15);
+        let expected_len = expected_len - 10;
+        let actual_len = btree.len();
+        assert_eq!(expected_len, actual_len);
+
+        // Then take more 10 from the middle
+        btree.remove_range(DEFAULT_INNER_SIZE - 5..DEFAULT_INNER_SIZE + 5);
+        let expected_len = expected_len - 10;
+        let actual_len = btree.len();
+        assert_eq!(expected_len, actual_len);
+
+        // And then remove 512
+        btree.remove_range(..DEFAULT_INNER_SIZE / 2);
+        // We add +10 here because we are removing everything up to 512, but we already removed 5..15.
+        let expected_len = expected_len - (DEFAULT_INNER_SIZE / 2) + 10;
+        let actual_len = btree.len();
+        assert_eq!(expected_len, actual_len);
+
+        // And then more (512 * 3) / 2
+        let from = (DEFAULT_INNER_SIZE * 3) / 2;
+        btree.remove_range(from..);
+        let expected_len =
+            expected_len - (DEFAULT_INNER_SIZE) - 5 + 10;
+        let actual_len = btree.len();
+        assert_eq!(expected_len, actual_len);
+
+        btree.remove_range(..);
+        assert_eq!(btree.len(), 0);
+
+        for i in 0..(DEFAULT_INNER_SIZE * 2) {
+            btree.insert(i);
+        }
+        assert_eq!(btree.len(), DEFAULT_INNER_SIZE * 2);
+
+        btree.remove_range((std::ops::Bound::Excluded(5), std::ops::Bound::Excluded(15)));
+        assert_eq!(
+            btree.range(0..DEFAULT_INNER_SIZE).count(),
+            DEFAULT_INNER_SIZE - 9
+        );
+
+        btree.remove_range((
+            std::ops::Bound::Included(DEFAULT_INNER_SIZE),
+            std::ops::Bound::Excluded(DEFAULT_INNER_SIZE + 10),
+        ));
+        assert_eq!(
+            btree.range(0..DEFAULT_INNER_SIZE * 2).count(),
+            DEFAULT_INNER_SIZE * 2 - 19
+        );
+
+        let original_count = btree.len();
+        btree.remove_range(DEFAULT_INNER_SIZE * 3..DEFAULT_INNER_SIZE * 4);
+        assert_eq!(btree.len(), original_count);
+
+        btree.remove_range(DEFAULT_INNER_SIZE * 2 - 5..DEFAULT_INNER_SIZE * 3);
+        assert_eq!(btree.len(), original_count - 5);
+    }
+
+    #[test]
+    fn test_remove_single_element() {
+        let set = BTreeSet::<i32>::new();
+        set.insert(5);
+        assert!(set.contains(&5));
+        assert!(set.remove(&5).is_some());
+        assert!(!set.contains(&5));
+        assert!(!set.remove(&5).is_some());
+    }
+
+    #[test]
+    fn test_remove_multiple_elements() {
+        let set = BTreeSet::<i32>::new();
+        for i in 0..2048 {
+            set.insert(i);
+        }
+        for i in 0..2048 {
+            assert!(set.remove(&i).is_some());
+            assert!(!set.contains(&i));
+        }
+        assert_eq!(set.len(), 0);
+    }
+
+    #[test]
+    fn test_remove_non_existent() {
+        let set = BTreeSet::<i32>::new();
+        set.insert(5);
+        assert!(!set.remove(&10).is_some());
+        assert!(set.contains(&5));
+    }
+    #[test]
+    fn test_remove_stress() {
+        let set = Arc::new(BTreeSet::<i32>::new());
+        const NUM_ELEMENTS: i32 = 10000;
+
+        for i in 0..NUM_ELEMENTS {
+            set.insert(i);
+        }
+        assert_eq!(
+            set.len(),
+            NUM_ELEMENTS as usize,
+            "Incorrect size after insertion"
+        );
+
+        let num_threads = 8;
+        let elements_per_thread = NUM_ELEMENTS / num_threads;
+        let handles: Vec<_> = (0..num_threads)
+            .map(|t| {
+                let set = Arc::clone(&set);
+                thread::spawn(move || {
+                    for i in (t * elements_per_thread)..((t + 1) * elements_per_thread) {
+                        if i % 2 == 1 {
+                            assert!(set.remove(&i).is_some(), "Failed to remove {}", i);
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(
+            set.len(),
+            NUM_ELEMENTS as usize / 2,
+            "Incorrect size after removal"
+        );
+
+        for i in 0..NUM_ELEMENTS {
+            if i % 2 == 0 {
+                assert!(set.contains(&i), "Even number {} should be in the set", i);
+            } else {
+                assert!(
+                    !set.contains(&i),
+                    "Odd number {} should not be in the set",
+                    i
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_remove_all_elements() {
+        let set = BTreeSet::<i32>::new();
+        let n = 2048;
+
+        for i in 0..n {
+            set.insert(i);
+        }
+
+        for i in 0..n {
+            assert!(set.remove(&i).is_some(), "Failed to remove {}", i);
+        }
+
+        assert_eq!(set.len(), 0, "Set should be empty");
+
+        for i in 0..n {
+            assert!(!set.contains(&i), "Element {} should not be in the set", i);
+        }
+    }
+
 }
-
-impl<'a, T> FusedIterator for Range<'a, T> where T: Ord + Clone {}
-
-// #[cfg(test)]
-// mod tests {
-//     use crate::concurrent::set::BTreeSet;
-//     use crate::core::constants::DEFAULT_INNER_SIZE;
-//     use rand::Rng;
-//     use std::collections::Bound::{Excluded, Included};
-//     use std::collections::HashSet;
-//     use std::sync::Arc;
-//     use std::thread;
-
-//     #[test]
-//     fn test_concurrent_insert() {
-//         let set = Arc::new(BTreeSet::<i32>::new());
-//         let num_threads = 8;
-//         let operations_per_thread = 1000;
-
-//         let mut handles = vec![];
-//         let mut thread_local_data = Arc::new(vec![]);
-//         let mut expected_len = HashSet::new();
-//         for _ in 0usize..num_threads {
-//             let mut data = vec![];
-//             let mut rng = rand::thread_rng();
-//             for _ in 0..operations_per_thread {
-//                 let value = rng.gen_range(0..10000);
-//                 let operation = rng.gen_range(0..2);
-//                 if operation == 0 {
-//                     expected_len.insert(value);
-//                 };
-
-//                 data.push((operation, value))
-//             }
-
-//             let mut new_tld = (*thread_local_data).clone();
-//             new_tld.push(data);
-
-//             thread_local_data = Arc::new(new_tld)
-//         }
-
-//         for thread_idx in 0usize..num_threads {
-//             let set_clone = Arc::clone(&set);
-//             let local_tld = thread_local_data.clone();
-//             let handle = thread::spawn(move || {
-//                 for op_idx in 0usize..operations_per_thread {
-//                     let (operation, value) = &local_tld[thread_idx][op_idx];
-
-//                     if *operation == 0 {
-//                         set_clone.insert(value.clone());
-//                     }
-//                 }
-//             });
-//             handles.push(handle);
-//         }
-
-//         for handle in handles {
-//             handle.join().unwrap();
-//         }
-
-//         assert_eq!(set.len(), expected_len.len());
-
-//         for thread_idx in 0usize..num_threads {
-//             for op_idx in 0usize..operations_per_thread {
-//                 let (op, value) = thread_local_data[thread_idx][op_idx];
-//                 if op == 0 {
-//                     assert!(set.contains(&value))
-//                 }
-//             }
-//         }
-//     }
-//     #[test]
-//     fn test_insert_spmc() {
-//         let set = Arc::new(BTreeSet::<i32>::new());
-//         let range = (0..100_000);
-//         for i in range {
-//             set.insert_spmc(i);
-//         }
-
-//         assert_eq!(set.len(), 100_000);
-//         for i in 0..100_000 {
-//             set.contains(&i);
-//         }
-//     }
-
-//     #[test]
-//     fn test_remove_single_element() {
-//         let set = BTreeSet::<i32>::new();
-//         set.insert(5);
-//         assert!(set.contains(&5));
-//         assert!(set.remove(&5));
-//         assert!(!set.contains(&5));
-//         assert!(!set.remove(&5));
-//     }
-
-//     #[test]
-//     fn test_remove_multiple_elements() {
-//         let set = BTreeSet::<i32>::new();
-//         for i in 0..100 {
-//             set.insert(i);
-//         }
-//         for i in 0..100 {
-//             assert!(set.remove(&i));
-//             assert!(!set.contains(&i));
-//         }
-//         assert_eq!(set.len(), 0);
-//     }
-
-//     #[test]
-//     fn test_remove_non_existent() {
-//         let set = BTreeSet::<i32>::new();
-//         set.insert(5);
-//         assert!(!set.remove(&10));
-//         assert!(set.contains(&5));
-//     }
-//     #[test]
-//     fn test_remove_stress() {
-//         let set = Arc::new(BTreeSet::<i32>::new());
-//         const NUM_ELEMENTS: i32 = 10000;
-
-//         for i in 0..NUM_ELEMENTS {
-//             assert!(set.insert(i), "Failed to insert {}", i);
-//         }
-//         assert_eq!(
-//             set.len(),
-//             NUM_ELEMENTS as usize,
-//             "Incorrect size after insertion"
-//         );
-
-//         let num_threads = 8;
-//         let elements_per_thread = NUM_ELEMENTS / num_threads;
-//         let handles: Vec<_> = (0..num_threads)
-//             .map(|t| {
-//                 let set = Arc::clone(&set);
-//                 thread::spawn(move || {
-//                     for i in (t * elements_per_thread)..((t + 1) * elements_per_thread) {
-//                         if i % 2 == 1 {
-//                             assert!(set.remove(&i), "Failed to remove {}", i);
-//                         }
-//                     }
-//                 })
-//             })
-//             .collect();
-
-//         for handle in handles {
-//             handle.join().unwrap();
-//         }
-
-//         assert_eq!(
-//             set.len(),
-//             NUM_ELEMENTS as usize / 2,
-//             "Incorrect size after removal"
-//         );
-
-//         for i in 0..NUM_ELEMENTS {
-//             if i % 2 == 0 {
-//                 assert!(set.contains(&i), "Even number {} should be in the set", i);
-//             } else {
-//                 assert!(
-//                     !set.contains(&i),
-//                     "Odd number {} should not be in the set",
-//                     i
-//                 );
-//             }
-//         }
-//     }
-
-//     #[test]
-//     fn test_remove_all_elements() {
-//         let set = BTreeSet::<i32>::new();
-//         let n = 1000;
-
-//         for i in 0..n {
-//             set.insert(i);
-//         }
-
-//         for i in 0..n {
-//             assert!(set.remove(&i), "Failed to remove {}", i);
-//         }
-
-//         assert_eq!(set.len(), 0, "Set should be empty");
-
-//         for i in 0..n {
-//             assert!(!set.contains(&i), "Element {} should not be in the set", i);
-//         }
-//     }
-
-//     #[test]
-//     fn test_single_element() {
-//         let set = BTreeSet::new();
-//         set.insert(1);
-//         let mut iter = set.into_iter();
-//         assert_eq!(iter.next(), Some(&1));
-//         assert_eq!(iter.next(), None);
-//         assert_eq!(iter.next_back(), None);
-//     }
-
-//     #[test]
-//     fn test_multiple_elements() {
-//         let set = BTreeSet::new();
-//         set.insert(1);
-//         set.insert(2);
-//         set.insert(3);
-//         let mut iter = set.into_iter();
-//         assert_eq!(iter.next(), Some(&1));
-//         assert_eq!(iter.next_back(), Some(&3));
-//         assert_eq!(iter.next(), Some(&2));
-//         assert_eq!(iter.next(), None);
-//         assert_eq!(iter.next_back(), None);
-//     }
-
-//     #[test]
-//     fn test_bidirectional_iteration() {
-//         let set = BTreeSet::new();
-//         for i in 1..=100 {
-//             set.insert(i);
-//         }
-//         let mut iter = set.into_iter();
-//         for i in 1..=50 {
-//             assert_eq!(iter.next(), Some(&i));
-//             assert_eq!(iter.next_back(), Some(&(101 - i)));
-//         }
-//         assert_eq!(iter.next(), None);
-//         assert_eq!(iter.next_back(), None);
-//     }
-
-//     #[test]
-//     fn test_fused_iterator() {
-//         let set = BTreeSet::new();
-//         set.insert(1);
-//         let mut iter = set.into_iter();
-//         assert_eq!(iter.next(), Some(&1));
-//         assert_eq!(iter.next(), None);
-//         assert_eq!(iter.next(), None);
-//     }
-
-//     #[test]
-//     fn test_large_set() {
-//         let set = BTreeSet::new();
-//         for i in 0..10000 {
-//             set.insert(i);
-//         }
-//         assert_eq!(set.into_iter().count(), 10000);
-//     }
-
-//     #[test]
-//     fn test_iterator_after_modifications() {
-//         let set = BTreeSet::new();
-//         for i in 0..100 {
-//             set.insert(i);
-//         }
-//         let mut iter = set.into_iter();
-//         assert_eq!(iter.next(), Some(&0));
-//         set.insert(100); // This shouldn't affect the existing iterator
-//         for i in 1..100 {
-//             assert_eq!(iter.next(), Some(&i));
-//         }
-//         assert_eq!(iter.next(), None); // The new 100 shouldn't be visible
-//     }
-
-//     #[test]
-//     fn test_out_of_bounds_range() {
-//         let btree: BTreeSet<usize> = BTreeSet::from_iter(0..10);
-//         assert_eq!(btree.range((Included(5), Included(10))).count(), 5);
-//         assert_eq!(btree.range((Included(5), Included(11))).count(), 5);
-//         assert_eq!(
-//             btree
-//                 .range((Included(5), Included(10 + DEFAULT_INNER_SIZE)))
-//                 .count(),
-//             5
-//         );
-//         assert_eq!(btree.range((Included(0), Included(11))).count(), 10);
-//     }
-
-//     #[test]
-//     fn test_iterating_over_blocks() {
-//         let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 10)).into_iter());
-//         assert_eq!(btree.iter().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
-//         assert_eq!(
-//             btree.range(0..DEFAULT_INNER_SIZE).count(),
-//             (0..DEFAULT_INNER_SIZE).count()
-//         );
-//         assert_eq!(
-//             btree.range(0..=DEFAULT_INNER_SIZE).count(),
-//             (0..=DEFAULT_INNER_SIZE).count()
-//         );
-//         assert_eq!(
-//             btree.range(0..=DEFAULT_INNER_SIZE + 1).count(),
-//             (0..=DEFAULT_INNER_SIZE + 1).count()
-//         );
-
-//         assert_eq!(
-//             btree.iter().rev().count(),
-//             (0..(DEFAULT_INNER_SIZE + 10)).count()
-//         );
-//         assert_eq!(
-//             btree.range(0..DEFAULT_INNER_SIZE).rev().count(),
-//             (0..DEFAULT_INNER_SIZE).count()
-//         );
-//         assert_eq!(
-//             btree.range(0..=DEFAULT_INNER_SIZE).rev().count(),
-//             (0..=DEFAULT_INNER_SIZE).count()
-//         );
-//         assert_eq!(
-//             btree.range(0..=DEFAULT_INNER_SIZE + 1).rev().count(),
-//             (0..=DEFAULT_INNER_SIZE + 1).count()
-//         );
-//     }
-
-//     #[test]
-//     fn test_empty_set() {
-//         let btree: BTreeSet<usize> = BTreeSet::new();
-//         assert_eq!(btree.iter().count(), 0);
-//         assert_eq!(btree.range(0..0).count(), 0);
-//         assert_eq!(btree.range(0..).count(), 0);
-//         assert_eq!(btree.range(..0).count(), 0);
-//         assert_eq!(btree.range(..).count(), 0);
-//         assert_eq!(btree.range(0..=0).count(), 0);
-//         assert_eq!(btree.range(..1).count(), 0);
-
-//         assert_eq!(btree.iter().rev().count(), 0);
-//         assert_eq!(btree.range(0..0).rev().count(), 0);
-//         assert_eq!(btree.range(..).rev().count(), 0);
-//         assert_eq!(btree.range(..1).rev().count(), 0);
-
-//         assert_eq!(btree.range(..DEFAULT_INNER_SIZE).count(), 0);
-//         assert_eq!(
-//             btree
-//                 .range(DEFAULT_INNER_SIZE..DEFAULT_INNER_SIZE * 2)
-//                 .count(),
-//             0
-//         );
-//     }
-
-//     #[test]
-//     fn test_remove_range() {
-//         let btree = BTreeSet::from_iter(0..=(DEFAULT_INNER_SIZE * 2));
-
-//         btree.remove_range(5..15);
-//         let expected_len = (DEFAULT_INNER_SIZE * 2) - 9;
-//         let actual_len = btree.len();
-//         assert_eq!(expected_len, actual_len);
-
-//         btree.remove_range(DEFAULT_INNER_SIZE - 5..DEFAULT_INNER_SIZE + 5);
-//         let expected_len = expected_len - 10;
-//         let actual_len = btree.len();
-//         assert_eq!(expected_len, actual_len);
-
-//         btree.remove_range(..DEFAULT_INNER_SIZE / 2);
-//         let expected_len = expected_len - ((DEFAULT_INNER_SIZE / 2) - 10);
-//         let actual_len = btree.len();
-//         assert_eq!(expected_len, actual_len);
-
-//         btree.remove_range(DEFAULT_INNER_SIZE * 3 / 2..);
-//         let expected_len =
-//             expected_len - ((DEFAULT_INNER_SIZE * 2) - ((DEFAULT_INNER_SIZE * 3) / 2) + 1);
-//         let actual_len = btree.len();
-//         assert_eq!(expected_len, actual_len);
-
-//         btree.remove_range(..);
-//         assert_eq!(btree.len(), 0);
-
-//         for i in 0..=(DEFAULT_INNER_SIZE * 2) {
-//             btree.insert(i);
-//         }
-
-//         btree.remove_range((Excluded(5), Excluded(15)));
-//         assert_eq!(
-//             btree.range(0..DEFAULT_INNER_SIZE).count(),
-//             DEFAULT_INNER_SIZE - 9
-//         );
-
-//         btree.remove_range((
-//             Included(DEFAULT_INNER_SIZE),
-//             Excluded(DEFAULT_INNER_SIZE + 10),
-//         ));
-//         assert_eq!(
-//             btree.range(0..=DEFAULT_INNER_SIZE * 2).count(),
-//             DEFAULT_INNER_SIZE * 2 - 18
-//         );
-
-//         let original_count = btree.len();
-//         btree.remove_range(DEFAULT_INNER_SIZE * 3..DEFAULT_INNER_SIZE * 4);
-//         assert_eq!(btree.len(), original_count);
-
-//         btree.remove_range(DEFAULT_INNER_SIZE * 2 - 5..DEFAULT_INNER_SIZE * 3);
-//         assert_eq!(btree.len(), original_count - 6);
-//     }
-// }

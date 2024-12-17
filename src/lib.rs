@@ -1,7 +1,6 @@
 #[cfg(feature = "concurrent")]
 pub mod concurrent;
 
-pub mod concurrent2;
 mod core;
 
 use crate::Entry::{Occupied, Vacant};

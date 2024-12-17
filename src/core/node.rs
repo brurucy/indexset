@@ -10,7 +10,7 @@ pub trait NodeLike<T: Ord> {
     #[allow(dead_code)]
     fn len(&self) -> usize;
     #[allow(dead_code)]
-    fn insert(&mut self, value: T) -> bool;
+    fn insert(&mut self, value: T) -> (bool, usize);
     #[allow(dead_code)]
     fn contains<Q: Ord + ?Sized>(&self, value: &Q) -> bool
     where
@@ -28,7 +28,7 @@ pub trait NodeLike<T: Ord> {
     where
         T: Borrow<Q>;
     #[allow(dead_code)]
-    fn replace(&mut self, value: T) -> Option<T>;
+    fn replace(&mut self, idx: usize, value: T) -> Option<T>;
     #[allow(dead_code)]
     fn max(&self) -> Option<&T>;
 }
@@ -104,15 +104,14 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         self.len()
     }
     #[inline]
-    fn insert(&mut self, value: T) -> bool {
-        match search(&self, &value) {
-            Ok(_) => return false,
+    fn insert(&mut self, value: T) -> (bool, usize) {
+        return match search(&self, &value) {
+            Ok(idx) => (false, idx),
             Err(idx) => {
                 self.insert(idx, value);
+                (true, idx)
             }
         }
-
-        true
     }
     #[inline]
     fn contains<Q>(&self, value: &Q) -> bool
@@ -156,17 +155,13 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         }
     }
     #[inline]
-    fn replace(&mut self, value: T) -> Option<T> {
-        match search(&self, &value) {
-            Ok(idx) => {
-                self.push(value);
-                let len = self.len() - 1;
-                self.swap(idx, len);
-
-                self.pop()
-            }
-            Err(_) => None,
+    fn replace(&mut self, idx: usize, value: T) -> Option<T> {
+        if let Some(old) = self.get_mut(idx) {
+            let old = std::mem::replace(old, value);
+            return Some(old);
         }
+
+        None
     }
     #[inline]
     fn max(&self) -> Option<&T> {

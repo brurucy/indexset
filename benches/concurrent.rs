@@ -111,7 +111,7 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
 
     group.bench_function(BenchmarkId::new("ConcurrentBTreeSet", write_ratio), |b| {
         b.iter(|| {
-            let set = Arc::new(indexset::concurrent2::set::BTreeSet::new());
+            let set = Arc::new(indexset::concurrent::set::BTreeSet::new());
             let mut handles = vec![];
 
             for thread_ops in operations.iter() {
