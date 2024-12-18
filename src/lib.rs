@@ -4,7 +4,8 @@ pub mod concurrent;
 mod core;
 
 use crate::Entry::{Occupied, Vacant};
-use core::constants::{DEFAULT_CUTOFF, DEFAULT_INNER_SIZE};
+use core::constants::DEFAULT_INNER_SIZE;
+use core::node::*;
 use core::pair::Pair;
 use ftree::FenwickTree;
 #[cfg(feature = "serde")]
@@ -16,111 +17,7 @@ use std::iter::FusedIterator;
 use std::mem::swap;
 use std::ops::{Index, RangeBounds};
 
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct Node<T>
-where
-    T: Ord,
-{
-    pub inner: Vec<T>,
-}
-
-impl<T: Ord> Ord for Node<T>
-where
-    T: Ord,
-{
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.last().cmp(&other.last())
-    }
-}
-
-impl<T: Ord> PartialOrd for Node<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<T: Ord> Default for Node<T> {
-    fn default() -> Self {
-        Self {
-            inner: Vec::with_capacity(DEFAULT_INNER_SIZE),
-        }
-    }
-}
-
-#[inline]
-fn search<T: Ord>(haystack: &[T], needle: &T) -> Result<usize, usize> {
-    let mut j = haystack.len();
-
-    unsafe {
-        let mut i = 0;
-        let p = haystack.as_ptr().cast::<T>();
-        let mut m = j >> 1;
-        while i != j {
-            match (*p.add(m)).borrow().cmp(needle) {
-                Ordering::Equal => return Ok(m),
-                Ordering::Less => {
-                    i = m + 1;
-                    m = (i + j) >> 1;
-                }
-                Ordering::Greater => {
-                    j = m;
-                    m = (i + j) >> 1;
-                }
-            }
-        }
-        Err(i)
-    }
-}
-
-impl<T: Ord> Node<T> {
-    #[inline]
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            inner: Vec::with_capacity(capacity),
-            ..Default::default()
-        }
-    }
-    #[inline]
-    pub fn get(&self, index: usize) -> Option<&T> {
-        self.inner.get(index)
-    }
-    #[inline]
-    pub fn split_off(&mut self, cutoff: usize) -> Self {
-        let latter_inner = self.inner.split_off(cutoff);
-
-        Self {
-            inner: latter_inner,
-        }
-    }
-    #[inline]
-    pub fn halve(&mut self) -> Self {
-        self.split_off(DEFAULT_CUTOFF)
-    }
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.inner.len()
-    }
-    #[inline]
-    pub fn insert(&mut self, value: T) -> bool {
-        match search(&self.inner, &value) {
-            Ok(_) => return false,
-            Err(idx) => {
-                self.inner.insert(idx, value);
-            }
-        }
-
-        true
-    }
-    #[inline]
-    pub fn last(&self) -> Option<&T> {
-        self.inner.last()
-    }
-    #[inline]
-    pub fn delete(&mut self, index: usize) -> T {
-        self.inner.remove(index)
-    }
-}
+type Node<T> = Vec<T>;
 
 /// An ordered set based on a B-Tree.
 ///
@@ -222,7 +119,7 @@ impl<T: Ord> BTreeSet<T> {
     /// let mut set: BTreeSet<i32> = BTreeSet::with_maximum_node_size(128);
     pub fn with_maximum_node_size(maximum_node_size: usize) -> Self {
         let mut new: Self = Default::default();
-        new.inner = vec![Node::new(maximum_node_size)];
+        new.inner = vec![Node::with_capacity(maximum_node_size)];
         new.node_capacity = maximum_node_size;
 
         new
@@ -240,7 +137,7 @@ impl<T: Ord> BTreeSet<T> {
     /// assert!(v.is_empty());
     /// ```
     pub fn clear(&mut self) {
-        self.inner = vec![Node::new(self.node_capacity)];
+        self.inner = vec![Node::with_capacity(self.node_capacity)];
         self.index = FenwickTree::from_iter(vec![0]);
         self.len = 0;
     }
@@ -294,7 +191,6 @@ impl<T: Ord> BTreeSet<T> {
     {
         let node_idx = self.locate_node(value);
         let position_within_node = self.inner[node_idx]
-            .inner
             .partition_point(|item| item.borrow() < value);
 
         (node_idx, position_within_node)
@@ -307,7 +203,6 @@ impl<T: Ord> BTreeSet<T> {
     {
         let node_idx = self.locate_node_cmp(&mut cmp);
         let position_within_node = self.inner[node_idx]
-            .inner
             .partition_point(|item| cmp(item.borrow()));
 
         (node_idx, position_within_node)
@@ -357,7 +252,7 @@ impl<T: Ord> BTreeSet<T> {
     fn get_mut_index(&mut self, index: usize) -> Option<&mut T> {
         let (node_idx, position_within_node) = self.locate_ith(index);
         if let Some(_) = self.inner.get(node_idx) {
-            return self.inner[node_idx].inner.get_mut(position_within_node);
+            return self.inner[node_idx].get_mut(position_within_node);
         }
 
         None
@@ -462,12 +357,12 @@ impl<T: Ord> BTreeSet<T> {
         if self.inner[node_idx].len() == DEFAULT_INNER_SIZE {
             let new_node = self.inner[node_idx].halve();
             let mut insert_node_idx = node_idx;
-            if value >= new_node.inner[0] {
+            if value >= new_node[0] {
                 insert_node_idx += 1;
             }
 
             self.inner.insert(node_idx + 1, new_node);
-            if self.inner[insert_node_idx].insert(value) {
+            if NodeLike::insert(&mut self.inner[insert_node_idx], value).0 {
                 // Reconstruct the index after the new node and inner value inserts.
                 self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
                 self.len += 1;
@@ -478,7 +373,7 @@ impl<T: Ord> BTreeSet<T> {
                 self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
                 false
             }
-        } else if self.inner[node_idx].insert(value) {
+        } else if NodeLike::insert(&mut self.inner[node_idx], value).0 {
             self.index.add_at(node_idx, 1);
             self.len += 1;
 
@@ -556,7 +451,7 @@ impl<T: Ord> BTreeSet<T> {
         false
     }
     fn delete_at(&mut self, node_idx: usize, position_within_node: usize) -> T {
-        let removal = self.inner[node_idx].delete(position_within_node);
+        let removal = self.inner[node_idx].remove(position_within_node);
 
         let mut decrease_length = false;
         // check whether the node has to be deleted
@@ -782,7 +677,7 @@ impl<T: Ord> BTreeSet<T> {
     /// ```
     pub fn pop_last(&mut self) -> Option<T> {
         let last_node_idx = self.inner.len() - 1;
-        let mut last_position_within_node = self.inner[last_node_idx].inner.len();
+        let mut last_position_within_node = self.inner[last_node_idx].len();
         last_position_within_node = last_position_within_node.saturating_sub(1);
 
         if let Some(candidate_node) = self.inner.get(last_node_idx) {
@@ -1059,7 +954,7 @@ impl<T: Ord> BTreeSet<T> {
     {
         let mut positions_to_delete = vec![];
         for (node_idx, node) in self.inner.iter().enumerate() {
-            for (position_within_node, item) in node.inner.iter().enumerate() {
+            for (position_within_node, item) in node.iter().enumerate() {
                 if !f(item.borrow()) {
                     positions_to_delete.push((node_idx, position_within_node));
                 }
@@ -1326,13 +1221,13 @@ impl<T: Ord> BTreeSet<T> {
         ) = self.resolve_range(range);
 
         let front_iter = if front_node_idx < self.inner.len() {
-            Some(self.inner[front_node_idx].inner[front_start_idx..].iter())
+            Some(self.inner[front_node_idx][front_start_idx..].iter())
         } else {
             None
         };
 
         let back_iter = if back_node_idx < self.inner.len() {
-            Some(self.inner[back_node_idx].inner[..=back_start_idx].iter())
+            Some(self.inner[back_node_idx][..=back_start_idx].iter())
         } else {
             None
         };
@@ -1388,7 +1283,7 @@ where
         let node_capacity = DEFAULT_INNER_SIZE;
 
         Self {
-            inner: vec![Node::new(node_capacity)],
+            inner: vec![Node::with_capacity(node_capacity)],
             index: FenwickTree::from_iter(vec![0]),
             node_capacity,
             len: 0,
@@ -1426,8 +1321,8 @@ where
             current_front_idx: 0,
             current_back_node_idx: btree.inner.len() - 1,
             current_back_idx: btree.len(),
-            current_front_iterator: Some(btree.inner[0].inner.iter()),
-            current_back_iterator: Some(btree.inner[btree.inner.len() - 1].inner.iter()),
+            current_front_iterator: Some(btree.inner[0].iter()),
+            current_back_iterator: Some(btree.inner[btree.inner.len() - 1].iter()),
         }
     }
 }
@@ -1451,7 +1346,7 @@ where
                 return None;
             }
             self.current_front_iterator =
-                Some(self.btree.inner[self.current_front_node_idx].inner.iter());
+                Some(self.btree.inner[self.current_front_node_idx].iter());
 
             self.next()
         }
@@ -1479,7 +1374,7 @@ where
             };
             self.current_back_node_idx -= 1;
             self.current_back_iterator =
-                Some(self.btree.inner[self.current_back_node_idx].inner.iter());
+                Some(self.btree.inner[self.current_back_node_idx].iter());
 
             self.next_back()
         }
@@ -2289,12 +2184,10 @@ where
             .locate_value_cmp(|item: &Pair<K, V>| item.key.borrow() < key);
         if self.set.inner.get(node_idx).is_some()
             && self.set.inner[node_idx]
-                .inner
                 .get(position_within_node)
                 .is_some()
         {
             let entry = self.set.inner[node_idx]
-                .inner
                 .get_mut(position_within_node)?;
 
             return Some(&mut entry.value);
@@ -2480,14 +2373,14 @@ where
         let mut inner = self.set.inner.iter_mut();
         let front_iter = {
             if let Some(node) = inner.next() {
-                node.inner.iter_mut()
+                node.iter_mut()
             } else {
                 [].iter_mut()
             }
         };
         let back_iter = {
             if let Some(node) = inner.next_back() {
-                node.inner.iter_mut()
+                node.iter_mut()
             } else {
                 [].iter_mut()
             }
@@ -2790,13 +2683,13 @@ where
             (global_front_idx, front_node_idx, front_start_idx),
             (global_back_idx, back_node_idx, back_start_idx),
         ) = self.set.resolve_range(range);
-        let end = self.set.inner[back_node_idx].inner.len();
+        let end = self.set.inner[back_node_idx].len();
 
         let mut inner = self.set.inner.iter_mut();
 
         let mut front_iter = {
             if let Some(node) = inner.nth(front_node_idx) {
-                node.inner.iter_mut()
+                node.iter_mut()
             } else {
                 [].iter_mut()
             }
@@ -2804,7 +2697,7 @@ where
 
         let mut back_iter = {
             if let Some(node) = inner.nth(back_node_idx - front_node_idx) {
-                node.inner.iter_mut()
+                node.iter_mut()
             } else {
                 [].iter_mut()
             }
@@ -2928,7 +2821,7 @@ where
     {
         let mut positions_to_delete = vec![];
         for (node_idx, node) in self.set.inner.iter_mut().enumerate() {
-            for (position_within_node, item) in node.inner.iter_mut().enumerate() {
+            for (position_within_node, item) in node.iter_mut().enumerate() {
                 if !f(item.key.borrow(), &mut item.value) {
                     positions_to_delete.push((node_idx, position_within_node));
                 }
@@ -3593,7 +3486,7 @@ where
                 // advance front
                 self.current_front_node_idx += 1;
                 if let Some(node) = self.inner.next() {
-                    self.current_front_iterator = node.inner.iter_mut();
+                    self.current_front_iterator = node.iter_mut();
                 }
 
                 return self.next();
@@ -3633,7 +3526,7 @@ where
                 // advance back
                 self.current_back_node_idx -= 1;
                 if let Some(node) = self.inner.next_back() {
-                    self.current_back_iterator = node.inner.iter_mut();
+                    self.current_back_iterator = node.iter_mut();
                 }
 
                 return self.next_back();
@@ -3849,7 +3742,9 @@ impl<'a, K: Ord, V> CursorMap<'a, K, V> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BTreeMap, BTreeSet, Node, DEFAULT_CUTOFF, DEFAULT_INNER_SIZE};
+    use super::core::node::*;
+    use super::core::constants::*;
+    use crate::{BTreeMap, BTreeSet, Node};
     use rand::{Rng, SeedableRng};
     use std::collections::Bound::Included;
 
@@ -3861,12 +3756,12 @@ mod tests {
 
         let actual_node = input
             .iter()
-            .fold(Node::new(DEFAULT_INNER_SIZE), |mut acc, curr| {
-                acc.insert(*curr);
+            .fold(Node::with_capacity(DEFAULT_INNER_SIZE), |mut acc, curr| {
+                NodeLike::insert(&mut acc, *curr);
                 acc
             });
 
-        let actual_output: Vec<isize> = actual_node.inner.iter().cloned().collect();
+        let actual_output: Vec<isize> = actual_node.iter().cloned().collect();
 
         assert_eq!(expected_output, actual_output);
         assert_eq!(*actual_node.last().unwrap(), 10);
@@ -3879,17 +3774,17 @@ mod tests {
             input.push(item.clone() as isize);
         }
 
-        let mut former_node = Node::new(DEFAULT_INNER_SIZE);
+        let mut former_node = Node::with_capacity(DEFAULT_INNER_SIZE);
         input.iter().for_each(|item| {
-            former_node.insert(item.clone());
+            NodeLike::insert(&mut former_node, item.clone());
         });
         let latter_node = former_node.halve();
 
         let expected_former_output: Vec<isize> = input[0..DEFAULT_CUTOFF].to_vec();
         let expected_latter_output: Vec<isize> = input[DEFAULT_CUTOFF..].to_vec();
 
-        let actual_former_output: Vec<isize> = former_node.inner.iter().cloned().collect();
-        let actual_latter_output: Vec<isize> = latter_node.inner.iter().cloned().collect();
+        let actual_former_output: Vec<isize> = former_node.iter().cloned().collect();
+        let actual_latter_output: Vec<isize> = latter_node.iter().cloned().collect();
 
         assert_eq!(expected_former_output, actual_former_output);
         assert_eq!(expected_latter_output, actual_latter_output);
