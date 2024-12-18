@@ -1,72 +1,19 @@
-use crate::concurrent::set;
-use crate::core::pair::Pair;
-use std::borrow::Borrow;
-use std::iter::FusedIterator;
-use std::ops::RangeBounds;
+use std::{borrow::Borrow, iter::FusedIterator};
 
-/// A persistent and concurrent ordered map based on a two-level [B-Tree].
-///
-/// See the documentation on the non-concurrent version for an understanding of how this crate's B-Tree implementation differs from
-/// the one in the standard library.
-///
-///
-/// # Examples
-///
-/// ```
-/// use indexset::concurrent::map::BTreeMap;
-///
-/// // type inference lets us omit an explicit type signature (which
-/// // would be `BTreeMap<&str, &str>` in this example).
-/// let mut movie_reviews = BTreeMap::new();
-///
-/// // review some movies.
-/// movie_reviews.insert("Office Space",       "Deals with real issues in the workplace.");
-/// movie_reviews.insert("Pulp Fiction",       "Masterpiece.");
-/// movie_reviews.insert("The Godfather",      "Very enjoyable.");
-/// movie_reviews.insert("The Blues Brothers", "Eye lyked it a lot.");
-///
-/// // check for a specific one.
-/// if !movie_reviews.contains_key(&"Les Misérables") {
-///     println!("We've got {} reviews, but Les Misérables ain't one.",
-///              movie_reviews.len());
-/// }
-///
-/// // oops, this review has a lot of spelling mistakes, let's delete it.
-/// movie_reviews.remove(&"The Blues Brothers");
-///
-/// // look up the values associated with some keys.
-/// let to_find = ["Up!", "Office Space"];
-/// for movie in &to_find {
-///     movie_reviews.get(movie, |review| println!("{movie}: {review}"));
-/// }
-///
-/// // iterate over everything.
-/// for (movie, review) in &movie_reviews {
-///     println!("{movie}: \"{review}\"");
-/// }
-/// ```
-///
-/// A `BTreeMap` with a known list of items can be initialized from an array:
-///
-/// ```
-/// use indexset::concurrent::map::BTreeMap;
-///
-/// let solar_distance = BTreeMap::from_iter([
-///     ("Mercury", 0.4),
-///     ("Venus", 0.7),
-///     ("Earth", 1.0),
-///     ("Mars", 1.5),
-/// ]);
-/// ```
+use crate::core::pair::Pair;
+
+use super::set::BTreeSet;
+
+#[derive(Debug)]
 pub struct BTreeMap<K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Send + Ord + Clone + 'static,
+    V: Send + Clone + 'static,
 {
-    set: set::BTreeSet<Pair<K, V>>,
+    set: BTreeSet<Pair<K, V>>
 }
 
-impl<K: Ord + Clone, V: Clone> Default for BTreeMap<K, V> {
+impl<K: Send + Ord + Clone, V: Send + Clone + 'static> Default for BTreeMap<K, V> {
     fn default() -> Self {
         Self {
             set: Default::default(),
@@ -76,16 +23,16 @@ impl<K: Ord + Clone, V: Clone> Default for BTreeMap<K, V> {
 
 pub struct Iter<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Send + Ord + Clone + 'static,
+    V: Send + Clone + 'static,
 {
-    inner: set::Iter<'a, Pair<K, V>>,
+    inner: super::set::Iter<'a, Pair<K, V>>,
 }
 
 impl<'a, K, V> Iterator for Iter<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Send + Ord + Clone + 'static,
+    V: Send + Clone + 'static,
 {
     type Item = (&'a K, &'a V);
 
@@ -100,8 +47,8 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for Iter<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Send + Ord + Clone + 'static,
+    V: Send + Clone + 'static,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -114,23 +61,23 @@ where
 
 impl<'a, K, V> FusedIterator for Iter<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Send + Ord + Clone + 'static,
+    V: Send + Clone + 'static,
 {
 }
 
 pub struct Range<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Send + Ord + Clone + 'static,
+    V: Send + Clone + 'static,
 {
-    inner: set::Range<'a, Pair<K, V>>,
+    inner: super::set::Range<'a, Pair<K, V>>,
 }
 
 impl<'a, K, V> Iterator for Range<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Send + Ord + Clone + 'static,
+    V: Send + Clone + 'static,
 {
     type Item = (&'a K, &'a V);
 
@@ -145,8 +92,8 @@ where
 
 impl<'a, K, V> DoubleEndedIterator for Range<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Send + Ord + Clone + 'static,
+    V: Send + Clone + 'static,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -159,12 +106,12 @@ where
 
 impl<'a, K, V> FusedIterator for Range<'a, K, V>
 where
-    K: Ord + Clone,
-    V: Clone,
+    K: Send + Ord + Clone + 'static,
+    V: Send + Clone + 'static,
 {
 }
 
-impl<K: Ord + Clone, V: Clone> BTreeMap<K, V> {
+impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> {
     /// Makes a new, empty, persistent `BTreeMap`.
     ///
     /// # Examples
@@ -207,30 +154,38 @@ impl<K: Ord + Clone, V: Clone> BTreeMap<K, V> {
         Q: Ord + ?Sized,
     {
         self.set
-            .contains_cmp(|item| item.borrow() < key, |item| item.borrow() == key)
+            .contains(key)
     }
-
-    pub fn get<Q, F>(&self, key: &Q, mut f: F)
+    /// Returns a reference to a pair whose key corresponds to the input.
+    ///
+    /// The key may be any borrowed form of the map's key type, but the ordering
+    /// on the borrowed form *must* match the ordering on the key type.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use indexset::concurrent::map::BTreeMap;
+    ///
+    /// let mut map = BTreeMap::new();
+    /// map.insert(1, "a");
+    /// assert_eq!(map.get(&1).and_then(|e| Some(e.get().value)), Some("a"));
+    /// assert_eq!(map.get(&2).and_then(|e| Some(e.get().value)), None);
+    /// ```
+    pub fn get<Q>(&self, key: &Q) -> Option<super::set::Ref<Pair<K, V>>>
     where
         Pair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
-        F: FnMut(&V),
     {
-        self.set.get(
-            |item| item.borrow() < key,
-            |item| item.borrow() == key,
-            |pair| f(&pair.value),
-        )
+        self.set.get(key)
     }
     /// Inserts a key-value pair into the map.
     ///
-    /// If the map did not have this key present, `None` is returned.
+    /// If the map did not have this key present, it will be inserted.
     ///
-    /// If the map did have this key present, the value is updated, and the old
-    /// value is returned. The key is not updated, though; this matters for
-    /// types that can be `==` without being identical. See the [module-level
-    /// documentation] for more.
-    ///
+    /// Otherwise, the value is updated.
+    /// 
     /// [module-level documentation]: index.html#insert-and-complex-keys
     ///
     /// # Examples
@@ -246,42 +201,14 @@ impl<K: Ord + Clone, V: Clone> BTreeMap<K, V> {
     ///
     /// map.insert(37, "b");
     /// assert_eq!(map.insert(37, "c"), Some("b"));
-    /// map.get(&37, |value| assert_eq!(value, &"c"));
+    /// assert_eq!(map.get(&37).and_then(|e| Some(e.get().value)), Some("c"));
     /// ```
     pub fn insert(&self, key: K, value: V) -> Option<V> {
-        if self.contains_key(&key) {
-            let new_entry = Pair { key, value };
+        let new_entry = Pair { key, value };
 
-            let old_entry = self.set.delete(&new_entry).1?.value;
-
-            self.set.insert(new_entry);
-
-            Some(old_entry)
-        } else {
-            self.set.insert(Pair { key, value });
-
-            None
-        }
+        self.set.put(new_entry).and_then(|pair| Some(pair.value))
     }
-    /// Adds a value to the set, under the assumption that the current thread is the only one
-    /// that is currently inserting (no problems with readers though). Super unsafe, stay clear
-    /// unless you know what you are doing.
-    pub fn insert_spmc(&self, key: K, value: V) -> Option<V> {
-        if self.contains_key(&key) {
-            let new_entry = Pair { key, value };
-
-            let old_entry = self.set.delete(&new_entry).1?.value;
-
-            self.set.insert_spmc(new_entry);
-
-            Some(old_entry)
-        } else {
-            self.set.insert_spmc(Pair { key, value });
-
-            None
-        }
-    }
-    /// Removes a key from the map, returning the value at the key if the key
+    /// Removes a key from the map, returning the key and the value if the key
     /// was previously in the map.
     ///
     /// The key may be any borrowed form of the map's key type, but the ordering
@@ -296,23 +223,18 @@ impl<K: Ord + Clone, V: Clone> BTreeMap<K, V> {
     ///
     /// let mut map = BTreeMap::new();
     /// map.insert(1, "a");
-    /// assert_eq!(map.remove(&1), Some("a"));
+    /// assert_eq!(map.remove(&1), Some((1, "a")));
     /// assert_eq!(map.remove(&1), None);
     /// ```
-    pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<(K, V)>
     where
         Pair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        let (removed, old_entry) = self
+        return self
             .set
-            .delete_cmp(|x| x.borrow() < key, |x| x.borrow() == key);
-
-        if removed {
-            return Some(old_entry?.value);
-        }
-
-        None
+            .remove(key)
+            .and_then(|pair| Some((pair.key, pair.value)))
     }
     /// Returns the number of elements in the map.
     ///
@@ -356,97 +278,5 @@ impl<K: Ord + Clone, V: Clone> BTreeMap<K, V> {
         Iter {
             inner: self.set.iter(),
         }
-    }
-    /// Constructs a double-ended iterator over a sub-range of elements in the map.
-    /// The simplest way is to use the range syntax `min..max`, thus `range(min..max)` will
-    /// yield elements from min (inclusive) to max (exclusive).
-    /// The range may also be entered as `(Bound<T>, Bound<T>)`, so for example
-    /// `range((Excluded(4), Included(10)))` will yield a left-exclusive, right-inclusive
-    /// range from 4 to 10.
-    ///
-    /// # Panics
-    ///
-    /// Panics if range `start > end`.
-    /// Panics if range `start == end` and both bounds are `Excluded`.
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```
-    /// use indexset::concurrent::map::BTreeMap;
-    /// use std::ops::Bound::Included;
-    ///
-    /// let mut map = BTreeMap::new();
-    /// map.insert(3, "a");
-    /// map.insert(5, "b");
-    /// map.insert(8, "c");
-    /// for (key, value) in map.range((Included(4), Included(8))) {
-    ///     println!("{key}: {value}");
-    /// }
-    /// assert_eq!(Some((&5, &"b")), map.range(4..).next());
-    /// ```
-    pub fn range<R, Q>(&self, range: R) -> Range<'_, K, V>
-    where
-        Q: Ord + ?Sized,
-        Pair<K, V>: Borrow<Q>,
-        R: RangeBounds<Q>,
-    {
-        Range {
-            inner: self.set.range(range),
-        }
-    }
-    pub fn remove_range<R, Q>(&self, range: R)
-    where
-        Q: Ord + ?Sized,
-        Pair<K, V>: Borrow<Q>,
-        R: RangeBounds<Q>,
-    {
-        self.set.remove_range(range)
-    }
-}
-
-impl<K, V> FromIterator<(K, V)> for BTreeMap<K, V>
-where
-    K: Ord + Clone,
-    V: Clone,
-{
-    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
-        let btree = BTreeMap::new();
-        iter.into_iter().for_each(|item| {
-            btree.insert(item.0, item.1);
-        });
-
-        btree
-    }
-}
-
-impl<K, V, const N: usize> From<[(K, V); N]> for BTreeMap<K, V>
-where
-    K: Ord + Clone,
-    V: Clone,
-{
-    fn from(value: [(K, V); N]) -> Self {
-        let btree: BTreeMap<K, V> = Default::default();
-
-        value.into_iter().for_each(|(key, value)| {
-            btree.insert(key, value);
-        });
-
-        btree
-    }
-}
-
-impl<'a, K, V> IntoIterator for &'a BTreeMap<K, V>
-where
-    K: Ord + Clone,
-    V: Clone,
-{
-    type Item = (&'a K, &'a V);
-
-    type IntoIter = Iter<'a, K, V>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
     }
 }
