@@ -8,10 +8,11 @@ A pure-Rust two-level dynamic order-statistic b-tree.
 This crate implements a compact set data structure that preserves its elements' sorted order and
 allows lookups of entries by value or sorted order position.
 
-Also, it is(mostly) a drop-in replacement for the stdlib BTree.
-
-Under the feature `concurrent` you can find a `persistent` version of the BTree that can be fearlessly shared between
+Under the feature `concurrent` you can find a version of the BTree that can be fearlessly shared between
 threads.
+
+Both the concurrent and single-threaded versions are meant to be drop-in replacements for the stdlib BTree. This 
+is mostly true for the latter but not for the former, yet.
 
 # Background
 
@@ -21,7 +22,7 @@ python's [`sortedcontainers`](https://github.com/grantjenks/python-sortedcontain
 It differs from both in that:
 
 * `indexmap` is a hashmap that provides numerical lookups, but does not maintain order in case of removals, while
-  `indexset` is a b-tree that always maintains order, irrespective of which mutating operation is run.
+  `indexset` is a b-tree that irrespective of which mutating operation is run, always maintains order.
 * `sortecontainers` is similar in spirit, but utilizes a different routine for balancing the tree, and relies
   on a heap for numerical lookups.
 
@@ -33,64 +34,84 @@ It differs from both in that:
 - Minimal amount of allocations.
 - `select`(lookups by position) and `rank` operations in near constant time.
 
-## Performance
+# Performance
 
-`BTreeSet` and `BTreeMap` derive a couple of performance facts directly from how it is constructed, which is roughly:
+`BTreeSet` and `BTreeMap` derive their performance much from how they are constructed, which is:
 
 > A two-level B-Tree with a fenwick tree as a low-cost index for numerical lookups
 
-- Iteration is very fast since it inherits a vec's iter struct.
-- Insertions and removals are constant time in the best-case scenario, and logarithmic on the node size in the worst
-  case
-- Lookups are very fast, and rely only on two binary searches over very little data.
+Each node is a leaf, and each leaf is a vec with a fixed capacity of size `B`, with `1024` being the default.
+
+The following hold:
+- Iteration is very fast since it is done by inheriting vec's iter struct.
+- Lookups only need two binary searches. One over `n/B` nodes and another over `B` elements: `O(log(n/B) + log(B)) = O(log(n))`.
+- Insertions are constant time `O(B)` in the best case and `O(B^2)` in the worst. Removals are `O(log(n))`.
 
 ## Benchmarks
 
-run `cargo bench` and see it for yourself.
+The following numbers were obtained on a M3 macbook pro:
 
-On a lowest-specced M1 macbook pro I got the following numbers:
+### Single-threaded
 
-### Inserting 100k random usize
+Command: `cargo bench --bench stdlib --all-features`
 
-* `stdlib::collections::BTreeSet.insert(i)`: 8.25ms
-* `indexset::BTreeSet.insert(i)`: 17.3ms
+* Inserting 100k random usize
+  * `stdlib::collections::BTreeSet.insert(i)`: 8.9ms
+  * `indexset::BTreeSet.insert(i)`: 13.1ms
+  * `indexset::concurrent::set::BTreeSet.insert(i)`: 14.0ms
+* Checking that each 100k random usize integers exist
+  * `stdlib::collections::BTreeSet.contains(i)`: 7.02ms
+  * `indexset::BTreeSet.contains(i)`: 5.22ms
+  * `indexset::concurrent::set::BTreeSet.contains(i)`: 5.27ms
+* Getting all 100k i-th elements
+  * `stdlib::collections::BTreeSet.iter.nth(i)`: **13.28s** yes, seconds! 
+  * `indexset::BTreeSet.get_index(i)`: **3.93ms**
+* Iterating over all 100k elements and then collecting it into a vec
+  * `Vec::from_iter(stdlib::collections::BTreeSet.iter())`: **227.28us**
+  * `Vec::from_iter(indexset::BTreeSet.iter())`: **123.21.us**
 
-### Checking that each 100k random usize integers exist
+Getting the i-th element is **3400x** faster than stdlib's btree, `contains` is 25% faster, and iterating is twice 
+as fast, at the cost of insertions being 30% slower.
 
-* `stdlib::collections::BTreeSet.contains(i)`: 7.5ms
-* `indexset::BTreeSet.contains(i)`: 6.8ms
+If your use case of `std::collections::BTreeSet` and `BTreeMap` i read-heavy, or if you really need to index by
+sorted-order position, it might be worth checking out `indexset` instead.
 
-### Getting all 100k i-th elements
+### Concurrent
 
-* `stdlib::collections::BTreeSet.iter.nth(i)`: **13.28s** yes, seconds!
-* `indexset::BTreeSet.get_index(i)`: **3.93ms**
+Command: `cargo bench --bench concurrent --all-features`
 
-### Iterating over all 100k elements and then collecting it into a vec
+We benchmark concurrent operations with 40 threads, each conducting 100000 operations
+at the same time that vary from a ratio of 1% writes/reads to 50% writes/reads.
 
-* `Vec::from_iter(stdlib::collections::BTreeSet.iter())`: **227.28us**
-* `Vec::from_iter(indexset::BTreeSet.iter())`: **123.21.us**
+In this benchmark threads have high locality and tend to focus on specific parts of the data.
 
-Yes.
+* 1% writes/99% reads:
+  * `indexset::concurrent::set::BTreeSet`: 170.5ms
+  * `scc::TreeIndex`: 128.7ms
+  * `crossbeam_skiplist::SkipSet`: 161.3ms
+* 10% writes/90% reads:
+  * `indexset::concurrent::set::BTreeSet`: 175.9ms
+  * `scc::TreeIndex`: 183.9ms
+  * `crossbeam_skiplist::SkipSet`: 217.4ms
+* 30% writes/70% reads:
+  * `indexset::concurrent::set::BTreeSet`: 190.9ms
+  * `scc::TreeIndex`: 313.2ms
+  * `crossbeam_skiplist::SkipSet`: 261.8ms
+* 50% writes/50% reads:
+  * `indexset::concurrent::set::BTreeSet`: 220.75ms
+  * `scc::TreeIndex`: 561.70ms
+  * `crossbeam_skiplist::SkipSet`: 334.40ms
 
-Getting the i-th element is **3400x** faster than stdlib's btree, `contains` is 10% faster, and iterating
-is twice as fast, at the cost of insertions being half as fast.
-
-If your use case of `std::collections::BTreeSet` and `BTreeMap` is more read-heavy, or if you really need to index by
-sorted-order position, it might be worth checking out this `indexset` instead.
-
-# Limitations
+## Limitations
 
 * `BTreeMap` is less polished than `BTreeSet`. This crate has been optimised for a leaner `BTreeSet`.
-* This is **beta** quality software, so use it at your own risk. I'm not 100% certain about every single iterator
-  implementation(everything has tests though).
-* There's quite a couple utility traits that have not been implemented yet.
-* `Concurrent` `BTreeMap` and `BtreeSet` are lock-free and wait-free. That doesn't mean it is fast however :)
+* `Concurrent` `BTreeMap` and `BtreeSet` do not support `serde` serialization and deserialization nor are they order-statistic trees. 
 
-# Naming
+## Naming
 
 This library is called `indexset`, because the base data structure is `BTreeSet`. `BTreeMap` is a `BTreeSet` with
 a `Pair<K, V>` item type.
 
-# Changelog
+## Changelog
 
 See [CHANGELOG.md](https://github.com/brurucy/indexset/blob/master/CHANGELOG.md).

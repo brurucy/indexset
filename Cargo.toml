@@ -29,9 +29,7 @@ concurrent = ["dep:crossbeam-utils", "dep:crossbeam-skiplist", "dep:parking_lot"
 [[bench]]
 name = "stdlib"
 harness = false
-features = ["concurrent"]
 
 [[bench]]
 name = "concurrent"
 harness = false
-features = ["concurrent"] 
