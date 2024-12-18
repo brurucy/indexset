@@ -11,8 +11,8 @@ enum Op {
     Write(usize),
 }
 
-const NUM_READERS: usize = 30;
-const NUM_WRITERS: usize = 10;
+const NUM_READERS: usize = 4;
+const NUM_WRITERS: usize = 4;
 const NUM_THREADS: usize = NUM_READERS + NUM_WRITERS;
 const OPERATIONS_PER_THREAD: usize = 100_000;
 const TOTAL_OPERATIONS: usize = NUM_THREADS * OPERATIONS_PER_THREAD;

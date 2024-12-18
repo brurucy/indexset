@@ -170,8 +170,8 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     ///
     /// let mut map = BTreeMap::new();
     /// map.insert(1, "a");
-    /// assert_eq!(map.get(&1), Some(&"a"));
-    /// assert_eq!(map.get(&2), None);
+    /// assert_eq!(map.get(&1).and_then(|e| Some(e.get().value)), Some("a"));
+    /// assert_eq!(map.get(&2).and_then(|e| Some(e.get().value)), None);
     /// ```
     pub fn get<Q>(&self, key: &Q) -> Option<super::set::Ref<Pair<K, V>>>
     where
@@ -184,9 +184,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     ///
     /// If the map did not have this key present, it will be inserted.
     ///
-    /// Otherwise, the value is **not** updated.
-    /// 
-    /// In both situations a Ref to a Pair will be returned. It is possible to acquire a mutable reference and mutate the value.
+    /// Otherwise, the value is updated.
     /// 
     /// [module-level documentation]: index.html#insert-and-complex-keys
     ///
@@ -203,14 +201,14 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     ///
     /// map.insert(37, "b");
     /// assert_eq!(map.insert(37, "c"), Some("b"));
-    /// map.get(&37, |value| assert_eq!(value, &"c"));
+    /// assert_eq!(map.get(&37).and_then(|e| Some(e.get().value)), Some("c"));
     /// ```
     pub fn insert(&self, key: K, value: V) -> Option<V> {
         let new_entry = Pair { key, value };
 
         self.set.put(new_entry).and_then(|pair| Some(pair.value))
     }
-    /// Removes a key from the map, returning the value at the key if the key
+    /// Removes a key from the map, returning the key and the value if the key
     /// was previously in the map.
     ///
     /// The key may be any borrowed form of the map's key type, but the ordering
@@ -225,7 +223,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     ///
     /// let mut map = BTreeMap::new();
     /// map.insert(1, "a");
-    /// assert_eq!(map.remove(&1), Some("a"));
+    /// assert_eq!(map.remove(&1), Some((1, "a")));
     /// assert_eq!(map.remove(&1), None);
     /// ```
     pub fn remove<Q>(&mut self, key: &Q) -> Option<(K, V)>

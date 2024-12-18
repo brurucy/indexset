@@ -932,7 +932,7 @@ impl<T: Ord> BTreeSet<T> {
     /// let union: Vec<_> = a.union(&b).cloned().collect();
     /// assert_eq!(union, [1, 2]);
     /// ```
-    pub fn union<'a>(&'a self, other: &'a Self) -> Union<T> {
+    pub fn union<'a>(&'a self, other: &'a Self) -> Union<'a, T> {
         Union {
             merge_iter: MergeIter {
                 start: true,
@@ -963,7 +963,7 @@ impl<T: Ord> BTreeSet<T> {
     /// let diff: Vec<_> = a.difference(&b).cloned().collect();
     /// assert_eq!(diff, [1]);
     /// ```
-    pub fn difference<'a>(&'a self, other: &'a Self) -> Difference<T> {
+    pub fn difference<'a>(&'a self, other: &'a Self) -> Difference<'a, T> {
         Difference {
             merge_iter: MergeIter {
                 start: true,
@@ -994,7 +994,7 @@ impl<T: Ord> BTreeSet<T> {
     /// let sym_diff: Vec<_> = a.symmetric_difference(&b).cloned().collect();
     /// assert_eq!(sym_diff, [1, 3]);
     /// ```
-    pub fn symmetric_difference<'a>(&'a self, other: &'a Self) -> SymmetricDifference<T> {
+    pub fn symmetric_difference<'a>(&'a self, other: &'a Self) -> SymmetricDifference<'a, T> {
         SymmetricDifference {
             merge_iter: MergeIter {
                 start: true,
@@ -1025,7 +1025,7 @@ impl<T: Ord> BTreeSet<T> {
     /// let intersection: Vec<_> = a.intersection(&b).cloned().collect();
     /// assert_eq!(intersection, [2]);
     /// ```
-    pub fn intersection<'a>(&'a self, other: &'a Self) -> Intersection<T> {
+    pub fn intersection<'a>(&'a self, other: &'a Self) -> Intersection<'a, T> {
         Intersection {
             merge_iter: MergeIter {
                 start: true,

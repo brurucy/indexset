@@ -217,7 +217,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                         if let Ok(_) = self.index_lock.try_write() {
                             self.index.insert(value.clone(), first_node);
 
-                            return Some(value);
+                            return None;
                         }
 
                         continue;
@@ -307,8 +307,8 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
     /// let mut set = BTreeSet::new();
     ///
     /// set.insert(2);
-    /// assert_eq!(set.remove(&2), true);
-    /// assert_eq!(set.remove(&2), false);
+    /// assert_eq!(set.remove(&2).is_some(), true);
+    /// assert_eq!(set.remove(&2).is_some(), false);
     /// ```
     pub fn remove<Q>(&self, value: &Q) -> Option<T>
     where 
@@ -973,7 +973,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::concurrent2::set::{BTreeSet, DEFAULT_INNER_SIZE};
+    use crate::concurrent::set::{BTreeSet, DEFAULT_INNER_SIZE};
     use rand::Rng;
     use std::collections::HashSet;
     use std::ops::Bound::Included;
