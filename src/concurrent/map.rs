@@ -221,17 +221,17 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     /// ```
     /// use indexset::concurrent::map::BTreeMap;
     ///
-    /// let mut map = BTreeMap::new();
+    /// let map = BTreeMap::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.remove(&1), Some((1, "a")));
     /// assert_eq!(map.remove(&1), None);
     /// ```
-    pub fn remove<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    pub fn remove<Q>(&self, key: &Q) -> Option<(K, V)>
     where
         Pair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        return self
+        self
             .set
             .remove(key)
             .and_then(|pair| Some((pair.key, pair.value)))
