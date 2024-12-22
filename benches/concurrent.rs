@@ -166,7 +166,7 @@ fn bench_btreeset_with_ratio(c: &mut Criterion, write_ratio: f64) {
             }
         });
     });
-    
+
     group.finish();
 }
 

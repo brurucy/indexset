@@ -69,19 +69,23 @@ where
     Q: Ord + ?Sized,
 {
     match bound {
-        std::ops::Bound::Unbounded => if from_start { 0 } else { haystack.len() },
+        std::ops::Bound::Unbounded => {
+            if from_start {
+                0
+            } else {
+                haystack.len()
+            }
+        }
         std::ops::Bound::Included(value) | std::ops::Bound::Excluded(value) => {
             let mut i = 0;
             while i < haystack.len() {
                 match haystack[i].borrow().cmp(&value) {
                     Ordering::Less => i += 1,
-                    Ordering::Equal => {
-                        match bound {
-                            std::ops::Bound::Included(_) => return i,
-                            std::ops::Bound::Excluded(_) => return i + 1,
-                            _ => unreachable!(),
-                        }
-                    }
+                    Ordering::Equal => match bound {
+                        std::ops::Bound::Included(_) => return i,
+                        std::ops::Bound::Excluded(_) => return i + 1,
+                        _ => unreachable!(),
+                    },
                     Ordering::Greater => break,
                 }
             }
@@ -111,7 +115,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
                 self.insert(idx, value);
                 (true, idx)
             }
-        }
+        };
     }
     #[inline]
     fn contains<Q>(&self, value: &Q) -> bool

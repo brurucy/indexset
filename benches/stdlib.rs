@@ -56,13 +56,13 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     let stdlib = std::collections::BTreeSet::from_iter(input.iter());
     let indexset = indexset::BTreeSet::from_iter(input.iter());
-    let concurrent_indexset = indexset::concurrent::set::BTreeSet::new(); 
+    let concurrent_indexset = indexset::concurrent::set::BTreeSet::new();
     for i in &input {
         concurrent_indexset.insert(*i);
     }
     let treeindex = TreeIndex::new();
     for i in &input {
-        treeindex.insert(*i, ());
+        let _ = treeindex.insert(*i, ());
     }
 
     c.bench_function("stdlib contains 100k", |b| {

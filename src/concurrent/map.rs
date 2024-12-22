@@ -1,6 +1,6 @@
 use std::{borrow::Borrow, iter::FusedIterator};
 
-use crate::core::pair::Pair;
+use crate::{cdc::change::ChangeEvent, core::pair::Pair};
 
 use super::set::BTreeSet;
 
@@ -10,7 +10,7 @@ where
     K: Send + Ord + Clone + 'static,
     V: Send + Clone + 'static,
 {
-    set: BTreeSet<Pair<K, V>>
+    pub(crate) set: BTreeSet<Pair<K, V>>,
 }
 
 impl<K: Send + Ord + Clone, V: Send + Clone + 'static> Default for BTreeMap<K, V> {
@@ -153,8 +153,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
         Pair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        self.set
-            .contains(key)
+        self.set.contains(key)
     }
     /// Returns a reference to a pair whose key corresponds to the input.
     ///
@@ -185,7 +184,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     /// If the map did not have this key present, it will be inserted.
     ///
     /// Otherwise, the value is updated.
-    /// 
+    ///
     /// [module-level documentation]: index.html#insert-and-complex-keys
     ///
     /// # Examples
@@ -206,7 +205,17 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     pub fn insert(&self, key: K, value: V) -> Option<V> {
         let new_entry = Pair { key, value };
 
-        self.set.put(new_entry).and_then(|pair| Some(pair.value))
+        self.set
+            .put_cdc(new_entry)
+            .0
+            .and_then(|pair| Some(pair.value))
+    }
+    pub fn insert_cdc(&self, key: K, value: V) -> (Option<V>, Vec<ChangeEvent<Pair<K, V>>>) {
+        let new_entry = Pair { key, value };
+
+        let (old_value, cdc) = self.set.put_cdc(new_entry);
+
+        (old_value.and_then(|pair| Some(pair.value)), cdc)
     }
     /// Removes a key from the map, returning the key and the value if the key
     /// was previously in the map.
@@ -234,7 +243,16 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
         return self
             .set
             .remove(key)
-            .and_then(|pair| Some((pair.key, pair.value)))
+            .and_then(|pair| Some((pair.key, pair.value)));
+    }
+    pub fn remove_cdc<Q>(&self, key: &Q) -> (Option<(K, V)>, Vec<ChangeEvent<Pair<K, V>>>)
+    where
+        Pair<K, V>: Borrow<Q> + Ord,
+        Q: Ord + ?Sized,
+    {
+        let (old_value, cdc) = self.set.remove_cdc(key);
+
+        (old_value.and_then(|pair| Some((pair.key, pair.value))), cdc)
     }
     /// Returns the number of elements in the map.
     ///
@@ -278,5 +296,172 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
         Iter {
             inner: self.set.iter(),
         }
+    }
+}
+
+#[cfg(test)]
+mod cdc_tests {
+    use super::*;
+
+    #[derive(Debug, Default)]
+    struct PersistedBTreeMap<K, V>
+    where
+        K: Ord + Clone,
+        V: Clone + PartialEq,
+    {
+        nodes: std::collections::BTreeMap<K, Vec<Pair<K, V>>>,
+    }
+
+    impl<K: Ord + Clone, V: Clone + PartialEq> PersistedBTreeMap<K, V> {
+        fn persist(&mut self, event: &ChangeEvent<Pair<K, V>>) {
+            match event {
+                ChangeEvent::InsertNode(max_key, node) => {
+                    self.nodes
+                        .insert(max_key.key.clone(), node.lock_arc().clone());
+                }
+                ChangeEvent::RemoveNode(max_key) => {
+                    self.nodes.remove(&max_key.key);
+                }
+                ChangeEvent::InsertAt(node_max, pair) => {
+                    if let Some(node) = self.nodes.get_mut(&node_max.key) {
+                        let pos = node.binary_search(pair).unwrap_or_else(|p| p);
+                        node.insert(pos, pair.clone());
+                    }
+                }
+                ChangeEvent::RemoveAt(node_max, pair) => {
+                    if let Some(node) = self.nodes.get_mut(&node_max.key) {
+                        if let Ok(pos) = node.binary_search(pair) {
+                            node.remove(pos);
+                        }
+                    }
+                }
+            }
+        }
+
+        fn contains_pair(&self, key: &K, value: &V) -> bool {
+            for node in self.nodes.values() {
+                if let Ok(pos) = node.binary_search(&Pair {
+                    key: key.clone(),
+                    value: value.clone(),
+                }) {
+                    if node[pos].value == *value {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+    }
+
+    #[test]
+    fn test_cdc_single_insert() {
+        let map = BTreeMap::new();
+        let mut mock_state = PersistedBTreeMap::default();
+
+        let (_, events) = map.insert_cdc(1, "a");
+
+        for event in events {
+            mock_state.persist(&event);
+        }
+
+        assert!(mock_state.contains_pair(&1, &"a"));
+        assert!(map.contains_key(&1));
+        assert_eq!(map.get(&1).unwrap().get().value, "a");
+
+        let expected_state = map
+            .set
+            .index
+            .iter()
+            .map(|e| (e.key().clone().key, e.value().lock_arc().clone()))
+            .collect::<_>();
+        assert_eq!(mock_state.nodes, expected_state);
+    }
+
+    #[test]
+    fn test_cdc_multiple_inserts() {
+        let map = BTreeMap::new();
+        let mut mock_state = PersistedBTreeMap::default();
+
+        for i in 0..1024 {
+            let (_, events) = map.insert_cdc(i, format!("val{}", i));
+
+            for event in events {
+                mock_state.persist(&event);
+            }
+        }
+
+        for i in 0..1024 {
+            assert!(mock_state.contains_pair(&i, &format!("val{}", i)));
+            assert!(map.contains_key(&i));
+            assert_eq!(map.get(&i).unwrap().get().value, format!("val{}", i));
+        }
+
+        let expected_state = map
+            .set
+            .index
+            .iter()
+            .map(|e| (e.key().clone().key, e.value().lock_arc().clone()))
+            .collect::<_>();
+        assert_eq!(mock_state.nodes, expected_state);
+    }
+
+    #[test]
+    fn test_cdc_updates() {
+        let map = BTreeMap::new();
+        let mut mock_state = PersistedBTreeMap::default();
+
+        let (_, events) = map.insert_cdc(1, "a");
+        for event in events {
+            mock_state.persist(&event);
+        }
+
+        let (_, events) = map.insert_cdc(1, "b");
+        for event in events {
+            mock_state.persist(&event);
+        }
+
+        assert!(mock_state.contains_pair(&1, &"b"));
+        assert!(!mock_state.contains_pair(&1, &"a"));
+        assert!(map.contains_key(&1));
+        assert_eq!(map.get(&1).unwrap().get().value, "b");
+
+        let expected_state = map
+            .set
+            .index
+            .iter()
+            .map(|e| (e.key().clone().key, e.value().lock_arc().clone()))
+            .collect::<_>();
+        assert_eq!(mock_state.nodes, expected_state);
+    }
+
+    #[test]
+    fn test_cdc_node_splits() {
+        let map = BTreeMap::new();
+        let mut mock_state = PersistedBTreeMap::default();
+
+        let n = crate::core::constants::DEFAULT_INNER_SIZE + 10;
+
+        for i in 0..n {
+            let (_, events) = map.insert_cdc(i, format!("val{}", i));
+            for event in events {
+                mock_state.persist(&event);
+            }
+        }
+
+        for i in 0..n {
+            assert!(mock_state.contains_pair(&i, &format!("val{}", i)));
+            assert!(map.contains_key(&i));
+            assert_eq!(map.get(&i).unwrap().get().value, format!("val{}", i));
+        }
+
+        assert!(mock_state.nodes.len() > 1);
+
+        let expected_state = map
+            .set
+            .index
+            .iter()
+            .map(|e| (e.key().clone().key, e.value().lock_arc().clone()))
+            .collect::<_>();
+        assert_eq!(mock_state.nodes, expected_state);
     }
 }

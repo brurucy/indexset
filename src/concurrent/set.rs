@@ -7,10 +7,11 @@ use crossbeam_utils::sync::ShardedLock;
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
 use std::iter::FusedIterator;
 
+use crate::cdc::change::ChangeEvent;
 use crate::core::constants::DEFAULT_INNER_SIZE;
 use crate::core::node::*;
 
-type Node<T> = Arc<Mutex<Vec<T>>>;
+pub type Node<T> = Arc<Mutex<Vec<T>>>;
 
 /// A **persistent** concurrent ordered set based on a B-Tree.
 ///
@@ -72,7 +73,7 @@ pub struct BTreeSet<T>
 where
     T: Ord + Clone + 'static,
 {
-    index: SkipMap<T, Node<T>>,
+    pub(crate) index: SkipMap<T, Node<T>>,
     index_lock: ShardedLock<()>,
 }
 impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
@@ -92,16 +93,17 @@ type CurrentVersion<T> = Node<T>;
 enum Operation<T: Send> {
     Split(OldVersion<T>, T, T),
     UpdateMax(CurrentVersion<T>, T),
-    MakeUnreachable(CurrentVersion<T>, T)
+    MakeUnreachable(CurrentVersion<T>, T),
 }
 
 impl<T: Ord + Send + Clone + 'static> Operation<T> {
-    fn commit(self, index: &SkipMap<T, Node<T>>) -> Result<Option<T>, ()> {
+    fn commit(self, index: &SkipMap<T, Node<T>>) -> Result<(Option<T>, Vec<ChangeEvent<T>>), ()> {
         match self {
             Operation::Split(old_node, old_max, value) => {
                 let mut guard = old_node.lock_arc();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &old_node) {
+                        let mut cdc = vec![];
                         index.remove(&old_max);
                         let mut new_vec = guard.halve();
 
@@ -112,10 +114,18 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                                 let (inserted, idx) = NodeLike::insert(&mut *guard, value.clone());
                                 insert_attempted = true;
                                 if !inserted {
-                                    old_value = NodeLike::replace(&mut *guard, idx, value.clone())  
+                                    old_value = NodeLike::replace(&mut *guard, idx, value.clone())
                                 }
                             }
 
+                            #[cfg(feature = "cdc")]
+                            {
+                                let _node_removal = ChangeEvent::RemoveNode(old_max);
+                                let _node_insertion_1 =
+                                    ChangeEvent::InsertNode(max.clone(), old_node.clone());
+                                cdc.push(_node_removal);
+                                cdc.push(_node_insertion_1);
+                            }
                             index.insert(max, old_node.clone());
                         }
 
@@ -130,12 +140,20 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                                     old_value = NodeLike::replace(&mut new_vec, idx, value);
                                 }
                             }
-                            index.insert(max, Arc::new(Mutex::new(new_vec)));
-                        }
-                        
-                        return Ok(old_value);
-                    }
 
+                            let new_node = Arc::new(Mutex::new(new_vec));
+
+                            #[cfg(feature = "cdc")]
+                            {
+                                let _node_insertion_2 =
+                                    ChangeEvent::InsertNode(max.clone(), new_node.clone());
+                                cdc.push(_node_insertion_2);
+                            }
+                            index.insert(max, new_node);
+                        }
+
+                        return Ok((old_value, cdc));
+                    }
                 }
 
                 Err(())
@@ -145,15 +163,25 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                 let new_max = guard.last().unwrap();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &node) {
+                        let mut cdc = vec![];
                         return Ok(match new_max.cmp(&old_max) {
-                            std::cmp::Ordering::Equal => None,
+                            std::cmp::Ordering::Equal => (None, cdc),
                             std::cmp::Ordering::Greater | std::cmp::Ordering::Less => {
                                 index.remove(&old_max);
                                 index.insert(new_max.clone(), node.clone());
 
-                                None
+                                #[cfg(feature = "cdc")]
+                                {
+                                    let node_removal = ChangeEvent::RemoveNode(old_max.clone());
+                                    cdc.push(node_removal);
+                                    let node_insertion =
+                                        ChangeEvent::InsertNode(new_max.clone(), node.clone());
+                                    cdc.push(node_insertion);
+                                }
+
+                                (None, cdc)
                             }
-                        })
+                        });
                     }
                 }
 
@@ -166,14 +194,19 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                     if Arc::ptr_eq(entry.value(), &node) {
                         return match new_max.cmp(&Some(&old_max)) {
                             std::cmp::Ordering::Less => {
+                                let mut cdc = vec![];
+
+                                #[cfg(feature = "cdc")]
+                                {
+                                    let node_removal = ChangeEvent::RemoveNode(old_max.clone());
+                                    cdc.push(node_removal);
+                                }
                                 index.remove(&old_max);
 
-                                Ok(None)
-                            },
-                            _ => {
-                                Err(())
+                                Ok((None, cdc))
                             }
-                        }
+                            _ => Err(()),
+                        };
                     }
                 }
 
@@ -194,12 +227,18 @@ impl<T: Ord + Clone + Send> Ref<T> {
     }
 }
 
+// RawAPI 1. Make the non-raw API return references, and then clone with the non-raw. Takes effort
+// RawAPI 2. Re-implement `put` and `Operation` returning change events. Most effort
+// RawAPI 3. Add a wrapper over `BTreeSet` and `BTreeMap` that will somehow intercept everything as expected. Takes effort
+// RawAPI 4.
+
 impl<T: Ord + Clone + Send> BTreeSet<T> {
     pub fn new() -> Self {
         Self::default()
     }
-    pub(crate) fn put(&self, value: T) -> Option<T> {
+    pub(crate) fn put_cdc(&self, value: T) -> (Option<T>, Vec<ChangeEvent<T>>) {
         loop {
+            let mut cdc = vec![];
             let mut _global_guard = self.index_lock.read();
             let target_node_entry = match self.index.lower_bound(std::ops::Bound::Included(&value))
             {
@@ -215,9 +254,16 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
 
                         drop(_global_guard);
                         if let Ok(_) = self.index_lock.try_write() {
-                            self.index.insert(value.clone(), first_node);
+                            #[cfg(feature = "cdc")]
+                            {
+                                let node_insertion =
+                                    ChangeEvent::InsertNode(value.clone(), first_node.clone());
+                                cdc.push(node_insertion);
+                            }
 
-                            return None;
+                            self.index.insert(value, first_node);
+
+                            return (None, cdc);
                         }
 
                         continue;
@@ -232,7 +278,14 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {
                     if node_guard.last().cloned() == old_max {
-                        return Some(value);
+                        #[cfg(feature = "cdc")]
+                        {
+                            let node_element_insertion =
+                                ChangeEvent::InsertAt(old_max.clone().unwrap(), value.clone());
+                            cdc.push(node_element_insertion);
+                        }
+
+                        return (Some(value), cdc);
                     }
 
                     if old_max.is_some() {
@@ -242,7 +295,17 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                         ))
                     }
                 } else {
-                    return NodeLike::replace(&mut *node_guard, idx, value.clone());
+                    #[cfg(feature = "cdc")]
+                    {
+                        let node_element_removal =
+                            ChangeEvent::RemoveAt(old_max.clone().unwrap(), value.clone());
+                        let node_element_insertion =
+                            ChangeEvent::InsertAt(old_max.clone().unwrap(), value.clone());
+                        cdc.push(node_element_removal);
+                        cdc.push(node_element_insertion);
+                    }
+
+                    return (NodeLike::replace(&mut *node_guard, idx, value.clone()), cdc);
                 }
             } else {
                 operation = Some(Operation::Split(
@@ -256,14 +319,13 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             drop(node_guard);
             let _global_guard = self.index_lock.write();
 
-            if let Ok(value) = operation.unwrap().commit(&self.index) {
-                return value;
+            if let Ok(value_cdc) = operation.unwrap().commit(&self.index) {
+                return value_cdc;
             }
             drop(_global_guard);
 
             continue;
         }
-
     }
     /// Adds a value to the set.
     ///
@@ -286,8 +348,8 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
     /// assert_eq!(set.len(), 1);
     /// ```
     pub fn insert(&self, value: T) -> bool {
-        if let None = self.put(value) {
-            return true
+        if let (None, _) = self.put_cdc(value) {
+            return true;
         }
 
         false
@@ -310,38 +372,53 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
     /// assert_eq!(set.remove(&2).is_some(), true);
     /// assert_eq!(set.remove(&2).is_some(), false);
     /// ```
-    pub fn remove<Q>(&self, value: &Q) -> Option<T>
-    where 
+    pub fn remove_cdc<Q>(&self, value: &Q) -> (Option<T>, Vec<ChangeEvent<T>>)
+    where
         T: Borrow<Q>,
-        Q: Ord + ?Sized, 
+        Q: Ord + ?Sized,
     {
         loop {
+            let mut cdc = vec![];
             let mut _global_guard = self.index_lock.read();
-            if let Some(target_node_entry) = self.index.lower_bound(std::ops::Bound::Included(&value)) {
+            if let Some(target_node_entry) =
+                self.index.lower_bound(std::ops::Bound::Included(&value))
+            {
                 let mut node_guard = target_node_entry.value().lock_arc();
-                let mut operation = None;
                 let old_max = node_guard.last().cloned();
                 let deleted = NodeLike::delete(&mut *node_guard, value);
                 if deleted.is_none() {
-                    return None;
+                    return (None, cdc);
                 }
 
-                if node_guard.len() > 0 {
+                let operation = if node_guard.len() > 0 {
                     if old_max.as_ref() == node_guard.last() {
-                        return deleted
+                        #[cfg(feature = "cdc")]
+                        {
+                            let _node_element_removal =
+                                ChangeEvent::RemoveAt(old_max.unwrap(), deleted.clone().unwrap());
+                            cdc.push(_node_element_removal);
+                        }
+
+                        return (deleted, cdc);
                     }
 
-                    operation = Some(Operation::UpdateMax(target_node_entry.value().clone(), old_max.unwrap()))
+                    Some(Operation::UpdateMax(
+                        target_node_entry.value().clone(),
+                        old_max.unwrap(),
+                    ))
                 } else {
-                    operation = Some(Operation::MakeUnreachable(target_node_entry.value().clone(), old_max.unwrap()))
-                }
+                    Some(Operation::MakeUnreachable(
+                        target_node_entry.value().clone(),
+                        old_max.unwrap(),
+                    ))
+                };
 
                 drop(_global_guard);
                 drop(node_guard);
                 let _global_guard = self.index_lock.write();
 
                 if let Ok(_) = operation.unwrap().commit(&self.index) {
-                    return deleted;
+                    return (deleted, cdc);
                 }
 
                 drop(_global_guard);
@@ -349,10 +426,17 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                 continue;
             }
 
-            break;            
+            break;
         }
 
-        return None
+        return (None, vec![]);
+    }
+    pub fn remove<Q>(&self, value: &Q) -> Option<T>
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        return self.remove_cdc(value).0;
     }
     fn locate_node<Q>(&self, value: &Q) -> Option<Arc<Mutex<Vec<T>>>>
     where
@@ -368,7 +452,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                 .or_else(|| self.index.front().map(|first| first.value().clone())),
         }
     }
-     /// Returns `true` if the set contains an element equal to the value.
+    /// Returns `true` if the set contains an element equal to the value.
     ///
     /// The value may be any borrowed form of the set's element type,
     /// but the ordering on the borrowed form *must* match the
@@ -721,7 +805,9 @@ where
                             match end_bound {
                                 std::ops::Bound::Included(_) => {
                                     if position < new_guard.len() {
-                                        iter_local.nth_back(new_guard.len().wrapping_sub(position).wrapping_sub(2));
+                                        iter_local.nth_back(
+                                            new_guard.len().wrapping_sub(position).wrapping_sub(2),
+                                        );
                                     }
                                 }
                                 _ => {
@@ -738,9 +824,9 @@ where
                             .and_then(|g| Some((g.len(), g.rank(end_bound, false))))
                         {
                             if position < len {
-                                current_front_entry_iter
-                                    .as_mut()
-                                    .and_then(|i| i.nth_back(len.wrapping_sub(position).wrapping_sub(1)));
+                                current_front_entry_iter.as_mut().and_then(|i| {
+                                    i.nth_back(len.wrapping_sub(position).wrapping_sub(1))
+                                });
                             }
                         }
                     }
@@ -849,13 +935,9 @@ where
 
         let start_bound = range.start_bound();
         let end_bound = range.end_bound();
-        let potential_front_entry = self
-            .index
-            .lower_bound(start_bound);
+        let potential_front_entry = self.index.lower_bound(start_bound);
 
-        let potential_back_entry = self
-            .index
-            .lower_bound(end_bound);
+        let potential_back_entry = self.index.lower_bound(end_bound);
 
         let (potential_front_entry_guard, potential_front_position) =
             if let Some(front_entry) = potential_front_entry.clone() {
@@ -881,7 +963,7 @@ where
                     if !Arc::ptr_eq(back_entry.value(), front_entry.value()) {
                         let new_guard = back_entry.value().lock_arc();
                         let position = new_guard.rank(end_bound, true);
-                        back_position =  {
+                        back_position = {
                             if position > 0 {
                                 position - 1
                             } else {
@@ -917,7 +999,13 @@ where
             // But no back entry
             if let None = potential_back_entry_guard {
                 // Then we drain the front entry
-                let adjusted_back_position = { if potential_front_position > potential_back_position { front_entry_guard.len() } else { potential_back_position } };
+                let adjusted_back_position = {
+                    if potential_front_position > potential_back_position {
+                        front_entry_guard.len()
+                    } else {
+                        potential_back_position
+                    }
+                };
                 front_entry_guard.drain(potential_front_position..adjusted_back_position);
                 // Clone the mutex
                 let old_entry_value = front_entry.value().clone();
@@ -1139,15 +1227,12 @@ mod tests {
         let btree = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 10)).into_iter());
         assert_eq!(btree.iter().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
         let start = btree
-                .range(0..DEFAULT_INNER_SIZE)
-                .into_iter()
-                .cloned()
-                .collect::<Vec<_>>();
+            .range(0..DEFAULT_INNER_SIZE)
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
 
-        assert_eq!(
-            start,
-            (0..DEFAULT_INNER_SIZE).collect::<Vec<_>>()
-        );
+        assert_eq!(start, (0..DEFAULT_INNER_SIZE).collect::<Vec<_>>());
         assert_eq!(
             btree
                 .range(0..=DEFAULT_INNER_SIZE)
@@ -1233,8 +1318,7 @@ mod tests {
         // And then more (512 * 3) / 2
         let from = (DEFAULT_INNER_SIZE * 3) / 2;
         btree.remove_range(from..);
-        let expected_len =
-            expected_len - (DEFAULT_INNER_SIZE) - 5 + 10;
+        let expected_len = expected_len - (DEFAULT_INNER_SIZE) - 5 + 10;
         let actual_len = btree.len();
         assert_eq!(expected_len, actual_len);
 
@@ -1370,5 +1454,4 @@ mod tests {
             assert!(!set.contains(&i), "Element {} should not be in the set", i);
         }
     }
-
 }
