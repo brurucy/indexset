@@ -75,6 +75,7 @@ where
 {
     pub(crate) index: SkipMap<T, Node<T>>,
     index_lock: ShardedLock<()>,
+    node_capacity: usize,
 }
 impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
     fn default() -> Self {
@@ -83,6 +84,7 @@ impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
         Self {
             index,
             index_lock: ShardedLock::new(()),
+            node_capacity: DEFAULT_INNER_SIZE,
         }
     }
 }
@@ -120,11 +122,11 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
 
                             #[cfg(feature = "cdc")]
                             {
-                                let _node_removal = ChangeEvent::RemoveNode(old_max);
-                                let _node_insertion_1 =
+                                let node_removal = ChangeEvent::RemoveNode(old_max);
+                                let node_insertion_1 =
                                     ChangeEvent::InsertNode(max.clone(), old_node.clone());
-                                cdc.push(_node_removal);
-                                cdc.push(_node_insertion_1);
+                                cdc.push(node_removal);
+                                cdc.push(node_insertion_1);
                             }
                             index.insert(max, old_node.clone());
                         }
@@ -145,9 +147,9 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
 
                             #[cfg(feature = "cdc")]
                             {
-                                let _node_insertion_2 =
+                                let node_insertion_2 =
                                     ChangeEvent::InsertNode(max.clone(), new_node.clone());
-                                cdc.push(_node_insertion_2);
+                                cdc.push(node_insertion_2);
                             }
                             index.insert(max, new_node);
                         }
@@ -227,14 +229,25 @@ impl<T: Ord + Clone + Send> Ref<T> {
     }
 }
 
-// RawAPI 1. Make the non-raw API return references, and then clone with the non-raw. Takes effort
-// RawAPI 2. Re-implement `put` and `Operation` returning change events. Most effort
-// RawAPI 3. Add a wrapper over `BTreeSet` and `BTreeMap` that will somehow intercept everything as expected. Takes effort
-// RawAPI 4.
-
 impl<T: Ord + Clone + Send> BTreeSet<T> {
     pub fn new() -> Self {
         Self::default()
+    }
+    /// Makes a new, empty `BTreeSet` with the given maximum node size. Allocates one vec with
+    /// the capacity set to be the specified node size.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use indexset::concurrent::set::BTreeSet;
+    ///
+    /// let set: BTreeSet<i32> = BTreeSet::with_maximum_node_size(128);
+    pub fn with_maximum_node_size(node_capacity: usize) -> Self {
+        Self {
+            index: SkipMap::new(),
+            index_lock: ShardedLock::new(()),
+            node_capacity,
+        }
     }
     pub(crate) fn put_cdc(&self, value: T) -> (Option<T>, Vec<ChangeEvent<T>>) {
         loop {
@@ -247,7 +260,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                     if let Some(last) = self.index.back() {
                         last
                     } else {
-                        let mut first_vec = Vec::with_capacity(DEFAULT_INNER_SIZE);
+                        let mut first_vec = Vec::with_capacity(self.node_capacity);
                         first_vec.push(value.clone());
 
                         let first_node = Arc::new(Mutex::new(first_vec));
@@ -273,7 +286,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
 
             let mut node_guard = target_node_entry.value().lock_arc();
             let mut operation = None;
-            if node_guard.len() < DEFAULT_INNER_SIZE {
+            if node_guard.len() < self.node_capacity {
                 let old_max = node_guard.last().cloned();
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {
@@ -354,24 +367,6 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
 
         false
     }
-    /// If the set contains an element equal to the value, removes it from the
-    /// set and drops it. Returns whether such an element was present.
-    ///
-    /// The value may be any borrowed form of the set's element type,
-    /// but the ordering on the borrowed form *must* match the
-    /// ordering on the element type.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use indexset::concurrent::set::BTreeSet;
-    ///
-    /// let mut set = BTreeSet::new();
-    ///
-    /// set.insert(2);
-    /// assert_eq!(set.remove(&2).is_some(), true);
-    /// assert_eq!(set.remove(&2).is_some(), false);
-    /// ```
     pub fn remove_cdc<Q>(&self, value: &Q) -> (Option<T>, Vec<ChangeEvent<T>>)
     where
         T: Borrow<Q>,
@@ -431,6 +426,24 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
 
         return (None, vec![]);
     }
+    /// If the set contains an element equal to the value, removes it from the
+    /// set and drops it. Returns whether such an element was present.
+    ///
+    /// The value may be any borrowed form of the set's element type,
+    /// but the ordering on the borrowed form *must* match the
+    /// ordering on the element type.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use indexset::concurrent::set::BTreeSet;
+    ///
+    /// let mut set = BTreeSet::new();
+    ///
+    /// set.insert(2);
+    /// assert_eq!(set.remove(&2).is_some(), true);
+    /// assert_eq!(set.remove(&2).is_some(), false);
+    /// ```
     pub fn remove<Q>(&self, value: &Q) -> Option<T>
     where
         T: Borrow<Q>,

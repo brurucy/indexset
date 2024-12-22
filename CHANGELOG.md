@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2024-12-22
+
+### Added
+- CDC feature. If toggled on, returns the change events associated with the mutating operation.
+
 ## [0.6.0] - 2024-12-19
 
 ### Added
