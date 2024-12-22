@@ -253,10 +253,6 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
         let (old_value, cdc) = self.set.remove_cdc(key);
 
         (old_value.and_then(|pair| Some((pair.key, pair.value))), cdc)
-        self
-            .set
-            .remove(key)
-            .and_then(|pair| Some((pair.key, pair.value)))
     }
     /// Returns the number of elements in the map.
     ///
@@ -301,9 +297,10 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
             inner: self.set.iter(),
         }
     }
+}
 
 #[cfg(test)]
-mod cdc_tests {
+mod tests {
     use super::*;
 
     #[derive(Debug, Default)]

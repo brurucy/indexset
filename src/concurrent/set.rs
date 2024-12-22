@@ -343,8 +343,8 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
 
             continue;
         }
-
     }
+
     /// Adds a value to the set.
     ///
     /// Returns whether the value was newly inserted. That is:
@@ -429,7 +429,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             break;
         }
 
-        return (None, vec![]);
+        (None, vec![])
     }
     /// If the set contains an element equal to the value, removes it from the
     /// set and drops it. Returns whether such an element was present.
@@ -450,7 +450,11 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
     /// assert_eq!(set.remove(&2).is_some(), false);
     /// ```
     pub fn remove<Q>(&self, value: &Q) -> Option<T>
-        return self.remove_cdc(value).0;
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.remove_cdc(value).0
     }
     fn locate_node<Q>(&self, value: &Q) -> Option<Arc<Mutex<Vec<T>>>>
     where
@@ -1468,107 +1472,4 @@ mod tests {
             assert!(!set.contains(&i), "Element {} should not be in the set", i);
         }
     }
-
-    #[test]
-    fn test_remove_single_element() {
-        let set = BTreeSet::<i32>::new();
-        set.insert(5);
-        assert!(set.contains(&5));
-        assert!(set.remove(&5).is_some());
-        assert!(!set.contains(&5));
-        assert!(!set.remove(&5).is_some());
-    }
-
-    #[test]
-    fn test_remove_multiple_elements() {
-        let set = BTreeSet::<i32>::new();
-        for i in 0..2048 {
-            set.insert(i);
-        }
-        for i in 0..2048 {
-            assert!(set.remove(&i).is_some());
-            assert!(!set.contains(&i));
-        }
-        assert_eq!(set.len(), 0);
-    }
-
-    #[test]
-    fn test_remove_non_existent() {
-        let set = BTreeSet::<i32>::new();
-        set.insert(5);
-        assert!(!set.remove(&10).is_some());
-        assert!(set.contains(&5));
-    }
-    #[test]
-    fn test_remove_stress() {
-        let set = Arc::new(BTreeSet::<i32>::new());
-        const NUM_ELEMENTS: i32 = 10000;
-
-        for i in 0..NUM_ELEMENTS {
-            set.insert(i);
-        }
-        assert_eq!(
-            set.len(),
-            NUM_ELEMENTS as usize,
-            "Incorrect size after insertion"
-        );
-
-        let num_threads = 8;
-        let elements_per_thread = NUM_ELEMENTS / num_threads;
-        let handles: Vec<_> = (0..num_threads)
-            .map(|t| {
-                let set = Arc::clone(&set);
-                thread::spawn(move || {
-                    for i in (t * elements_per_thread)..((t + 1) * elements_per_thread) {
-                        if i % 2 == 1 {
-                            assert!(set.remove(&i).is_some(), "Failed to remove {}", i);
-                        }
-                    }
-                })
-            })
-            .collect();
-
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        assert_eq!(
-            set.len(),
-            NUM_ELEMENTS as usize / 2,
-            "Incorrect size after removal"
-        );
-
-        for i in 0..NUM_ELEMENTS {
-            if i % 2 == 0 {
-                assert!(set.contains(&i), "Even number {} should be in the set", i);
-            } else {
-                assert!(
-                    !set.contains(&i),
-                    "Odd number {} should not be in the set",
-                    i
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_remove_all_elements() {
-        let set = BTreeSet::<i32>::new();
-        let n = 2048;
-
-        for i in 0..n {
-            set.insert(i);
-        }
-
-        for i in 0..n {
-            assert!(set.remove(&i).is_some(), "Failed to remove {}", i);
-        }
-
-        assert_eq!(set.len(), 0, "Set should be empty");
-
-        for i in 0..n {
-            assert!(!set.contains(&i), "Element {} should not be in the set", i);
-        }
-    }
-
 }
