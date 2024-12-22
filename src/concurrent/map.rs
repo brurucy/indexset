@@ -235,7 +235,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     /// assert_eq!(map.remove(&1), Some((1, "a")));
     /// assert_eq!(map.remove(&1), None);
     /// ```
-    pub fn remove<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    pub fn remove<Q>(&self, key: &Q) -> Option<(K, V)>
     where
         Pair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
