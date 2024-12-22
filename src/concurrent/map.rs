@@ -184,7 +184,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     /// If the map did not have this key present, it will be inserted.
     ///
     /// Otherwise, the value is updated.
-    ///
+    /// 
     /// [module-level documentation]: index.html#insert-and-complex-keys
     ///
     /// # Examples
@@ -230,7 +230,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     /// ```
     /// use indexset::concurrent::map::BTreeMap;
     ///
-    /// let mut map = BTreeMap::new();
+    /// let map = BTreeMap::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.remove(&1), Some((1, "a")));
     /// assert_eq!(map.remove(&1), None);
@@ -253,6 +253,10 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
         let (old_value, cdc) = self.set.remove_cdc(key);
 
         (old_value.and_then(|pair| Some((pair.key, pair.value))), cdc)
+        self
+            .set
+            .remove(key)
+            .and_then(|pair| Some((pair.key, pair.value)))
     }
     /// Returns the number of elements in the map.
     ///
@@ -297,7 +301,6 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
             inner: self.set.iter(),
         }
     }
-}
 
 #[cfg(test)]
 mod cdc_tests {

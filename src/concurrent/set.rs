@@ -128,6 +128,7 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                                 cdc.push(node_removal);
                                 cdc.push(node_insertion_1);
                             }
+
                             index.insert(max, old_node.clone());
                         }
 
@@ -184,6 +185,7 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                                 (None, cdc)
                             }
                         });
+
                     }
                 }
 
@@ -261,6 +263,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                         last
                     } else {
                         let mut first_vec = Vec::with_capacity(self.node_capacity);
+
                         first_vec.push(value.clone());
 
                         let first_node = Arc::new(Mutex::new(first_vec));
@@ -277,7 +280,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                             self.index.insert(value, first_node);
 
                             return (None, cdc);
-                        }
+                       }
 
                         continue;
                     }
@@ -287,6 +290,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             let mut node_guard = target_node_entry.value().lock_arc();
             let mut operation = None;
             if node_guard.len() < self.node_capacity {
+
                 let old_max = node_guard.last().cloned();
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {
@@ -299,7 +303,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                         }
 
                         return (Some(value), cdc);
-                    }
+                   }
 
                     if old_max.is_some() {
                         operation = Some(Operation::UpdateMax(
@@ -319,7 +323,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                     }
 
                     return (NodeLike::replace(&mut *node_guard, idx, value.clone()), cdc);
-                }
+               }
             } else {
                 operation = Some(Operation::Split(
                     target_node_entry.value().clone(),
@@ -339,6 +343,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
 
             continue;
         }
+
     }
     /// Adds a value to the set.
     ///
@@ -445,10 +450,6 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
     /// assert_eq!(set.remove(&2).is_some(), false);
     /// ```
     pub fn remove<Q>(&self, value: &Q) -> Option<T>
-    where
-        T: Borrow<Q>,
-        Q: Ord + ?Sized,
-    {
         return self.remove_cdc(value).0;
     }
     fn locate_node<Q>(&self, value: &Q) -> Option<Arc<Mutex<Vec<T>>>>
@@ -821,7 +822,7 @@ where
                                         iter_local.nth_back(
                                             new_guard.len().wrapping_sub(position).wrapping_sub(2),
                                         );
-                                    }
+                                   }
                                 }
                                 _ => {
                                     iter_local.nth_back(new_guard.len().wrapping_sub(position));
@@ -1467,4 +1468,107 @@ mod tests {
             assert!(!set.contains(&i), "Element {} should not be in the set", i);
         }
     }
+
+    #[test]
+    fn test_remove_single_element() {
+        let set = BTreeSet::<i32>::new();
+        set.insert(5);
+        assert!(set.contains(&5));
+        assert!(set.remove(&5).is_some());
+        assert!(!set.contains(&5));
+        assert!(!set.remove(&5).is_some());
+    }
+
+    #[test]
+    fn test_remove_multiple_elements() {
+        let set = BTreeSet::<i32>::new();
+        for i in 0..2048 {
+            set.insert(i);
+        }
+        for i in 0..2048 {
+            assert!(set.remove(&i).is_some());
+            assert!(!set.contains(&i));
+        }
+        assert_eq!(set.len(), 0);
+    }
+
+    #[test]
+    fn test_remove_non_existent() {
+        let set = BTreeSet::<i32>::new();
+        set.insert(5);
+        assert!(!set.remove(&10).is_some());
+        assert!(set.contains(&5));
+    }
+    #[test]
+    fn test_remove_stress() {
+        let set = Arc::new(BTreeSet::<i32>::new());
+        const NUM_ELEMENTS: i32 = 10000;
+
+        for i in 0..NUM_ELEMENTS {
+            set.insert(i);
+        }
+        assert_eq!(
+            set.len(),
+            NUM_ELEMENTS as usize,
+            "Incorrect size after insertion"
+        );
+
+        let num_threads = 8;
+        let elements_per_thread = NUM_ELEMENTS / num_threads;
+        let handles: Vec<_> = (0..num_threads)
+            .map(|t| {
+                let set = Arc::clone(&set);
+                thread::spawn(move || {
+                    for i in (t * elements_per_thread)..((t + 1) * elements_per_thread) {
+                        if i % 2 == 1 {
+                            assert!(set.remove(&i).is_some(), "Failed to remove {}", i);
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(
+            set.len(),
+            NUM_ELEMENTS as usize / 2,
+            "Incorrect size after removal"
+        );
+
+        for i in 0..NUM_ELEMENTS {
+            if i % 2 == 0 {
+                assert!(set.contains(&i), "Even number {} should be in the set", i);
+            } else {
+                assert!(
+                    !set.contains(&i),
+                    "Odd number {} should not be in the set",
+                    i
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_remove_all_elements() {
+        let set = BTreeSet::<i32>::new();
+        let n = 2048;
+
+        for i in 0..n {
+            set.insert(i);
+        }
+
+        for i in 0..n {
+            assert!(set.remove(&i).is_some(), "Failed to remove {}", i);
+        }
+
+        assert_eq!(set.len(), 0, "Set should be empty");
+
+        for i in 0..n {
+            assert!(!set.contains(&i), "Element {} should not be in the set", i);
+        }
+    }
+
 }
