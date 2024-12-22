@@ -1,6 +1,6 @@
 [package]
 name = "indexset"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2021"
 documentation = "https://docs.rs/indexset/"
 repository = "https://github.com/brurucy/indexset"
@@ -25,6 +25,7 @@ crossbeam-skiplist = { version = "0.1.3", optional = true}
 [features]
 serde = ["dep:serde"]
 concurrent = ["dep:crossbeam-utils", "dep:crossbeam-skiplist", "dep:parking_lot"]
+cdc = ["concurrent"]
 
 [[bench]]
 name = "stdlib"

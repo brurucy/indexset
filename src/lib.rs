@@ -1,6 +1,9 @@
 #[cfg(feature = "concurrent")]
 pub mod concurrent;
 
+#[cfg(feature = "cdc")]
+pub mod cdc;
+
 mod core;
 
 use crate::Entry::{Occupied, Vacant};
@@ -190,8 +193,8 @@ impl<T: Ord> BTreeSet<T> {
         Q: Ord + ?Sized,
     {
         let node_idx = self.locate_node(value);
-        let position_within_node = self.inner[node_idx]
-            .partition_point(|item| item.borrow() < value);
+        let position_within_node =
+            self.inner[node_idx].partition_point(|item| item.borrow() < value);
 
         (node_idx, position_within_node)
     }
@@ -202,8 +205,7 @@ impl<T: Ord> BTreeSet<T> {
         P: FnMut(&Q) -> bool,
     {
         let node_idx = self.locate_node_cmp(&mut cmp);
-        let position_within_node = self.inner[node_idx]
-            .partition_point(|item| cmp(item.borrow()));
+        let position_within_node = self.inner[node_idx].partition_point(|item| cmp(item.borrow()));
 
         (node_idx, position_within_node)
     }
@@ -1373,8 +1375,7 @@ where
                 return None;
             };
             self.current_back_node_idx -= 1;
-            self.current_back_iterator =
-                Some(self.btree.inner[self.current_back_node_idx].iter());
+            self.current_back_iterator = Some(self.btree.inner[self.current_back_node_idx].iter());
 
             self.next_back()
         }
@@ -2183,12 +2184,9 @@ where
             .set
             .locate_value_cmp(|item: &Pair<K, V>| item.key.borrow() < key);
         if self.set.inner.get(node_idx).is_some()
-            && self.set.inner[node_idx]
-                .get(position_within_node)
-                .is_some()
+            && self.set.inner[node_idx].get(position_within_node).is_some()
         {
-            let entry = self.set.inner[node_idx]
-                .get_mut(position_within_node)?;
+            let entry = self.set.inner[node_idx].get_mut(position_within_node)?;
 
             return Some(&mut entry.value);
         }
@@ -3742,8 +3740,8 @@ impl<'a, K: Ord, V> CursorMap<'a, K, V> {
 
 #[cfg(test)]
 mod tests {
-    use super::core::node::*;
     use super::core::constants::*;
+    use super::core::node::*;
     use crate::{BTreeMap, BTreeSet, Node};
     use rand::{Rng, SeedableRng};
     use std::collections::Bound::Included;
@@ -3754,12 +3752,13 @@ mod tests {
 
         let expected_output: Vec<isize> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-        let actual_node = input
-            .iter()
-            .fold(Node::with_capacity(DEFAULT_INNER_SIZE), |mut acc, curr| {
-                NodeLike::insert(&mut acc, *curr);
-                acc
-            });
+        let actual_node =
+            input
+                .iter()
+                .fold(Node::with_capacity(DEFAULT_INNER_SIZE), |mut acc, curr| {
+                    NodeLike::insert(&mut acc, *curr);
+                    acc
+                });
 
         let actual_output: Vec<isize> = actual_node.iter().cloned().collect();
 
