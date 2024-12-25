@@ -1,6 +1,8 @@
 use std::{borrow::Borrow, iter::FusedIterator};
 
-use crate::{cdc::change::ChangeEvent, core::pair::Pair};
+#[cfg(feature = "cdc")]
+use crate::cdc::change::ChangeEvent;
+use crate::core::pair::Pair;
 
 use super::set::BTreeSet;
 
@@ -205,11 +207,9 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     pub fn insert(&self, key: K, value: V) -> Option<V> {
         let new_entry = Pair { key, value };
 
-        self.set
-            .put_cdc(new_entry)
-            .0
-            .and_then(|pair| Some(pair.value))
+        self.set.put(new_entry).and_then(|pair| Some(pair.value))
     }
+    #[cfg(feature = "cdc")]
     pub fn insert_cdc(&self, key: K, value: V) -> (Option<V>, Vec<ChangeEvent<Pair<K, V>>>) {
         let new_entry = Pair { key, value };
 
@@ -240,11 +240,12 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
         Pair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        return self
+        self
             .set
             .remove(key)
-            .and_then(|pair| Some((pair.key, pair.value)));
+            .and_then(|pair| Some((pair.key, pair.value)))
     }
+    #[cfg(feature = "cdc")]
     pub fn remove_cdc<Q>(&self, key: &Q) -> (Option<(K, V)>, Vec<ChangeEvent<Pair<K, V>>>)
     where
         Pair<K, V>: Borrow<Q> + Ord,

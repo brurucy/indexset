@@ -34,7 +34,7 @@ pub trait NodeLike<T: Ord> {
 }
 
 #[inline]
-fn search<Q, T: Ord>(haystack: &[T], needle: &Q) -> Result<usize, usize>
+fn search<Q, T>(haystack: &[T], needle: &Q) -> Result<usize, usize>
 where
     T: Borrow<Q> + Ord,
     Q: Ord + ?Sized,
@@ -46,7 +46,7 @@ where
         let p = haystack.as_ptr().cast::<T>();
         let mut m = j >> 1;
         while i != j {
-            match (*p.add(m)).borrow().cmp(&needle) {
+            match (*p.add(m)).borrow().cmp(needle) {
                 Ordering::Equal => return Ok(m),
                 Ordering::Less => {
                     i = m + 1;
@@ -63,7 +63,7 @@ where
 }
 
 #[inline]
-fn search_bound<Q, T: Ord>(haystack: &[T], bound: std::ops::Bound<&Q>, from_start: bool) -> usize
+fn search_bound<Q, T>(haystack: &[T], bound: std::ops::Bound<&Q>, from_start: bool) -> usize
 where
     T: Borrow<Q> + Ord,
     Q: Ord + ?Sized,
@@ -79,7 +79,7 @@ where
         std::ops::Bound::Included(value) | std::ops::Bound::Excluded(value) => {
             let mut i = 0;
             while i < haystack.len() {
-                match haystack[i].borrow().cmp(&value) {
+                match haystack[i].borrow().cmp(value) {
                     Ordering::Less => i += 1,
                     Ordering::Equal => match bound {
                         std::ops::Bound::Included(_) => return i,
@@ -109,13 +109,13 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     }
     #[inline]
     fn insert(&mut self, value: T) -> (bool, usize) {
-        return match search(&self, &value) {
+        match search(self, &value) {
             Ok(idx) => (false, idx),
             Err(idx) => {
                 self.insert(idx, value);
                 (true, idx)
             }
-        };
+        }
     }
     #[inline]
     fn contains<Q>(&self, value: &Q) -> bool
@@ -123,10 +123,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         T: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        match search(&self, &value) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        search(self, value).is_ok()
     }
     #[inline]
     fn try_select<Q>(&self, value: &Q) -> Option<usize>
@@ -134,7 +131,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         T: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        match search(&self, &value) {
+        match search(self, value) {
             Ok(index) => Some(index),
             Err(_) => None,
         }
@@ -145,7 +142,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         T: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        search_bound(&self, bound, from_start)
+        search_bound(self, bound, from_start)
     }
     #[inline]
     fn delete<Q>(&mut self, value: &Q) -> Option<T>
@@ -153,7 +150,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         T: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        match search(&self, value) {
+        match search(self, value) {
             Ok(idx) => Some(self.remove(idx)),
             Err(_) => None,
         }

@@ -7,6 +7,7 @@ use crossbeam_utils::sync::ShardedLock;
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
 use std::iter::FusedIterator;
 
+#[cfg(feature = "cdc")]
 use crate::cdc::change::ChangeEvent;
 use crate::core::constants::DEFAULT_INNER_SIZE;
 use crate::core::node::*;
@@ -98,14 +99,21 @@ enum Operation<T: Send> {
     MakeUnreachable(CurrentVersion<T>, T),
 }
 
+#[cfg(feature = "cdc")]
+type CommitResult<T> = (Option<T>, Vec<ChangeEvent<T>>);
+#[cfg(not(feature = "cdc"))]
+type CommitResult<T> = Option<T>;
+
 impl<T: Ord + Send + Clone + 'static> Operation<T> {
-    fn commit(self, index: &SkipMap<T, Node<T>>) -> Result<(Option<T>, Vec<ChangeEvent<T>>), ()> {
+    fn commit(self, index: &SkipMap<T, Node<T>>) -> Result<CommitResult<T>, ()> {
         match self {
             Operation::Split(old_node, old_max, value) => {
                 let mut guard = old_node.lock_arc();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &old_node) {
+                        #[cfg(feature = "cdc")]
                         let mut cdc = vec![];
+
                         index.remove(&old_max);
                         let mut new_vec = guard.halve();
 
@@ -155,7 +163,15 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                             index.insert(max, new_node);
                         }
 
-                        return Ok((old_value, cdc));
+                        #[cfg(feature = "cdc")]
+                        {
+                            return Ok((old_value, cdc));
+                        }
+                        #[cfg(not(feature = "cdc"))]
+                        {
+                            return Ok(old_value);
+                        }
+
                     }
                 }
 
@@ -166,9 +182,20 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                 let new_max = guard.last().unwrap();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &node) {
+                        #[cfg(feature = "cdc")]
                         let mut cdc = vec![];
-                        return Ok(match new_max.cmp(&old_max) {
-                            std::cmp::Ordering::Equal => (None, cdc),
+
+                        return Ok(return match new_max.cmp(&old_max) {
+                            std::cmp::Ordering::Equal => {
+                                #[cfg(feature = "cdc")]
+                                {
+                                    Ok((None, cdc))
+                                }
+                                #[cfg(not(feature = "cdc"))]
+                                {
+                                    Ok(None)
+                                }
+                            },
                             std::cmp::Ordering::Greater | std::cmp::Ordering::Less => {
                                 index.remove(&old_max);
                                 index.insert(new_max.clone(), node.clone());
@@ -182,7 +209,14 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                                     cdc.push(node_insertion);
                                 }
 
-                                (None, cdc)
+                                #[cfg(feature = "cdc")]
+                                {
+                                    Ok((None, cdc))
+                                }
+                                #[cfg(not(feature = "cdc"))]
+                                {
+                                    Ok(None)
+                                }
                             }
                         });
 
@@ -198,6 +232,7 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                     if Arc::ptr_eq(entry.value(), &node) {
                         return match new_max.cmp(&Some(&old_max)) {
                             std::cmp::Ordering::Less => {
+                                #[cfg(feature = "cdc")]
                                 let mut cdc = vec![];
 
                                 #[cfg(feature = "cdc")]
@@ -207,7 +242,14 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                                 }
                                 index.remove(&old_max);
 
-                                Ok((None, cdc))
+                                #[cfg(feature = "cdc")]
+                                {
+                                    Ok((None, cdc))
+                                }
+                                #[cfg(not(feature = "cdc"))]
+                                {
+                                    Ok(None)
+                                }
                             }
                             _ => Err(()),
                         };
@@ -231,6 +273,11 @@ impl<T: Ord + Clone + Send> Ref<T> {
     }
 }
 
+#[cfg(feature = "cdc")]
+pub(crate) type CdcResult<T> = (Option<T>, Vec<ChangeEvent<T>>);
+#[cfg(not(feature = "cdc"))]
+pub(crate) type CdcResult<T> = Option<T>;
+
 impl<T: Ord + Clone + Send> BTreeSet<T> {
     pub fn new() -> Self {
         Self::default()
@@ -251,10 +298,22 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             node_capacity,
         }
     }
-    pub(crate) fn put_cdc(&self, value: T) -> (Option<T>, Vec<ChangeEvent<T>>) {
+    pub(crate) fn put(&self, value: T) -> Option<T> {
+        #[cfg(feature = "cdc")]
+        {
+            self.put_cdc(value).0
+        }
+        #[cfg(not(feature = "cdc"))]
+        {
+            self.put_cdc(value)
+        }
+    }
+    pub(crate) fn put_cdc(&self, value: T) -> CdcResult<T> {
         loop {
+            #[cfg(feature = "cdc")]
             let mut cdc = vec![];
-            let mut _global_guard = self.index_lock.read();
+
+            let _global_guard = self.index_lock.read();
             let target_node_entry = match self.index.lower_bound(std::ops::Bound::Included(&value))
             {
                 Some(entry) => entry,
@@ -279,7 +338,14 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
 
                             self.index.insert(value, first_node);
 
-                            return (None, cdc);
+                            #[cfg(feature = "cdc")]
+                            {
+                                return (None, cdc);
+                            }
+                            #[cfg(not(feature = "cdc"))]
+                            {
+                                return None;
+                            }
                        }
 
                         continue;
@@ -300,9 +366,13 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                             let node_element_insertion =
                                 ChangeEvent::InsertAt(old_max.clone().unwrap(), value.clone());
                             cdc.push(node_element_insertion);
-                        }
 
-                        return (Some(value), cdc);
+                            return (Some(value), cdc);
+                        }
+                        #[cfg(not(feature = "cdc"))]
+                        {
+                            return (Some(value));
+                        }
                    }
 
                     if old_max.is_some() {
@@ -320,9 +390,13 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                             ChangeEvent::InsertAt(old_max.clone().unwrap(), value.clone());
                         cdc.push(node_element_removal);
                         cdc.push(node_element_insertion);
-                    }
 
-                    return (NodeLike::replace(&mut *node_guard, idx, value.clone()), cdc);
+                        return (NodeLike::replace(&mut *node_guard, idx, value.clone()), cdc);
+                    }
+                    #[cfg(not(feature = "cdc"))]
+                    {
+                        return NodeLike::replace(&mut *node_guard, idx, value.clone());
+                    }
                }
             } else {
                 operation = Some(Operation::Split(
@@ -366,20 +440,27 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
     /// assert_eq!(set.len(), 1);
     /// ```
     pub fn insert(&self, value: T) -> bool {
+        #[cfg(feature = "cdc")]
         if let (None, _) = self.put_cdc(value) {
+            return true;
+        }
+        #[cfg(not(feature = "cdc"))]
+        if self.put_cdc(value).is_none() {
             return true;
         }
 
         false
     }
-    pub fn remove_cdc<Q>(&self, value: &Q) -> (Option<T>, Vec<ChangeEvent<T>>)
+    pub fn remove_cdc<Q>(&self, value: &Q) -> CdcResult<T>
     where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
     {
         loop {
+            #[cfg(feature = "cdc")]
             let mut cdc = vec![];
-            let mut _global_guard = self.index_lock.read();
+
+            let _global_guard = self.index_lock.read();
             if let Some(target_node_entry) =
                 self.index.lower_bound(std::ops::Bound::Included(&value))
             {
@@ -387,7 +468,14 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                 let old_max = node_guard.last().cloned();
                 let deleted = NodeLike::delete(&mut *node_guard, value);
                 if deleted.is_none() {
-                    return (None, cdc);
+                    #[cfg(feature = "cdc")]
+                    {
+                        return (None, cdc);
+                    }
+                    #[cfg(not(feature = "cdc"))]
+                    {
+                        return None;
+                    }
                 }
 
                 let operation = if node_guard.len() > 0 {
@@ -397,9 +485,12 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                             let _node_element_removal =
                                 ChangeEvent::RemoveAt(old_max.unwrap(), deleted.clone().unwrap());
                             cdc.push(_node_element_removal);
+                            return (deleted, cdc);
                         }
-
-                        return (deleted, cdc);
+                        #[cfg(not(feature = "cdc"))]
+                        {
+                            return deleted;
+                        }
                     }
 
                     Some(Operation::UpdateMax(
@@ -418,7 +509,14 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                 let _global_guard = self.index_lock.write();
 
                 if let Ok(_) = operation.unwrap().commit(&self.index) {
-                    return (deleted, cdc);
+                    #[cfg(feature = "cdc")]
+                    {
+                        return (deleted, cdc);
+                    }
+                    #[cfg(not(feature = "cdc"))]
+                    {
+                        return deleted;
+                    }
                 }
 
                 drop(_global_guard);
@@ -429,7 +527,14 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             break;
         }
 
-        (None, vec![])
+        #[cfg(feature = "cdc")]
+        {
+            (None, vec![])
+        }
+        #[cfg(not(feature = "cdc"))]
+        {
+            None
+        }
     }
     /// If the set contains an element equal to the value, removes it from the
     /// set and drops it. Returns whether such an element was present.
@@ -454,7 +559,14 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
         T: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        self.remove_cdc(value).0
+        #[cfg(feature = "cdc")]
+        {
+            self.remove_cdc(value).0
+        }
+        #[cfg(not(feature = "cdc"))]
+        {
+            self.remove_cdc(value)
+        }
     }
     fn locate_node<Q>(&self, value: &Q) -> Option<Arc<Mutex<Vec<T>>>>
     where

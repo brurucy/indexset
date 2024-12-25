@@ -253,7 +253,7 @@ impl<T: Ord> BTreeSet<T> {
     }
     fn get_mut_index(&mut self, index: usize) -> Option<&mut T> {
         let (node_idx, position_within_node) = self.locate_ith(index);
-        if let Some(_) = self.inner.get(node_idx) {
+        if self.inner.get(node_idx).is_some() {
             return self.inner[node_idx].get_mut(position_within_node);
         }
 
@@ -457,7 +457,7 @@ impl<T: Ord> BTreeSet<T> {
 
         let mut decrease_length = false;
         // check whether the node has to be deleted
-        if self.inner[node_idx].len() == 0 {
+        if self.inner[node_idx].is_empty() {
             // delete it as long as it is not the last remaining node
             if self.inner.len() > 1 {
                 self.inner.remove(node_idx);
@@ -583,8 +583,8 @@ impl<T: Ord> BTreeSet<T> {
     /// assert_eq!(set.first(), Some(&1));
     /// ```
     pub fn first(&self) -> Option<&T> {
-        if let Some(candidate_node) = self.inner.get(0) {
-            return candidate_node.get(0);
+        if let Some(candidate_node) = self.inner.first() {
+            return candidate_node.first();
         }
 
         None
@@ -606,10 +606,11 @@ impl<T: Ord> BTreeSet<T> {
     /// set.insert(2);
     /// assert_eq!(set.last(), Some(&2));
     /// ```
+    #[must_use]
     pub fn last(&self) -> Option<&T> {
-        if let Some(candidate_node) = self.inner.get(self.inner.len() - 1) {
-            if candidate_node.len() > 0 {
-                return candidate_node.get(candidate_node.len() - 1);
+        if let Some(candidate_node) = self.inner.last() {
+            if !candidate_node.is_empty() {
+                return candidate_node.last();
             }
         }
 
@@ -702,6 +703,7 @@ impl<T: Ord> BTreeSet<T> {
     /// v.insert(1);
     /// assert!(!v.is_empty());
     /// ```
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -722,6 +724,7 @@ impl<T: Ord> BTreeSet<T> {
     /// set.insert(4);
     /// assert_eq!(set.is_subset(&sup), false);
     /// ```
+    #[must_use]
     pub fn is_subset(&self, other: &Self) -> bool {
         if self.difference(other).next().is_some() {
             return false;
@@ -749,6 +752,7 @@ impl<T: Ord> BTreeSet<T> {
     /// set.insert(2);
     /// assert_eq!(set.is_superset(&sub), true);
     /// ```
+    #[must_use]
     pub fn is_superset(&self, other: &Self) -> bool {
         if other.difference(self).next().is_some() {
             return false;
@@ -773,6 +777,7 @@ impl<T: Ord> BTreeSet<T> {
     /// b.insert(1);
     /// assert_eq!(a.is_disjoint(&b), false);
     /// ```
+    #[must_use]
     pub fn is_disjoint(&self, other: &Self) -> bool {
         if self.intersection(other).next().is_some() {
             return false;
@@ -808,6 +813,7 @@ impl<T: Ord> BTreeSet<T> {
     /// assert_eq!(set_iter.next(), Some(&3));
     /// assert_eq!(set_iter.next(), None);
     /// ```
+    #[must_use]
     pub fn iter(&self) -> Iter<T> {
         Iter::new(self)
     }
@@ -829,6 +835,7 @@ impl<T: Ord> BTreeSet<T> {
     /// let union: Vec<_> = a.union(&b).cloned().collect();
     /// assert_eq!(union, [1, 2]);
     /// ```
+    #[must_use]
     pub fn union<'a>(&'a self, other: &'a Self) -> Union<'a, T> {
         Union {
             merge_iter: MergeIter {
@@ -860,6 +867,7 @@ impl<T: Ord> BTreeSet<T> {
     /// let diff: Vec<_> = a.difference(&b).cloned().collect();
     /// assert_eq!(diff, [1]);
     /// ```
+    #[must_use]
     pub fn difference<'a>(&'a self, other: &'a Self) -> Difference<'a, T> {
         Difference {
             merge_iter: MergeIter {
@@ -891,6 +899,7 @@ impl<T: Ord> BTreeSet<T> {
     /// let sym_diff: Vec<_> = a.symmetric_difference(&b).cloned().collect();
     /// assert_eq!(sym_diff, [1, 3]);
     /// ```
+    #[must_use]
     pub fn symmetric_difference<'a>(&'a self, other: &'a Self) -> SymmetricDifference<'a, T> {
         SymmetricDifference {
             merge_iter: MergeIter {
@@ -922,6 +931,7 @@ impl<T: Ord> BTreeSet<T> {
     /// let intersection: Vec<_> = a.intersection(&b).cloned().collect();
     /// assert_eq!(intersection, [2]);
     /// ```
+    #[must_use]
     pub fn intersection<'a>(&'a self, other: &'a Self) -> Intersection<'a, T> {
         Intersection {
             merge_iter: MergeIter {
@@ -968,7 +978,7 @@ impl<T: Ord> BTreeSet<T> {
             .into_iter()
             .for_each(|(node_idx, position_within_node)| {
                 self.delete_at(node_idx, position_within_node);
-            })
+            });
     }
     fn split_off_cmp<P, Q>(&mut self, cmp: P) -> Self
     where
@@ -985,16 +995,16 @@ impl<T: Ord> BTreeSet<T> {
         remaining_nodes.reverse();
         remaining_nodes.insert(0, first_node);
         let mut latter_half = BTreeSet::default();
-        latter_half.len = remaining_nodes.iter().map(|node| node.len()).sum();
+        latter_half.len = remaining_nodes.iter().map(Vec::len).sum();
         latter_half.inner = remaining_nodes;
-        latter_half.index = FenwickTree::from_iter(latter_half.inner.iter().map(|node| node.len()));
+        latter_half.index = self.inner.iter().map(Vec::len).collect::<FenwickTree<_>>();
 
-        if self.inner[node_idx].len() == 0 && self.inner.len() > 1 {
+        if self.inner[node_idx].is_empty() && self.inner.len() > 1 {
             self.inner.remove(node_idx);
         }
 
-        self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
-        self.len = self.inner.iter().map(|node| node.len()).sum();
+        self.index = FenwickTree::from_iter(self.inner.iter().map(Vec::len));
+        self.len = self.inner.iter().map(Vec::len).sum();
 
         latter_half
     }
@@ -1027,6 +1037,8 @@ impl<T: Ord> BTreeSet<T> {
     /// assert!(b.contains(&17));
     /// assert!(b.contains(&41));
     /// ```
+    #[must_use]
+    #[allow(clippy::missing_panics_doc)]
     pub fn split_off<Q>(&mut self, value: &Q) -> Self
     where
         T: Borrow<Q>,
@@ -1036,21 +1048,21 @@ impl<T: Ord> BTreeSet<T> {
         let first_node = self.inner[node_idx].split_off(position_within_node);
         let mut remaining_nodes = vec![];
         while self.inner.len() > node_idx + 1 {
-            remaining_nodes.push(self.inner.pop().unwrap());
+            remaining_nodes.push(self.inner.pop().expect("length should be always > 0"));
         }
         remaining_nodes.reverse();
         remaining_nodes.insert(0, first_node);
         let mut latter_half = BTreeSet::default();
-        latter_half.len = remaining_nodes.iter().map(|node| node.len()).sum();
+        latter_half.len = remaining_nodes.iter().map(Vec::len).sum();
         latter_half.inner = remaining_nodes;
-        latter_half.index = FenwickTree::from_iter(latter_half.inner.iter().map(|node| node.len()));
+        latter_half.index = latter_half.inner.iter().map(Vec::len).collect::<FenwickTree<_>>();
 
-        if self.inner[node_idx].len() == 0 && self.inner.len() > 1 {
+        if self.inner[node_idx].is_empty() && self.inner.len() > 1 {
             self.inner.remove(node_idx);
         }
 
-        self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
-        self.len = self.inner.iter().map(|node| node.len()).sum();
+        self.index = self.inner.iter().map(Vec::len).collect::<FenwickTree<_>>();
+        self.len = self.inner.iter().map(Vec::len).sum();
 
         latter_half
     }
@@ -1267,11 +1279,11 @@ where
     T: Ord,
 {
     fn from(value: [T; N]) -> Self {
-        let mut btree: BTreeSet<T> = Default::default();
+        let mut btree: BTreeSet<T> = BTreeSet::default();
 
-        value.into_iter().for_each(|item| {
+        for item in value {
             btree.insert(item);
-        });
+        }
 
         btree
     }
@@ -1316,6 +1328,7 @@ impl<'a, T> Iter<'a, T>
 where
     T: Ord,
 {
+    #[must_use]
     pub fn new(btree: &'a BTreeSet<T>) -> Self {
         Self {
             btree,
@@ -1339,7 +1352,7 @@ where
         if self.current_front_idx == self.current_back_idx {
             return None;
         }
-        if let Some(value) = self.current_front_iterator.as_mut().and_then(|i| i.next()) {
+        if let Some(value) = self.current_front_iterator.as_mut().and_then(Iterator::next) {
             self.current_front_idx += 1;
             Some(value)
         } else {
@@ -1366,7 +1379,7 @@ where
         if let Some(value) = self
             .current_back_iterator
             .as_mut()
-            .and_then(|i| i.next_back())
+            .and_then(DoubleEndedIterator::next_back)
         {
             self.current_back_idx -= 1;
             Some(value)
@@ -1463,7 +1476,11 @@ where
 {
     type Item = (Option<&'a T>, Option<&'a T>);
     fn next(&mut self) -> Option<Self::Item> {
-        if !self.start {
+        if self.start {
+            self.current_left = self.left_iter.next();
+            self.current_right = self.right_iter.next();
+            self.start = false;
+        } else {
             if let Some(left) = self.current_left {
                 if let Some(right) = self.current_right {
                     match left.cmp(right) {
@@ -1481,15 +1498,11 @@ where
                 } else {
                     self.current_left = self.left_iter.next();
                 }
-            } else if let Some(_) = self.current_right {
+            } else if self.current_right.is_some() {
                 self.current_right = self.right_iter.next();
             } else {
                 return None;
             }
-        } else {
-            self.current_left = self.left_iter.next();
-            self.current_right = self.right_iter.next();
-            self.start = false;
         }
 
         Some((self.current_left, self.current_right))
@@ -1603,12 +1616,10 @@ where
             return if let Some((current_left, current_right)) = self.merge_iter.next() {
                 match (current_left, current_right) {
                     (Some(left), Some(right)) => {
-                        if left < right {
-                            Some(left)
-                        } else if right < left {
-                            Some(right)
-                        } else {
-                            continue;
+                        match left.cmp(right) {
+                            Ordering::Less => Some(left),
+                            Ordering::Equal => Some(right),
+                            Ordering::Greater => continue
                         }
                     }
                     (Some(left), None) => Some(left),
@@ -1774,6 +1785,7 @@ where
             Vacant(ref entry) => entry.key(),
         }
     }
+    #[must_use]
     pub fn and_modify<F>(self, f: F) -> Self
     where
         F: FnOnce(&mut V),
@@ -1801,28 +1813,38 @@ impl<'a, K, V> OccupiedEntry<'a, K, V>
 where
     K: Ord,
 {
+    #[must_use]
+    #[allow(clippy::missing_panics_doc)]
     pub fn key(&self) -> &K {
-        &self.map.set.get_index(self.idx).unwrap().key
+        &self.map.set.get_index(self.idx).expect("`OccupiedEntry` index should exist").key
     }
+    #[must_use]
     pub fn remove_entry(self) -> (K, V) {
         self.map.pop_index(self.idx)
     }
+    #[must_use]
+    #[allow(clippy::missing_panics_doc)]
     pub fn get(&self) -> &V {
-        self.map.get_index(self.idx).unwrap().1
+        self.map.get_index(self.idx).expect("`OccupiedEntry` index should exist").1
     }
+    #[allow(clippy::missing_panics_doc)]
     pub fn get_mut(&mut self) -> &mut V {
-        self.map.get_mut_index(self.idx).unwrap()
+        self.map.get_mut_index(self.idx).expect("`OccupiedEntry` index should exist")
     }
+    #[must_use]
+    #[allow(clippy::missing_panics_doc)]
     pub fn into_mut(self) -> &'a mut V {
-        self.map.get_mut_index(self.idx).unwrap()
+        self.map.get_mut_index(self.idx).expect("`OccupiedEntry` index should exist")
     }
+    #[allow(clippy::missing_panics_doc)]
     pub fn insert(&mut self, value: V) -> V {
-        let current_value = self.map.get_mut_index(self.idx).unwrap();
+        let current_value = self.map.get_mut_index(self.idx).expect("`OccupiedEntry` index should exist");
         let mut previous_value = value;
         swap(&mut previous_value, current_value);
 
         previous_value
     }
+    #[must_use]
     pub fn remove(self) -> V {
         self.map.pop_index(self.idx).1
     }
@@ -1838,14 +1860,15 @@ where
     pub fn into_key(self) -> K {
         self.key
     }
+    #[allow(clippy::missing_panics_doc)]
     pub fn insert(self, value: V) -> &'a mut V {
         let rank = self
             .map
             .set
-            .rank_cmp(|item: &Pair<K, V>| &item.key < &self.key);
+            .rank_cmp(|item: &Pair<K, V>| item.key < self.key);
         self.map.insert(self.key, value);
 
-        self.map.get_mut_index(rank).unwrap()
+        self.map.get_mut_index(rank).expect("rank should be correct")
     }
 }
 
@@ -2006,7 +2029,7 @@ where
     /// assert_eq!(a[&5], "f");
     /// ```
     pub fn append(&mut self, other: &mut Self) {
-        self.set.append(&mut other.set)
+        self.set.append(&mut other.set);
     }
     /// Clears the map, removing all elements.
     ///
@@ -2023,7 +2046,7 @@ where
     /// assert!(a.is_empty());
     /// ```
     pub fn clear(&mut self) {
-        self.set.clear()
+        self.set.clear();
     }
     /// Returns `true` if the map contains a value for the specified key.
     ///
@@ -2068,6 +2091,7 @@ where
     /// map.insert(2, "a");
     /// assert_eq!(map.first_key_value(), Some((&1, &"b")));
     /// ```
+    #[must_use]
     pub fn first_key_value(&self) -> Option<(&K, &V)> {
         let popping = self.set.first();
         if let Some(pop) = popping {
@@ -2117,6 +2141,7 @@ where
     /// assert_eq!(map.get_index(0), Some((&1, &"a")));
     /// assert_eq!(map.get_index(1), None);
     /// ```
+    #[must_use]
     pub fn get_index(&self, idx: usize) -> Option<(&K, &V)> {
         let ith = self.set.get_index(idx);
         if let Some(entry) = ith {
@@ -2274,6 +2299,7 @@ where
     /// let keys: Vec<i32> = a.into_keys().collect();
     /// assert_eq!(keys, [1, 2]);
     /// ```
+    #[must_use]
     pub fn into_keys(self) -> IntoKeys<K, V> {
         IntoKeys {
             inner: self.into_iter(),
@@ -2295,6 +2321,7 @@ where
     /// let values: Vec<&str> = a.into_values().collect();
     /// assert_eq!(values, ["hello", "goodbye"]);
     /// ```
+    #[must_use]
     pub fn into_values(self) -> IntoValues<K, V> {
         IntoValues {
             inner: self.into_iter(),
@@ -2314,6 +2341,7 @@ where
     /// a.insert(1, "a");
     /// assert!(!a.is_empty());
     /// ```
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.set.is_empty()
     }
@@ -2338,6 +2366,7 @@ where
     /// let (first_key, first_value) = map.iter().next().unwrap();
     /// assert_eq!((*first_key, *first_value), (1, "a"));
     /// ```
+    #[must_use]
     pub fn iter(&self) -> IterMap<K, V> {
         IterMap {
             inner: self.set.iter(),
@@ -2365,6 +2394,7 @@ where
     ///     }
     /// }
     /// ```
+    #[allow(clippy::iter_without_into_iter)]
     pub fn iter_mut(&mut self) -> IterMut<K, V> {
         let last_node_idx = self.set.inner.len() - 1;
         let len = self.set.len();
@@ -2410,6 +2440,7 @@ where
     /// let keys: Vec<_> = a.keys().cloned().collect();
     /// assert_eq!(keys, [1, 2]);
     /// ```
+    #[must_use]
     pub fn keys(&self) -> Keys<K, V> {
         Keys {
             inner: self.set.iter(),
@@ -2430,6 +2461,7 @@ where
     /// map.insert(2, "a");
     /// assert_eq!(map.last_key_value(), Some((&2, &"a")));
     /// ```
+    #[must_use]
     pub fn last_key_value(&self) -> Option<(&K, &V)> {
         let popping = self.set.last();
         if let Some(pop) = popping {
@@ -2452,6 +2484,7 @@ where
     /// a.insert(1, "a");
     /// assert_eq!(a.len(), 1);
     /// ```
+    #[must_use]
     pub fn len(&self) -> usize {
         self.set.len()
     }
@@ -2471,6 +2504,7 @@ where
     /// // entries can now be inserted into the empty map
     /// map.insert(1, "a");
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             ..Default::default()
@@ -2486,6 +2520,7 @@ where
     /// use indexset::BTreeMap;
     ///
     /// let mut set: BTreeMap<usize, usize> = BTreeMap::with_maximum_node_size(128);
+    #[must_use]
     pub fn with_maximum_node_size(maximum_node_size: usize) -> Self {
         Self {
             set: BTreeSet::with_maximum_node_size(maximum_node_size),
@@ -2828,11 +2863,10 @@ where
 
         positions_to_delete.reverse();
 
-        positions_to_delete
-            .into_iter()
-            .for_each(|(node_idx, position_within_node)| {
-                self.set.delete_at(node_idx, position_within_node);
-            })
+        for (node_idx, position_within_node) in positions_to_delete {
+            self.set.delete_at(node_idx, position_within_node);
+
+        }
     }
     /// Splits the collection into two at the given key. Returns everything after the given key,
     /// including the key.
@@ -2863,6 +2897,7 @@ where
     /// assert_eq!(b[&17], "d");
     /// assert_eq!(b[&41], "e");
     /// ```
+    #[must_use]
     pub fn split_off<Q>(&mut self, key: &Q) -> Self
     where
         K: Borrow<Q> + Ord,
@@ -2890,6 +2925,7 @@ where
     /// let values: Vec<&str> = a.values().cloned().collect();
     /// assert_eq!(values, ["hello", "goodbye"]);
     /// ```
+    #[must_use]
     pub fn values(&self) -> Values<K, V> {
         Values {
             inner: self.set.iter(),
@@ -3039,6 +3075,7 @@ where
     /// let cursor = a.lower_bound(Bound::Excluded(&2));
     /// assert_eq!(cursor.key(), Some(&3));
     /// ```
+    #[must_use]
     pub fn lower_bound<Q>(&self, bound: Bound<&Q>) -> CursorMap<'_, K, V>
     where
         K: Borrow<Q> + Ord,
@@ -3096,11 +3133,12 @@ where
     K: Ord,
 {
     fn from(value: [(K, V); N]) -> Self {
-        let mut btree: BTreeMap<K, V> = Default::default();
+        let mut btree: BTreeMap<K, V> = BTreeMap::default();
 
-        value.into_iter().for_each(|(key, value)| {
+        for (key, value) in value {
             btree.insert(key, value);
-        });
+        }
+
 
         btree
     }
@@ -3639,24 +3677,26 @@ where
 impl<'a, T: Ord> Cursor<'a, T> {
     pub fn move_next(&mut self) {
         if self.idx == self.set.len() {
-            self.idx = 0
+            self.idx = 0;
         } else {
             self.idx += 1;
         }
     }
     pub fn move_index(&mut self, index: usize) {
-        self.idx = index
+        self.idx = index;
     }
     pub fn move_prev(&mut self) {
         if self.idx == 0 {
-            self.idx = self.set.len()
+            self.idx = self.set.len();
         } else {
             self.idx -= 1;
         }
     }
+    #[must_use]
     pub fn item(&self) -> Option<&'a T> {
         self.set.get_index(self.idx)
     }
+    #[must_use]
     pub fn peek_next(&self) -> Option<&'a T> {
         if self.idx == self.set.len() {
             return self.set.first();
@@ -3664,9 +3704,11 @@ impl<'a, T: Ord> Cursor<'a, T> {
 
         self.set.get_index(self.idx + 1)
     }
+    #[must_use]
     pub fn peek_index(&self, index: usize) -> Option<&'a T> {
         self.set.get_index(index)
     }
+    #[must_use]
     pub fn peek_prev(&self) -> Option<&'a T> {
         if self.idx == 0 {
             return None;
@@ -3686,14 +3728,15 @@ where
 
 impl<'a, K: Ord, V> CursorMap<'a, K, V> {
     pub fn move_next(&mut self) {
-        self.cursor.move_next()
+        self.cursor.move_next();
     }
     pub fn move_index(&mut self, index: usize) {
-        self.cursor.move_index(index)
+        self.cursor.move_index(index);
     }
     pub fn move_prev(&mut self) {
-        self.cursor.move_prev()
+        self.cursor.move_prev();
     }
+    #[must_use]
     pub fn key(&self) -> Option<&'a K> {
         if let Some(entry) = self.cursor.item() {
             return Some(&entry.key);
@@ -3701,6 +3744,7 @@ impl<'a, K: Ord, V> CursorMap<'a, K, V> {
 
         None
     }
+    #[must_use]
     pub fn value(&self) -> Option<&'a V> {
         if let Some(entry) = self.cursor.item() {
             return Some(&entry.value);
@@ -3708,6 +3752,7 @@ impl<'a, K: Ord, V> CursorMap<'a, K, V> {
 
         None
     }
+    #[must_use]
     pub fn key_value(&self) -> Option<(&'a K, &'a V)> {
         if let Some(entry) = self.cursor.item() {
             return Some((&entry.key, &entry.value));
@@ -3715,6 +3760,7 @@ impl<'a, K: Ord, V> CursorMap<'a, K, V> {
 
         None
     }
+    #[must_use]
     pub fn peek_next(&self) -> Option<(&'a K, &'a V)> {
         if let Some(entry) = self.cursor.peek_next() {
             return Some((&entry.key, &entry.value));
@@ -3722,6 +3768,7 @@ impl<'a, K: Ord, V> CursorMap<'a, K, V> {
 
         None
     }
+    #[must_use]
     pub fn peek_index(&self, index: usize) -> Option<(&'a K, &'a V)> {
         if let Some(entry) = self.cursor.peek_index(index) {
             return Some((&entry.key, &entry.value));
@@ -3729,6 +3776,7 @@ impl<'a, K: Ord, V> CursorMap<'a, K, V> {
 
         None
     }
+    #[must_use]
     pub fn peek_prev(&self) -> Option<(&'a K, &'a V)> {
         if let Some(entry) = self.cursor.peek_prev() {
             return Some((&entry.key, &entry.value));

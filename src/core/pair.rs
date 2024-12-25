@@ -1,13 +1,13 @@
 use core::cmp::Ordering;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
 use std::borrow::Borrow;
+use std::hash::{Hash, Hasher};
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Clone)]
 pub struct Pair<K, V>
-where
-    K: Ord,
 {
     pub key: K,
     pub value: V,
@@ -24,12 +24,21 @@ where
     }
 }
 
+impl<K, V> Hash for Pair<K, V>
+where
+    K: Hash,
+{
+    fn hash<H: Hasher>(&self, state: &mut H) {
+       Hash::hash(&self.key, state)
+    }
+}
+
 impl<K, V> PartialOrd<Self> for Pair<K, V>
 where
     K: Ord,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.key.partial_cmp(&other.key)
+        Some(self.cmp(other))
     }
 }
 

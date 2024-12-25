@@ -30,6 +30,7 @@ cdc = ["concurrent"]
 [[bench]]
 name = "stdlib"
 harness = false
+required-features = ["concurrent"]
 
 [[bench]]
 name = "concurrent"
