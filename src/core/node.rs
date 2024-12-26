@@ -2,6 +2,7 @@ use crate::core::constants::DEFAULT_CUTOFF;
 use core::borrow::Borrow;
 use core::cmp::Ordering;
 
+#[allow(clippy::module_name_repetitions)]
 pub trait NodeLike<T: Ord> {
     #[allow(dead_code)]
     fn get_ith(&self, index: usize) -> Option<&T>;
@@ -84,7 +85,7 @@ where
                     Ordering::Equal => match bound {
                         std::ops::Bound::Included(_) => return i,
                         std::ops::Bound::Excluded(_) => return i + 1,
-                        _ => unreachable!(),
+                        std::ops::Bound::Unbounded => unreachable!(),
                     },
                     Ordering::Greater => break,
                 }

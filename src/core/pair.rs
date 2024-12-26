@@ -7,8 +7,7 @@ use std::hash::{Hash, Hasher};
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
-pub struct Pair<K, V>
-{
+pub struct Pair<K, V> {
     pub key: K,
     pub value: V,
 }
@@ -29,7 +28,7 @@ where
     K: Hash,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
-       Hash::hash(&self.key, state)
+        Hash::hash(&self.key, state);
     }
 }
 

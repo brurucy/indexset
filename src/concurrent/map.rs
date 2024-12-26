@@ -186,7 +186,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     /// If the map did not have this key present, it will be inserted.
     ///
     /// Otherwise, the value is updated.
-    /// 
+    ///
     /// [module-level documentation]: index.html#insert-and-complex-keys
     ///
     /// # Examples
@@ -240,8 +240,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
         Pair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        self
-            .set
+        self.set
             .remove(key)
             .and_then(|pair| Some((pair.key, pair.value)))
     }

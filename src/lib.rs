@@ -8,7 +8,7 @@ mod core;
 
 use crate::Entry::{Occupied, Vacant};
 use core::constants::DEFAULT_INNER_SIZE;
-use core::node::*;
+use core::node::NodeLike;
 use core::pair::Pair;
 use ftree::FenwickTree;
 #[cfg(feature = "serde")]
@@ -105,6 +105,7 @@ impl<T: Ord> BTreeSet<T> {
     ///
     /// let mut set: BTreeSet<i32> = BTreeSet::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             ..Default::default()
@@ -120,8 +121,9 @@ impl<T: Ord> BTreeSet<T> {
     /// use indexset::BTreeSet;
     ///
     /// let mut set: BTreeSet<i32> = BTreeSet::with_maximum_node_size(128);
+    #[must_use]
     pub fn with_maximum_node_size(maximum_node_size: usize) -> Self {
-        let mut new: Self = Default::default();
+        let mut new: Self = BTreeSet::default();
         new.inner = vec![Node::with_capacity(maximum_node_size)];
         new.node_capacity = maximum_node_size;
 
@@ -162,7 +164,7 @@ impl<T: Ord> BTreeSet<T> {
         // never return less than 0, so it is only necessary to check whether it is out of bounds
         // from the right
         if self.inner.get(node_idx).is_none() {
-            node_idx -= 1
+            node_idx -= 1;
         }
 
         node_idx
@@ -182,7 +184,7 @@ impl<T: Ord> BTreeSet<T> {
         });
 
         if self.inner.get(node_idx).is_none() {
-            node_idx -= 1
+            node_idx -= 1;
         }
 
         node_idx
@@ -243,6 +245,7 @@ impl<T: Ord> BTreeSet<T> {
     /// assert_eq!(set.get_index(2), Some(&3));
     /// assert_eq!(set.get_index(4), None);
     /// ```
+    #[must_use]
     pub fn get_index(&self, idx: usize) -> Option<&T> {
         let (node_idx, position_within_node) = self.locate_ith(idx);
         if let Some(candidate_node) = self.inner.get(node_idx) {
@@ -327,6 +330,7 @@ impl<T: Ord> BTreeSet<T> {
     /// v.insert(1);
     /// assert_eq!(v.len(), 1);
     /// ```
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
@@ -366,13 +370,13 @@ impl<T: Ord> BTreeSet<T> {
             self.inner.insert(node_idx + 1, new_node);
             if NodeLike::insert(&mut self.inner[insert_node_idx], value).0 {
                 // Reconstruct the index after the new node and inner value inserts.
-                self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
+                self.index = self.inner.iter().map(Vec::len).collect::<FenwickTree<_>>();
                 self.len += 1;
 
                 true
             } else {
                 // Reconstruct the index after the new node insert even if the new value wasn't added.
-                self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
+                self.index = self.inner.iter().map(Vec::len).collect::<FenwickTree<_>>();
                 false
             }
         } else if NodeLike::insert(&mut self.inner[node_idx], value).0 {
@@ -462,7 +466,7 @@ impl<T: Ord> BTreeSet<T> {
             if self.inner.len() > 1 {
                 self.inner.remove(node_idx);
                 self.len -= 1;
-                self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
+                self.index = self.inner.iter().map(Vec::len).collect::<FenwickTree<_>>();
             } else {
                 decrease_length = true;
             }
@@ -582,6 +586,7 @@ impl<T: Ord> BTreeSet<T> {
     /// set.insert(2);
     /// assert_eq!(set.first(), Some(&1));
     /// ```
+    #[must_use]
     pub fn first(&self) -> Option<&T> {
         if let Some(candidate_node) = self.inner.first() {
             return candidate_node.first();
@@ -974,11 +979,9 @@ impl<T: Ord> BTreeSet<T> {
         }
         positions_to_delete.reverse();
 
-        positions_to_delete
-            .into_iter()
-            .for_each(|(node_idx, position_within_node)| {
-                self.delete_at(node_idx, position_within_node);
-            });
+        for (node_idx, position_within_node) in positions_to_delete {
+            self.delete_at(node_idx, position_within_node);
+        }
     }
     fn split_off_cmp<P, Q>(&mut self, cmp: P) -> Self
     where
@@ -994,16 +997,18 @@ impl<T: Ord> BTreeSet<T> {
         }
         remaining_nodes.reverse();
         remaining_nodes.insert(0, first_node);
-        let mut latter_half = BTreeSet::default();
-        latter_half.len = remaining_nodes.iter().map(Vec::len).sum();
-        latter_half.inner = remaining_nodes;
-        latter_half.index = self.inner.iter().map(Vec::len).collect::<FenwickTree<_>>();
+        let latter_half = BTreeSet {
+            len: remaining_nodes.iter().map(Vec::len).sum(),
+            inner: remaining_nodes,
+            index: self.inner.iter().map(Vec::len).collect::<FenwickTree<_>>(),
+            ..Default::default()
+        };
 
         if self.inner[node_idx].is_empty() && self.inner.len() > 1 {
             self.inner.remove(node_idx);
         }
 
-        self.index = FenwickTree::from_iter(self.inner.iter().map(Vec::len));
+        self.index = self.inner.iter().map(Vec::len).collect::<FenwickTree<_>>();
         self.len = self.inner.iter().map(Vec::len).sum();
 
         latter_half
@@ -1055,7 +1060,11 @@ impl<T: Ord> BTreeSet<T> {
         let mut latter_half = BTreeSet::default();
         latter_half.len = remaining_nodes.iter().map(Vec::len).sum();
         latter_half.inner = remaining_nodes;
-        latter_half.index = latter_half.inner.iter().map(Vec::len).collect::<FenwickTree<_>>();
+        latter_half.index = latter_half
+            .inner
+            .iter()
+            .map(Vec::len)
+            .collect::<FenwickTree<_>>();
 
         if self.inner[node_idx].is_empty() && self.inner.len() > 1 {
             self.inner.remove(node_idx);
@@ -1352,7 +1361,11 @@ where
         if self.current_front_idx == self.current_back_idx {
             return None;
         }
-        if let Some(value) = self.current_front_iterator.as_mut().and_then(Iterator::next) {
+        if let Some(value) = self
+            .current_front_iterator
+            .as_mut()
+            .and_then(Iterator::next)
+        {
             self.current_front_idx += 1;
             Some(value)
         } else {
@@ -1480,29 +1493,27 @@ where
             self.current_left = self.left_iter.next();
             self.current_right = self.right_iter.next();
             self.start = false;
-        } else {
-            if let Some(left) = self.current_left {
-                if let Some(right) = self.current_right {
-                    match left.cmp(right) {
-                        Ordering::Less => {
-                            self.current_left = self.left_iter.next();
-                        }
-                        Ordering::Equal => {
-                            self.current_left = self.left_iter.next();
-                            self.current_right = self.right_iter.next();
-                        }
-                        Ordering::Greater => {
-                            self.current_right = self.right_iter.next();
-                        }
+        } else if let Some(left) = self.current_left {
+            if let Some(right) = self.current_right {
+                match left.cmp(right) {
+                    Ordering::Less => {
+                        self.current_left = self.left_iter.next();
                     }
-                } else {
-                    self.current_left = self.left_iter.next();
+                    Ordering::Equal => {
+                        self.current_left = self.left_iter.next();
+                        self.current_right = self.right_iter.next();
+                    }
+                    Ordering::Greater => {
+                        self.current_right = self.right_iter.next();
+                    }
                 }
-            } else if self.current_right.is_some() {
-                self.current_right = self.right_iter.next();
             } else {
-                return None;
+                self.current_left = self.left_iter.next();
             }
+        } else if self.current_right.is_some() {
+            self.current_right = self.right_iter.next();
+        } else {
+            return None;
         }
 
         Some((self.current_left, self.current_right))
@@ -1615,13 +1626,11 @@ where
         loop {
             return if let Some((current_left, current_right)) = self.merge_iter.next() {
                 match (current_left, current_right) {
-                    (Some(left), Some(right)) => {
-                        match left.cmp(right) {
-                            Ordering::Less => Some(left),
-                            Ordering::Equal => Some(right),
-                            Ordering::Greater => continue
-                        }
-                    }
+                    (Some(left), Some(right)) => match left.cmp(right) {
+                        Ordering::Less => Some(left),
+                        Ordering::Equal => Some(right),
+                        Ordering::Greater => continue,
+                    },
                     (Some(left), None) => Some(left),
                     (None, Some(right)) => Some(right),
                     (None, _) => None,
@@ -1661,15 +1670,13 @@ where
                     (Some(left), Some(right)) => {
                         if left == right {
                             return Some(left);
-                        } else {
-                            continue;
                         }
+                        continue;
                     }
                     (None, _) | (_, None) => return None,
                 }
-            } else {
-                return None;
             }
+            return None;
         }
     }
 }
@@ -1816,7 +1823,12 @@ where
     #[must_use]
     #[allow(clippy::missing_panics_doc)]
     pub fn key(&self) -> &K {
-        &self.map.set.get_index(self.idx).expect("`OccupiedEntry` index should exist").key
+        &self
+            .map
+            .set
+            .get_index(self.idx)
+            .expect("`OccupiedEntry` index should exist")
+            .key
     }
     #[must_use]
     pub fn remove_entry(self) -> (K, V) {
@@ -1825,20 +1837,30 @@ where
     #[must_use]
     #[allow(clippy::missing_panics_doc)]
     pub fn get(&self) -> &V {
-        self.map.get_index(self.idx).expect("`OccupiedEntry` index should exist").1
+        self.map
+            .get_index(self.idx)
+            .expect("`OccupiedEntry` index should exist")
+            .1
     }
     #[allow(clippy::missing_panics_doc)]
     pub fn get_mut(&mut self) -> &mut V {
-        self.map.get_mut_index(self.idx).expect("`OccupiedEntry` index should exist")
+        self.map
+            .get_mut_index(self.idx)
+            .expect("`OccupiedEntry` index should exist")
     }
     #[must_use]
     #[allow(clippy::missing_panics_doc)]
     pub fn into_mut(self) -> &'a mut V {
-        self.map.get_mut_index(self.idx).expect("`OccupiedEntry` index should exist")
+        self.map
+            .get_mut_index(self.idx)
+            .expect("`OccupiedEntry` index should exist")
     }
     #[allow(clippy::missing_panics_doc)]
     pub fn insert(&mut self, value: V) -> V {
-        let current_value = self.map.get_mut_index(self.idx).expect("`OccupiedEntry` index should exist");
+        let current_value = self
+            .map
+            .get_mut_index(self.idx)
+            .expect("`OccupiedEntry` index should exist");
         let mut previous_value = value;
         swap(&mut previous_value, current_value);
 
@@ -1868,7 +1890,9 @@ where
             .rank_cmp(|item: &Pair<K, V>| item.key < self.key);
         self.map.insert(self.key, value);
 
-        self.map.get_mut_index(rank).expect("rank should be correct")
+        self.map
+            .get_mut_index(rank)
+            .expect("rank should be correct")
     }
 }
 
@@ -2865,7 +2889,6 @@ where
 
         for (node_idx, position_within_node) in positions_to_delete {
             self.set.delete_at(node_idx, position_within_node);
-
         }
     }
     /// Splits the collection into two at the given key. Returns everything after the given key,
@@ -3138,7 +3161,6 @@ where
         for (key, value) in value {
             btree.insert(key, value);
         }
-
 
         btree
     }
@@ -3506,28 +3528,27 @@ where
         if let Some(entry) = self.current_front_iterator.next() {
             self.current_front_idx += 1;
             return Some((&entry.key, &mut entry.value));
+        }
+        // If the current iterator has been exhausted, we have to check whether there are any
+        // iterators left
+        if self.current_front_node_idx == self.inner.size_hint().0 {
+            return None;
+        }
+        if self.current_front_node_idx == self.current_back_node_idx - 1 {
+            // take from the current back iter
+            if let Some(entry) = self.current_back_iterator.next() {
+                self.current_front_idx += 1;
+                return Some((&entry.key, &mut entry.value));
+            }
         } else {
-            // If the current iterator has been exhausted, we have to check whether there are any
-            // iterators left
-            if self.current_front_node_idx == self.inner.size_hint().0 {
-                return None;
+            // advance front
+            self.current_front_node_idx += 1;
+            if let Some(node) = self.inner.next() {
+                self.current_front_iterator = node.iter_mut();
             }
-            if self.current_front_node_idx == self.current_back_node_idx - 1 {
-                // take from the current back iter
-                if let Some(entry) = self.current_back_iterator.next() {
-                    self.current_front_idx += 1;
-                    return Some((&entry.key, &mut entry.value));
-                }
-            } else {
-                // advance front
-                self.current_front_node_idx += 1;
-                if let Some(node) = self.inner.next() {
-                    self.current_front_iterator = node.iter_mut();
-                }
 
-                return self.next();
-            }
-        };
+            return self.next();
+        }
 
         None
     }
@@ -3544,30 +3565,29 @@ where
         if let Some(entry) = self.current_back_iterator.next_back() {
             self.current_back_idx -= 1;
             return Some((&entry.key, &mut entry.value));
+        }
+        // If the current iterator has been exhausted, we have to check whether there are any
+        // iterators left
+        if self.current_back_node_idx == 0 {
+            return None;
+        }
+        if self.current_front_node_idx == self.current_back_node_idx - 1 {
+            // take from the current front iter
+            if let Some(entry) = self.current_front_iterator.next_back() {
+                if self.current_back_idx > 0 {
+                    self.current_back_idx -= 1;
+                }
+                return Some((&entry.key, &mut entry.value));
+            }
         } else {
-            // If the current iterator has been exhausted, we have to check whether there are any
-            // iterators left
-            if self.current_back_node_idx == 0 {
-                return None;
+            // advance back
+            self.current_back_node_idx -= 1;
+            if let Some(node) = self.inner.next_back() {
+                self.current_back_iterator = node.iter_mut();
             }
-            if self.current_front_node_idx == self.current_back_node_idx - 1 {
-                // take from the current front iter
-                if let Some(entry) = self.current_front_iterator.next_back() {
-                    if self.current_back_idx > 0 {
-                        self.current_back_idx -= 1;
-                    }
-                    return Some((&entry.key, &mut entry.value));
-                }
-            } else {
-                // advance back
-                self.current_back_node_idx -= 1;
-                if let Some(node) = self.inner.next_back() {
-                    self.current_back_iterator = node.iter_mut();
-                }
 
-                return self.next_back();
-            }
-        };
+            return self.next_back();
+        }
 
         None
     }
