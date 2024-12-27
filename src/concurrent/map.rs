@@ -353,6 +353,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "cdc")]
     #[test]
     fn test_cdc_single_insert() {
         let map = BTreeMap::new();
@@ -377,6 +378,7 @@ mod tests {
         assert_eq!(mock_state.nodes, expected_state);
     }
 
+    #[cfg(feature = "cdc")]
     #[test]
     fn test_cdc_multiple_inserts() {
         let map = BTreeMap::new();
@@ -405,6 +407,7 @@ mod tests {
         assert_eq!(mock_state.nodes, expected_state);
     }
 
+    #[cfg(feature = "cdc")]
     #[test]
     fn test_cdc_updates() {
         let map = BTreeMap::new();
@@ -434,6 +437,7 @@ mod tests {
         assert_eq!(mock_state.nodes, expected_state);
     }
 
+    #[cfg(feature = "cdc")]
     #[test]
     fn test_cdc_node_splits() {
         let map = BTreeMap::new();

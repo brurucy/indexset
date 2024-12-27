@@ -1,7 +1,7 @@
 #[cfg(feature = "concurrent")]
 pub mod concurrent;
 
-#[cfg(feature = "cdc")]
+#[cfg(feature = "concurrent")]
 pub mod cdc;
 
 mod core;

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2024-12-27
+
+### Fixed
+- `concurrent` feature works without `cdc` being enabled.
+
 ## [0.7.0] - 2024-12-22
 
 ### Added
@@ -128,7 +133,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.7.1...HEAD
+
+[0.7.1]: https://github.com/brurucy/indexset/releases/tag/v0.7.1
 
 [0.7.0]: https://github.com/brurucy/indexset/releases/tag/v0.7.0
 
