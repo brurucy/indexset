@@ -928,7 +928,33 @@ where
     pub fn iter(&'a self) -> Iter<'a, T> {
         Iter::new(self)
     }
-
+    /// Constructs a double-ended iterator over a sub-range of elements in the set.
+    /// The simplest way is to use the range syntax `min..max`, thus `range(min..max)` will
+    /// yield elements from min (inclusive) to max (exclusive).
+    /// The range may also be entered as `(Bound<T>, Bound<T>)`, so for example
+    /// `range((Excluded(4), Included(10)))` will yield a left-exclusive, right-inclusive
+    /// range from 4 to 10.
+    ///
+    /// # Panics
+    ///
+    /// Panics if range `start > end`.
+    /// Panics if range `start == end` and both bounds are `Excluded`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use indexset::concurrent::set::BTreeSet;
+    /// use std::ops::Bound::Included;
+    ///
+    /// let mut set = BTreeSet::new();
+    /// set.insert(3);
+    /// set.insert(5);
+    /// set.insert(8);
+    /// for &elem in set.range((Included(&4), Included(&8))) {
+    ///     println!("{elem}");
+    /// }
+    /// assert_eq!(Some(&5), set.range(4..).next());
+    /// ```
     pub fn range<Q, R>(&'a self, range: R) -> Range<'a, T>
     where
         T: Borrow<Q>,
