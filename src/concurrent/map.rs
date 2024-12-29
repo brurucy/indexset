@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, iter::FusedIterator};
+use std::{borrow::Borrow, iter::FusedIterator, ops::RangeBounds};
 
 use crate::{cdc::change::ChangeEvent, core::pair::Pair};
 
@@ -184,7 +184,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     /// If the map did not have this key present, it will be inserted.
     ///
     /// Otherwise, the value is updated.
-    /// 
+    ///
     /// [module-level documentation]: index.html#insert-and-complex-keys
     ///
     /// # Examples
@@ -295,6 +295,45 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     pub fn iter(&self) -> Iter<K, V> {
         Iter {
             inner: self.set.iter(),
+        }
+    }
+    /// Constructs a double-ended iterator over a sub-range of elements in the map.
+    /// The simplest way is to use the range syntax `min..max`, thus `range(min..max)` will
+    /// yield elements from min (inclusive) to max (exclusive).
+    /// The range may also be entered as `(Bound<T>, Bound<T>)`, so for example
+    /// `range((Excluded(4), Included(10)))` will yield a left-exclusive, right-inclusive
+    /// range from 4 to 10.
+    ///
+    /// # Panics
+    ///
+    /// Panics if range `start > end`.
+    /// Panics if range `start == end` and both bounds are `Excluded`.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use indexset::concurrent::map::BTreeMap;
+    /// use std::ops::Bound::Included;
+    ///
+    /// let mut map = BTreeMap::new();
+    /// map.insert(3, "a");
+    /// map.insert(5, "b");
+    /// map.insert(8, "c");
+    /// for (&key, &value) in map.range::<i32, _>((Included(&4), Included(&8))) {
+    ///     println!("{key}: {value}");
+    /// }
+    /// assert_eq!(Some((&5, &"b")), map.range(4..).next());
+    /// ```
+    pub fn range<Q, R>(&self, range: R) -> Range<K, V>
+    where
+        Pair<K, V>: Borrow<Q> + Ord,
+        Q: Ord + ?Sized,
+        R: RangeBounds<Q>,
+    {
+        Range {
+            inner: super::set::BTreeSet::range(&self.set, range),
         }
     }
 }

@@ -185,7 +185,6 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                                 (None, cdc)
                             }
                         });
-
                     }
                 }
 
@@ -280,7 +279,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                             self.index.insert(value, first_node);
 
                             return (None, cdc);
-                       }
+                        }
 
                         continue;
                     }
@@ -290,7 +289,6 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             let mut node_guard = target_node_entry.value().lock_arc();
             let mut operation = None;
             if node_guard.len() < self.node_capacity {
-
                 let old_max = node_guard.last().cloned();
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {
@@ -303,7 +301,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                         }
 
                         return (None, cdc);
-                   }
+                    }
 
                     if old_max.is_some() {
                         operation = Some(Operation::UpdateMax(
@@ -323,7 +321,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                     }
 
                     return (NodeLike::replace(&mut *node_guard, idx, value.clone()), cdc);
-               }
+                }
             } else {
                 operation = Some(Operation::Split(
                     target_node_entry.value().clone(),
@@ -826,7 +824,7 @@ where
                                         iter_local.nth_back(
                                             new_guard.len().wrapping_sub(position).wrapping_sub(2),
                                         );
-                                   }
+                                    }
                                 }
                                 _ => {
                                     iter_local.nth_back(new_guard.len().wrapping_sub(position));
@@ -928,7 +926,33 @@ where
     pub fn iter(&'a self) -> Iter<'a, T> {
         Iter::new(self)
     }
-
+    /// Constructs a double-ended iterator over a sub-range of elements in the set.
+    /// The simplest way is to use the range syntax `min..max`, thus `range(min..max)` will
+    /// yield elements from min (inclusive) to max (exclusive).
+    /// The range may also be entered as `(Bound<T>, Bound<T>)`, so for example
+    /// `range((Excluded(4), Included(10)))` will yield a left-exclusive, right-inclusive
+    /// range from 4 to 10.
+    ///
+    /// # Panics
+    ///
+    /// Panics if range `start > end`.
+    /// Panics if range `start == end` and both bounds are `Excluded`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use indexset::concurrent::set::BTreeSet;
+    /// use std::ops::Bound::Included;
+    ///
+    /// let mut set = BTreeSet::new();
+    /// set.insert(3);
+    /// set.insert(5);
+    /// set.insert(8);
+    /// for &elem in set.range((Included(&4), Included(&8))) {
+    ///     println!("{elem}");
+    /// }
+    /// assert_eq!(Some(&5), set.range(4..).next());
+    /// ```
     pub fn range<Q, R>(&'a self, range: R) -> Range<'a, T>
     where
         T: Borrow<Q>,
