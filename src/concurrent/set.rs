@@ -302,7 +302,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                             cdc.push(node_element_insertion);
                         }
 
-                        return (Some(value), cdc);
+                        return (None, cdc);
                    }
 
                     if old_max.is_some() {
@@ -1134,6 +1134,14 @@ mod tests {
         for value in expected_values.iter() {
             assert!(set.contains(value));
         }
+    }
+
+    #[test]
+    fn test_insert_desc() {
+        let set = Arc::new(BTreeSet::<i32>::new());
+
+        assert!(set.insert(2));
+        assert!(set.insert(1));
     }
 
     #[test]
