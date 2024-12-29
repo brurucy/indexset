@@ -185,7 +185,6 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                                 (None, cdc)
                             }
                         });
-
                     }
                 }
 
@@ -280,7 +279,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                             self.index.insert(value, first_node);
 
                             return (None, cdc);
-                       }
+                        }
 
                         continue;
                     }
@@ -290,7 +289,6 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             let mut node_guard = target_node_entry.value().lock_arc();
             let mut operation = None;
             if node_guard.len() < self.node_capacity {
-
                 let old_max = node_guard.last().cloned();
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {
@@ -303,7 +301,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                         }
 
                         return (None, cdc);
-                   }
+                    }
 
                     if old_max.is_some() {
                         operation = Some(Operation::UpdateMax(
@@ -323,7 +321,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                     }
 
                     return (NodeLike::replace(&mut *node_guard, idx, value.clone()), cdc);
-               }
+                }
             } else {
                 operation = Some(Operation::Split(
                     target_node_entry.value().clone(),
@@ -826,7 +824,7 @@ where
                                         iter_local.nth_back(
                                             new_guard.len().wrapping_sub(position).wrapping_sub(2),
                                         );
-                                   }
+                                    }
                                 }
                                 _ => {
                                     iter_local.nth_back(new_guard.len().wrapping_sub(position));
