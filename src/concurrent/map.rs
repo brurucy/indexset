@@ -354,24 +354,29 @@ mod tests {
     impl<K: Ord + Clone, V: Clone + PartialEq> PersistedBTreeMap<K, V> {
         fn persist(&mut self, event: &ChangeEvent<Pair<K, V>>) {
             match event {
-                ChangeEvent::InsertNode(max_key, node) => {
+                ChangeEvent::InsertNode {
+                    max_value, node
+                } => {
                     self.nodes
-                        .insert(max_key.key.clone(), node.lock_arc().clone());
+                        .insert(max_value.key.clone(), node.lock_arc().clone());
                 }
-                ChangeEvent::RemoveNode(max_key) => {
-                    self.nodes.remove(&max_key.key);
+                ChangeEvent::RemoveNode {
+                    max_value
+                } => {
+                    self.nodes.remove(&max_value.key);
                 }
-                ChangeEvent::InsertAt(node_max, pair) => {
-                    if let Some(node) = self.nodes.get_mut(&node_max.key) {
-                        let pos = node.binary_search(pair).unwrap_or_else(|p| p);
-                        node.insert(pos, pair.clone());
+                ChangeEvent::InsertAt {
+                    max_value, index, value
+                } => {
+                    if let Some(node) = self.nodes.get_mut(&max_value.key) {
+                        node.insert(*index, value.clone());
                     }
                 }
-                ChangeEvent::RemoveAt(node_max, pair) => {
-                    if let Some(node) = self.nodes.get_mut(&node_max.key) {
-                        if let Ok(pos) = node.binary_search(pair) {
-                            node.remove(pos);
-                        }
+                ChangeEvent::RemoveAt {
+                    max_value, index,value: _,
+                } => {
+                    if let Some(node) = self.nodes.get_mut(&max_value.key) {
+                        node.remove(*index);
                     }
                 }
             }

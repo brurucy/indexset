@@ -1,11 +1,11 @@
 use std::fmt::Debug;
 use std::ops::RangeBounds;
 use std::{borrow::Borrow, sync::Arc};
+use std::iter::FusedIterator;
 
 use crossbeam_skiplist::SkipMap;
 use crossbeam_utils::sync::ShardedLock;
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
-use std::iter::FusedIterator;
 
 use crate::cdc::change::ChangeEvent;
 use crate::core::constants::DEFAULT_INNER_SIZE;
@@ -122,9 +122,14 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
 
                             #[cfg(feature = "cdc")]
                             {
-                                let node_removal = ChangeEvent::RemoveNode(old_max);
+                                let node_removal = ChangeEvent::RemoveNode {
+                                    max_value: old_max,
+                                };
                                 let node_insertion_1 =
-                                    ChangeEvent::InsertNode(max.clone(), old_node.clone());
+                                    ChangeEvent::InsertNode {
+                                        max_value: max.clone(),
+                                        node: old_node.clone()
+                                    };
                                 cdc.push(node_removal);
                                 cdc.push(node_insertion_1);
                             }
@@ -149,7 +154,10 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                             #[cfg(feature = "cdc")]
                             {
                                 let node_insertion_2 =
-                                    ChangeEvent::InsertNode(max.clone(), new_node.clone());
+                                    ChangeEvent::InsertNode {
+                                        max_value: max.clone(),
+                                        node: new_node.clone()
+                                    };
                                 cdc.push(node_insertion_2);
                             }
                             index.insert(max, new_node);
@@ -175,10 +183,15 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
 
                                 #[cfg(feature = "cdc")]
                                 {
-                                    let node_removal = ChangeEvent::RemoveNode(old_max.clone());
+                                    let node_removal = ChangeEvent::RemoveNode {
+                                        max_value: old_max,
+                                    };
                                     cdc.push(node_removal);
                                     let node_insertion =
-                                        ChangeEvent::InsertNode(new_max.clone(), node.clone());
+                                        ChangeEvent::InsertNode {
+                                            max_value: new_max.clone(),
+                                            node,
+                                        };
                                     cdc.push(node_insertion);
                                 }
 
@@ -201,7 +214,9 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
 
                                 #[cfg(feature = "cdc")]
                                 {
-                                    let node_removal = ChangeEvent::RemoveNode(old_max.clone());
+                                    let node_removal = ChangeEvent::RemoveNode {
+                                        max_value: old_max.clone()
+                                    };
                                     cdc.push(node_removal);
                                 }
                                 index.remove(&old_max);
@@ -253,7 +268,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
     pub(crate) fn put_cdc(&self, value: T) -> (Option<T>, Vec<ChangeEvent<T>>) {
         loop {
             let mut cdc = vec![];
-            let mut _global_guard = self.index_lock.read();
+            let _global_guard = self.index_lock.read();
             let target_node_entry = match self.index.lower_bound(std::ops::Bound::Included(&value))
             {
                 Some(entry) => entry,
@@ -272,7 +287,11 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                             #[cfg(feature = "cdc")]
                             {
                                 let node_insertion =
-                                    ChangeEvent::InsertNode(value.clone(), first_node.clone());
+                                    ChangeEvent::InsertNode {
+                                        max_value: value
+                                            .clone(),
+                                        node: first_node.clone()
+                                    };
                                 cdc.push(node_insertion);
                             }
 
@@ -296,7 +315,13 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                         #[cfg(feature = "cdc")]
                         {
                             let node_element_insertion =
-                                ChangeEvent::InsertAt(old_max.clone().unwrap(), value.clone());
+                                ChangeEvent::InsertAt {
+                                    max_value: old_max
+                                        .clone()
+                                        .expect("Max value should exist as Node is not empty"),
+                                    value: value.clone(),
+                                    index: idx,
+                                };
                             cdc.push(node_element_insertion);
                         }
 
@@ -313,9 +338,21 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                     #[cfg(feature = "cdc")]
                     {
                         let node_element_removal =
-                            ChangeEvent::RemoveAt(old_max.clone().unwrap(), value.clone());
+                            ChangeEvent::RemoveAt {
+                                max_value: old_max
+                                    .clone()
+                                    .expect("Max value should exist as Node is not empty"),
+                                value: value.clone(),
+                                index: idx,
+                            };
                         let node_element_insertion =
-                            ChangeEvent::InsertAt(old_max.clone().unwrap(), value.clone());
+                            ChangeEvent::InsertAt {
+                                max_value: old_max
+                                    .clone()
+                                    .expect("Max value should exist as Node is not empty"),
+                                value: value.clone(),
+                                index: idx,
+                            };
                         cdc.push(node_element_removal);
                         cdc.push(node_element_insertion);
                     }
@@ -387,17 +424,22 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                 if deleted.is_none() {
                     return (None, cdc);
                 }
+                let (deleted, idx) = deleted.expect("should be ok as checked before");
 
                 let operation = if node_guard.len() > 0 {
                     if old_max.as_ref() == node_guard.last() {
                         #[cfg(feature = "cdc")]
                         {
-                            let _node_element_removal =
-                                ChangeEvent::RemoveAt(old_max.unwrap(), deleted.clone().unwrap());
-                            cdc.push(_node_element_removal);
+                            let node_element_removal =
+                                ChangeEvent::RemoveAt {
+                                    max_value: old_max.expect("Max value should exist as Node is not empty"),
+                                    value: deleted.clone(),
+                                    index: idx,
+                                };
+                            cdc.push(node_element_removal);
                         }
 
-                        return (deleted, cdc);
+                        return (Some(deleted), cdc);
                     }
 
                     Some(Operation::UpdateMax(
@@ -416,7 +458,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                 let _global_guard = self.index_lock.write();
 
                 if let Ok(_) = operation.unwrap().commit(&self.index) {
-                    return (deleted, cdc);
+                    return (Some(deleted), cdc);
                 }
 
                 drop(_global_guard);
