@@ -109,6 +109,15 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                         index.remove(&old_max);
                         let mut new_vec = guard.halve();
 
+                        #[cfg(feature = "cdc")]
+                        {
+                            let node_split = ChangeEvent::SplitNode {
+                                max_value: old_max.clone(),
+                                split_index: guard.len(),
+                            };
+                            cdc.push(node_split);
+                        }
+
                         let mut old_value: Option<T> = None;
                         let mut insert_attempted = false;
                         if let Some(max) = guard.last().cloned() {
@@ -116,19 +125,26 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                                 let (inserted, idx) = NodeLike::insert(&mut *guard, value.clone());
                                 insert_attempted = true;
                                 if !inserted {
-                                    old_value = NodeLike::replace(&mut *guard, idx, value.clone())
+                                    old_value = NodeLike::replace(&mut *guard, idx, value.clone());
+                                    #[cfg(feature = "cdc")]
+                                    {
+                                        let value_insertion = ChangeEvent::RemoveAt {
+                                            max_value: max.clone(),
+                                            index: idx,
+                                            value: old_value.clone().unwrap(),
+                                        };
+                                        cdc.push(value_insertion);
+                                    }
                                 }
-                            }
-
-                            #[cfg(feature = "cdc")]
-                            {
-                                let node_removal = ChangeEvent::RemoveNode { max_value: old_max };
-                                let node_insertion_1 = ChangeEvent::InsertNode {
-                                    max_value: max.clone(),
-                                    node: old_node.clone(),
-                                };
-                                cdc.push(node_removal);
-                                cdc.push(node_insertion_1);
+                                #[cfg(feature = "cdc")]
+                                {
+                                    let value_insertion = ChangeEvent::InsertAt {
+                                        max_value: max.clone(),
+                                        index: idx,
+                                        value: value.clone(),
+                                    };
+                                    cdc.push(value_insertion);
+                                }
                             }
 
                             index.insert(max, old_node.clone());
@@ -137,25 +153,35 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                         if let Some(mut max) = new_vec.last().cloned() {
                             if !insert_attempted {
                                 let (inserted, idx) = NodeLike::insert(&mut new_vec, value.clone());
+                                let old_max = max.clone();
                                 if inserted {
                                     if value > max {
-                                        max = value;
+                                        max = value.clone()
                                     }
                                 } else {
-                                    old_value = NodeLike::replace(&mut new_vec, idx, value);
+                                    old_value = NodeLike::replace(&mut new_vec, idx, value.clone());
+                                    #[cfg(feature = "cdc")]
+                                    {
+                                        let value_insertion = ChangeEvent::RemoveAt {
+                                            max_value: old_max.clone(),
+                                            index: idx,
+                                            value: old_value.clone().unwrap(),
+                                        };
+                                        cdc.push(value_insertion);
+                                    }
+                                }
+                                #[cfg(feature = "cdc")]
+                                {
+                                    let value_insertion = ChangeEvent::InsertAt {
+                                        max_value: old_max.clone(),
+                                        index: idx,
+                                        value: value.clone(),
+                                    };
+                                    cdc.push(value_insertion);
                                 }
                             }
-
                             let new_node = Arc::new(Mutex::new(new_vec));
 
-                            #[cfg(feature = "cdc")]
-                            {
-                                let node_insertion_2 = ChangeEvent::InsertNode {
-                                    max_value: max.clone(),
-                                    node: new_node.clone(),
-                                };
-                                cdc.push(node_insertion_2);
-                            }
                             index.insert(max, new_node);
                         }
 
@@ -179,14 +205,12 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
 
                                 #[cfg(feature = "cdc")]
                                 {
-                                    let node_removal =
-                                        ChangeEvent::RemoveNode { max_value: old_max };
-                                    cdc.push(node_removal);
-                                    let node_insertion = ChangeEvent::InsertNode {
-                                        max_value: new_max.clone(),
-                                        node,
+                                    let update_max = ChangeEvent::InsertAt {
+                                        max_value: old_max,
+                                        value: new_max.clone(),
+                                        index: guard.len() - 1,
                                     };
-                                    cdc.push(node_insertion);
+                                    cdc.push(update_max);
                                 }
 
                                 (None, cdc)
@@ -280,9 +304,8 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                         if let Ok(_) = self.index_lock.try_write() {
                             #[cfg(feature = "cdc")]
                             {
-                                let node_insertion = ChangeEvent::InsertNode {
+                                let node_insertion = ChangeEvent::CreateNode {
                                     max_value: value.clone(),
-                                    node: first_node.clone(),
                                 };
                                 cdc.push(node_insertion);
                             }
