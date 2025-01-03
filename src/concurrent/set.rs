@@ -1,7 +1,7 @@
 use std::fmt::Debug;
+use std::iter::FusedIterator;
 use std::ops::RangeBounds;
 use std::{borrow::Borrow, sync::Arc};
-use std::iter::FusedIterator;
 
 use crossbeam_skiplist::SkipMap;
 use crossbeam_utils::sync::ShardedLock;
@@ -122,14 +122,11 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
 
                             #[cfg(feature = "cdc")]
                             {
-                                let node_removal = ChangeEvent::RemoveNode {
-                                    max_value: old_max,
+                                let node_removal = ChangeEvent::RemoveNode { max_value: old_max };
+                                let node_insertion_1 = ChangeEvent::InsertNode {
+                                    max_value: max.clone(),
+                                    node: old_node.clone(),
                                 };
-                                let node_insertion_1 =
-                                    ChangeEvent::InsertNode {
-                                        max_value: max.clone(),
-                                        node: old_node.clone()
-                                    };
                                 cdc.push(node_removal);
                                 cdc.push(node_insertion_1);
                             }
@@ -153,11 +150,10 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
 
                             #[cfg(feature = "cdc")]
                             {
-                                let node_insertion_2 =
-                                    ChangeEvent::InsertNode {
-                                        max_value: max.clone(),
-                                        node: new_node.clone()
-                                    };
+                                let node_insertion_2 = ChangeEvent::InsertNode {
+                                    max_value: max.clone(),
+                                    node: new_node.clone(),
+                                };
                                 cdc.push(node_insertion_2);
                             }
                             index.insert(max, new_node);
@@ -183,15 +179,13 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
 
                                 #[cfg(feature = "cdc")]
                                 {
-                                    let node_removal = ChangeEvent::RemoveNode {
-                                        max_value: old_max,
-                                    };
+                                    let node_removal =
+                                        ChangeEvent::RemoveNode { max_value: old_max };
                                     cdc.push(node_removal);
-                                    let node_insertion =
-                                        ChangeEvent::InsertNode {
-                                            max_value: new_max.clone(),
-                                            node,
-                                        };
+                                    let node_insertion = ChangeEvent::InsertNode {
+                                        max_value: new_max.clone(),
+                                        node,
+                                    };
                                     cdc.push(node_insertion);
                                 }
 
@@ -215,7 +209,7 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                                 #[cfg(feature = "cdc")]
                                 {
                                     let node_removal = ChangeEvent::RemoveNode {
-                                        max_value: old_max.clone()
+                                        max_value: old_max.clone(),
                                     };
                                     cdc.push(node_removal);
                                 }
@@ -286,12 +280,10 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                         if let Ok(_) = self.index_lock.try_write() {
                             #[cfg(feature = "cdc")]
                             {
-                                let node_insertion =
-                                    ChangeEvent::InsertNode {
-                                        max_value: value
-                                            .clone(),
-                                        node: first_node.clone()
-                                    };
+                                let node_insertion = ChangeEvent::InsertNode {
+                                    max_value: value.clone(),
+                                    node: first_node.clone(),
+                                };
                                 cdc.push(node_insertion);
                             }
 
@@ -314,14 +306,13 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                     if node_guard.last().cloned() == old_max {
                         #[cfg(feature = "cdc")]
                         {
-                            let node_element_insertion =
-                                ChangeEvent::InsertAt {
-                                    max_value: old_max
-                                        .clone()
-                                        .expect("Max value should exist as Node is not empty"),
-                                    value: value.clone(),
-                                    index: idx,
-                                };
+                            let node_element_insertion = ChangeEvent::InsertAt {
+                                max_value: old_max
+                                    .clone()
+                                    .expect("Max value should exist as Node is not empty"),
+                                value: value.clone(),
+                                index: idx,
+                            };
                             cdc.push(node_element_insertion);
                         }
 
@@ -337,22 +328,20 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                 } else {
                     #[cfg(feature = "cdc")]
                     {
-                        let node_element_removal =
-                            ChangeEvent::RemoveAt {
-                                max_value: old_max
-                                    .clone()
-                                    .expect("Max value should exist as Node is not empty"),
-                                value: value.clone(),
-                                index: idx,
-                            };
-                        let node_element_insertion =
-                            ChangeEvent::InsertAt {
-                                max_value: old_max
-                                    .clone()
-                                    .expect("Max value should exist as Node is not empty"),
-                                value: value.clone(),
-                                index: idx,
-                            };
+                        let node_element_removal = ChangeEvent::RemoveAt {
+                            max_value: old_max
+                                .clone()
+                                .expect("Max value should exist as Node is not empty"),
+                            value: value.clone(),
+                            index: idx,
+                        };
+                        let node_element_insertion = ChangeEvent::InsertAt {
+                            max_value: old_max
+                                .clone()
+                                .expect("Max value should exist as Node is not empty"),
+                            value: value.clone(),
+                            index: idx,
+                        };
                         cdc.push(node_element_removal);
                         cdc.push(node_element_insertion);
                     }
@@ -430,12 +419,12 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                     if old_max.as_ref() == node_guard.last() {
                         #[cfg(feature = "cdc")]
                         {
-                            let node_element_removal =
-                                ChangeEvent::RemoveAt {
-                                    max_value: old_max.expect("Max value should exist as Node is not empty"),
-                                    value: deleted.clone(),
-                                    index: idx,
-                                };
+                            let node_element_removal = ChangeEvent::RemoveAt {
+                                max_value: old_max
+                                    .expect("Max value should exist as Node is not empty"),
+                                value: deleted.clone(),
+                                index: idx,
+                            };
                             cdc.push(node_element_removal);
                         }
 
