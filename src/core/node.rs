@@ -24,7 +24,7 @@ pub trait NodeLike<T: Ord> {
     where
         T: Borrow<Q>;
     #[allow(dead_code)]
-    fn delete<Q: Ord + ?Sized>(&mut self, value: &Q) -> Option<T>
+    fn delete<Q: Ord + ?Sized>(&mut self, value: &Q) -> Option<(T, usize)>
     where
         T: Borrow<Q>;
     #[allow(dead_code)]
@@ -109,13 +109,13 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     }
     #[inline]
     fn insert(&mut self, value: T) -> (bool, usize) {
-        return match search(&self, &value) {
+        match search(&self, &value) {
             Ok(idx) => (false, idx),
             Err(idx) => {
                 self.insert(idx, value);
                 (true, idx)
             }
-        };
+        }
     }
     #[inline]
     fn contains<Q>(&self, value: &Q) -> bool
@@ -148,13 +148,13 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         search_bound(&self, bound, from_start)
     }
     #[inline]
-    fn delete<Q>(&mut self, value: &Q) -> Option<T>
+    fn delete<Q>(&mut self, value: &Q) -> Option<(T, usize)>
     where
         T: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
         match search(&self, value) {
-            Ok(idx) => Some(self.remove(idx)),
+            Ok(idx) => Some((self.remove(idx), idx)),
             Err(_) => None,
         }
     }
