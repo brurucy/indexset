@@ -28,7 +28,7 @@ concurrent = ["dep:crossbeam-utils", "dep:crossbeam-skiplist", "dep:parking_lot"
 cdc = ["concurrent"]
 
 [package.metadata.docs.rs]
-features = ["cdc"]
+features = ["cdc", "concurrent"]
 
 [[bench]]
 name = "stdlib"
