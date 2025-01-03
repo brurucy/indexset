@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2025-01-03
+
+### Added
+- Add docs.rs coverage for opt-in feats
+
 ## [0.8.0] - 2024-12-29
 
 ### Fixed
