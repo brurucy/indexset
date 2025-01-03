@@ -27,6 +27,9 @@ serde = ["dep:serde"]
 concurrent = ["dep:crossbeam-utils", "dep:crossbeam-skiplist", "dep:parking_lot"]
 cdc = ["concurrent"]
 
+[package.metadata.docs.rs]
+features = ["cdc"]
+
 [[bench]]
 name = "stdlib"
 harness = false
