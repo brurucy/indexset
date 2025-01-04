@@ -354,24 +354,45 @@ mod tests {
     impl<K: Ord + Clone, V: Clone + PartialEq> PersistedBTreeMap<K, V> {
         fn persist(&mut self, event: &ChangeEvent<Pair<K, V>>) {
             match event {
-                ChangeEvent::InsertNode(max_key, node) => {
-                    self.nodes
-                        .insert(max_key.key.clone(), node.lock_arc().clone());
+                ChangeEvent::CreateNode { max_value } => {
+                    let node = vec![max_value.clone()];
+                    self.nodes.insert(max_value.key.clone(), node);
                 }
-                ChangeEvent::RemoveNode(max_key) => {
-                    self.nodes.remove(&max_key.key);
+                ChangeEvent::RemoveNode { max_value } => {
+                    self.nodes.remove(&max_value.key);
                 }
-                ChangeEvent::InsertAt(node_max, pair) => {
-                    if let Some(node) = self.nodes.get_mut(&node_max.key) {
-                        let pos = node.binary_search(pair).unwrap_or_else(|p| p);
-                        node.insert(pos, pair.clone());
+                ChangeEvent::InsertAt {
+                    max_value,
+                    index,
+                    value,
+                } => {
+                    if let Some(node) = self.nodes.get_mut(&max_value.key) {
+                        node.insert(*index, value.clone());
+                    }
+                    if max_value.key < value.key {
+                        let node = self.nodes.remove(&max_value.key).unwrap();
+                        self.nodes.insert(value.key.clone(), node);
                     }
                 }
-                ChangeEvent::RemoveAt(node_max, pair) => {
-                    if let Some(node) = self.nodes.get_mut(&node_max.key) {
-                        if let Ok(pos) = node.binary_search(pair) {
-                            node.remove(pos);
-                        }
+                ChangeEvent::RemoveAt {
+                    max_value,
+                    index,
+                    value,
+                } => {
+                    if let Some(node) = self.nodes.get_mut(&max_value.key) {
+                        node.remove(*index);
+                    }
+                }
+                ChangeEvent::SplitNode {
+                    max_value,
+                    split_index,
+                } => {
+                    if let Some(mut old_node) = self.nodes.remove(&max_value.key) {
+                        let new_node = old_node.split_off(*split_index);
+                        let new_max_value = new_node.last().unwrap();
+                        self.nodes.insert(new_max_value.key.clone(), new_node);
+                        let old_max_value = old_node.last().unwrap();
+                        self.nodes.insert(old_max_value.key.clone(), old_node);
                     }
                 }
             }
