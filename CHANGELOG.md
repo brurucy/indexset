@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2025-01-04
+
+### Changed
+- `CDC` API now does not return clones of Nodes anymore, instead returning __where__ to insert and remove elements.
+
 ## [0.8.1] - 2025-01-03
 
 ### Added
@@ -146,7 +151,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.9.0...HEAD
+
+[0.9.0]: https://github.com/brurucy/indexset/releases/tag/v0.9.0
+
+[0.8.1]: https://github.com/brurucy/indexset/releases/tag/v0.8.1
 
 [0.8.0]: https://github.com/brurucy/indexset/releases/tag/v0.8.0
 
