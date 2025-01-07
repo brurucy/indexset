@@ -81,20 +81,22 @@ mod test {
         let p3 = Pair { key: 2, value: "c" };
      
         NodeLike::insert(&mut vec, p1.clone());
-        
+        NodeLike::insert(&mut vec, p2.clone());
+
         #[cfg(not(feature = "multiset"))]
         {
-            NodeLike::insert(&mut vec, p2.clone());
             assert_eq!(vec.len(), 1);
         }
-        
         #[cfg(feature = "multiset")]
         {
-            NodeLike::insert(&mut vec, p2.clone());
             assert_eq!(vec.len(), 2); 
         }
      
         NodeLike::insert(&mut vec, p3.clone());
         assert!(vec.contains(&1));
+        assert_eq!(vec.len(), 3);
+
+        NodeLike::insert(&mut vec, p3.clone());
+        assert_eq!(vec.len(), 3);
      }
 }

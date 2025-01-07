@@ -110,7 +110,18 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     #[inline]
     fn insert(&mut self, value: T) -> (bool, usize) {
         match search(&self, &value) {
-            Ok(idx) => (false, idx),
+            Ok(idx) => {
+                #[cfg(not(feature = "multiset"))]
+                return(false, idx);
+
+                #[cfg(feature = "multiset")]
+                if self[idx] == value {
+                    return (false, idx)
+                }
+
+                self.insert(idx, value);
+                (true, idx)
+            }
             Err(idx) => {
                 self.insert(idx, value);
                 (true, idx)
