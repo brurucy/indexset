@@ -1,4 +1,3 @@
-use std::fmt::Debug;
 use std::iter::FusedIterator;
 use std::ops::RangeBounds;
 use std::{borrow::Borrow, sync::Arc};
@@ -8,10 +7,12 @@ use crossbeam_utils::sync::ShardedLock;
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
 
 use crate::cdc::change::ChangeEvent;
+use crate::concurrent::operation::*;
 use crate::core::constants::DEFAULT_INNER_SIZE;
 use crate::core::node::*;
 
-pub type Node<T> = Arc<Mutex<Vec<T>>>;
+use super::r#ref::Ref;
+
 
 /// A **persistent** concurrent ordered set based on a B-Tree.
 ///
@@ -89,180 +90,6 @@ impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
     }
 }
 
-type OldVersion<T> = Node<T>;
-type CurrentVersion<T> = Node<T>;
-
-enum Operation<T: Send> {
-    Split(OldVersion<T>, T, T),
-    UpdateMax(CurrentVersion<T>, T),
-    MakeUnreachable(CurrentVersion<T>, T),
-}
-
-impl<T: Ord + Send + Clone + 'static> Operation<T> {
-    fn commit(self, index: &SkipMap<T, Node<T>>) -> Result<(Option<T>, Vec<ChangeEvent<T>>), ()> {
-        match self {
-            Operation::Split(old_node, old_max, value) => {
-                let mut guard = old_node.lock_arc();
-                if let Some(entry) = index.get(&old_max) {
-                    if Arc::ptr_eq(entry.value(), &old_node) {
-                        let mut cdc = vec![];
-                        index.remove(&old_max);
-                        let mut new_vec = guard.halve();
-
-                        #[cfg(feature = "cdc")]
-                        {
-                            let node_split = ChangeEvent::SplitNode {
-                                max_value: old_max.clone(),
-                                split_index: guard.len(),
-                            };
-                            cdc.push(node_split);
-                        }
-
-                        let mut old_value: Option<T> = None;
-                        let mut insert_attempted = false;
-                        if let Some(max) = guard.last().cloned() {
-                            if max > value {
-                                let (inserted, idx) = NodeLike::insert(&mut *guard, value.clone());
-                                insert_attempted = true;
-                                if !inserted {
-                                    old_value = NodeLike::replace(&mut *guard, idx, value.clone());
-                                    #[cfg(feature = "cdc")]
-                                    {
-                                        let value_insertion = ChangeEvent::RemoveAt {
-                                            max_value: max.clone(),
-                                            index: idx,
-                                            value: old_value.clone().unwrap(),
-                                        };
-                                        cdc.push(value_insertion);
-                                    }
-                                }
-                                #[cfg(feature = "cdc")]
-                                {
-                                    let value_insertion = ChangeEvent::InsertAt {
-                                        max_value: max.clone(),
-                                        index: idx,
-                                        value: value.clone(),
-                                    };
-                                    cdc.push(value_insertion);
-                                }
-                            }
-
-                            index.insert(max, old_node.clone());
-                        }
-
-                        if let Some(mut max) = new_vec.last().cloned() {
-                            if !insert_attempted {
-                                let (inserted, idx) = NodeLike::insert(&mut new_vec, value.clone());
-                                let old_max = max.clone();
-                                if inserted {
-                                    if value > max {
-                                        max = value.clone()
-                                    }
-                                } else {
-                                    old_value = NodeLike::replace(&mut new_vec, idx, value.clone());
-                                    #[cfg(feature = "cdc")]
-                                    {
-                                        let value_insertion = ChangeEvent::RemoveAt {
-                                            max_value: old_max.clone(),
-                                            index: idx,
-                                            value: old_value.clone().unwrap(),
-                                        };
-                                        cdc.push(value_insertion);
-                                    }
-                                }
-                                #[cfg(feature = "cdc")]
-                                {
-                                    let value_insertion = ChangeEvent::InsertAt {
-                                        max_value: old_max.clone(),
-                                        index: idx,
-                                        value: value.clone(),
-                                    };
-                                    cdc.push(value_insertion);
-                                }
-                            }
-                            let new_node = Arc::new(Mutex::new(new_vec));
-
-                            index.insert(max, new_node);
-                        }
-
-                        return Ok((old_value, cdc));
-                    }
-                }
-
-                Err(())
-            }
-            Operation::UpdateMax(node, old_max) => {
-                let guard = node.lock_arc();
-                let new_max = guard.last().unwrap();
-                if let Some(entry) = index.get(&old_max) {
-                    if Arc::ptr_eq(entry.value(), &node) {
-                        let mut cdc = vec![];
-                        return Ok(match new_max.cmp(&old_max) {
-                            std::cmp::Ordering::Equal => (None, cdc),
-                            std::cmp::Ordering::Greater | std::cmp::Ordering::Less => {
-                                index.remove(&old_max);
-                                index.insert(new_max.clone(), node.clone());
-
-                                #[cfg(feature = "cdc")]
-                                {
-                                    let update_max = ChangeEvent::InsertAt {
-                                        max_value: old_max,
-                                        value: new_max.clone(),
-                                        index: guard.len() - 1,
-                                    };
-                                    cdc.push(update_max);
-                                }
-
-                                (None, cdc)
-                            }
-                        });
-                    }
-                }
-
-                Err(())
-            }
-            Operation::MakeUnreachable(node, old_max) => {
-                let guard = node.lock_arc();
-                let new_max = guard.last();
-                if let Some(entry) = index.get(&old_max) {
-                    if Arc::ptr_eq(entry.value(), &node) {
-                        return match new_max.cmp(&Some(&old_max)) {
-                            std::cmp::Ordering::Less => {
-                                let mut cdc = vec![];
-
-                                #[cfg(feature = "cdc")]
-                                {
-                                    let node_removal = ChangeEvent::RemoveNode {
-                                        max_value: old_max.clone(),
-                                    };
-                                    cdc.push(node_removal);
-                                }
-                                index.remove(&old_max);
-
-                                Ok((None, cdc))
-                            }
-                            _ => Err(()),
-                        };
-                    }
-                }
-
-                Err(())
-            }
-        }
-    }
-}
-
-pub struct Ref<T: Ord + Clone + Send> {
-    node_guard: ArcMutexGuard<RawMutex, Vec<T>>,
-    position: usize,
-}
-
-impl<T: Ord + Clone + Send> Ref<T> {
-    pub fn get(&self) -> &T {
-        self.node_guard.get(self.position).unwrap()
-    }
-}
-
 impl<T: Ord + Clone + Send> BTreeSet<T> {
     pub fn new() -> Self {
         Self::default()
@@ -324,7 +151,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             let mut operation = None;
             if node_guard.len() < self.node_capacity {
                 let old_max = node_guard.last().cloned();
-                let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
+                let (inserted, idx) = NodeLike::insert_unique(&mut *node_guard, value.clone());
                 if inserted {
                     if node_guard.last().cloned() == old_max {
                         #[cfg(feature = "cdc")]

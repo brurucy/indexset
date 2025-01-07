@@ -364,7 +364,7 @@ impl<T: Ord> BTreeSet<T> {
             }
 
             self.inner.insert(node_idx + 1, new_node);
-            if NodeLike::insert(&mut self.inner[insert_node_idx], value).0 {
+            if NodeLike::insert_unique(&mut self.inner[insert_node_idx], value).0 {
                 // Reconstruct the index after the new node and inner value inserts.
                 self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
                 self.len += 1;
@@ -375,7 +375,7 @@ impl<T: Ord> BTreeSet<T> {
                 self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
                 false
             }
-        } else if NodeLike::insert(&mut self.inner[node_idx], value).0 {
+        } else if NodeLike::insert_unique(&mut self.inner[node_idx], value).0 {
             self.index.add_at(node_idx, 1);
             self.len += 1;
 
@@ -1711,32 +1711,42 @@ where
     }
 }
 
-pub struct VacantEntry<'a, K, V>
-where
-    K: Ord,
-{
+pub struct VacantEntry<'a, 
+K: Ord, 
+    #[cfg(feature="multiset")]
+    V: PartialEq,
+    #[cfg(not(feature="multiset"))]
+    V,
+> {
     map: &'a mut BTreeMap<K, V>,
     key: K,
 }
 
-pub struct OccupiedEntry<'a, K, V>
-where
-    K: Ord,
-{
+pub struct OccupiedEntry<'a, 
+K: Ord, 
+    #[cfg(feature="multiset")]
+    V: PartialEq,
+    #[cfg(not(feature="multiset"))]
+    V
+> {
     map: &'a mut BTreeMap<K, V>,
     idx: usize,
 }
 
-pub enum Entry<'a, K, V>
-where
-    K: 'a + Ord,
-    V: 'a,
-{
+pub enum Entry<'a, K: 'a + Ord, 
+    #[cfg(feature="multiset")]
+    V: 'a + PartialEq,
+    #[cfg(not(feature="multiset"))]
+    V: 'a
+> {
     Vacant(VacantEntry<'a, K, V>),
     Occupied(OccupiedEntry<'a, K, V>),
 }
 
-impl<'a, K, V> Entry<'a, K, V>
+impl<'a, K: Ord, 
+#[cfg(feature="multiset")]
+V: PartialEq,
+> Entry<'a, K, V>
 where
     K: 'a + Ord,
     V: 'a,
@@ -1797,9 +1807,11 @@ where
     }
 }
 
-impl<'a, K, V> OccupiedEntry<'a, K, V>
-where
-    K: Ord,
+impl<'a,
+K: Ord,
+#[cfg(feature="multiset")]
+V: PartialEq,
+> OccupiedEntry<'a, K, V>
 {
     pub fn key(&self) -> &K {
         &self.map.set.get_index(self.idx).unwrap().key
@@ -1828,7 +1840,9 @@ where
     }
 }
 
-impl<'a, K, V> VacantEntry<'a, K, V>
+impl<'a, K: Ord, 
+#[cfg(feature="multiset")]
+V: PartialEq> VacantEntry<'a, K, V>
 where
     K: Ord,
 {
@@ -1938,16 +1952,23 @@ where
 /// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BTreeMap<K, V>
-where
+pub struct BTreeMap<
     K: Ord,
-{
+    #[cfg(feature="multiset")]
+    V: PartialEq,
+    #[cfg(not(feature="multiset"))]
+    V
+> {
     set: BTreeSet<Pair<K, V>>,
 }
 
-impl<K: Ord, V> Default for BTreeMap<K, V>
-where
+impl<
     K: Ord,
+    #[cfg(feature="multiset")]
+    V: PartialEq,
+    #[cfg(not(feature="multiset"))]
+    V
+> Default for BTreeMap<K, V>
 {
     fn default() -> Self {
         Self {
@@ -1956,9 +1977,13 @@ where
     }
 }
 
-impl<K, V> FromIterator<(K, V)> for BTreeMap<K, V>
-where
+impl<
     K: Ord,
+    #[cfg(feature="multiset")]
+    V: PartialEq,
+    #[cfg(not(feature="multiset"))]
+    V,
+> FromIterator<(K, V)> for BTreeMap<K, V>
 {
     fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
         let mut btree = BTreeMap::new();
@@ -1970,9 +1995,12 @@ where
     }
 }
 
-impl<K: Ord, V> BTreeMap<K, V>
-where
-    K: Ord,
+impl<K: Ord, 
+    #[cfg(feature="multiset")]
+    V: PartialEq,
+    #[cfg(not(feature="multiset"))]
+    V,
+> BTreeMap<K, V>
 {
     /// Moves all elements from `other` into `self`, leaving `other` empty.
     ///
@@ -3091,9 +3119,7 @@ where
     }
 }
 
-impl<K, V, const N: usize> From<[(K, V); N]> for BTreeMap<K, V>
-where
-    K: Ord,
+impl<K: Ord, V: PartialEq, const N: usize> From<[(K, V); N]> for BTreeMap<K, V>
 {
     fn from(value: [(K, V); N]) -> Self {
         let mut btree: BTreeMap<K, V> = Default::default();
@@ -3106,10 +3132,7 @@ where
     }
 }
 
-impl<K, V> IntoIterator for BTreeMap<K, V>
-where
-    K: Ord,
-{
+impl<K: Ord, V: PartialEq> IntoIterator for BTreeMap<K, V> {
     type Item = (K, V);
     type IntoIter = IntoIterMap<K, V>;
 
@@ -3120,10 +3143,7 @@ where
     }
 }
 
-impl<'a, K, V> IntoIterator for &'a BTreeMap<K, V>
-where
-    K: Ord,
-{
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> IntoIterator for &'a BTreeMap<K, V> {
     type Item = (&'a K, &'a V);
 
     type IntoIter = IterMap<'a, K, V>;
@@ -3141,16 +3161,12 @@ where
 /// documentation for more.
 ///
 /// [`iter`]: BTreeMap::iter
-pub struct IterMap<'a, K, V>
-where
-    K: Ord,
+pub struct IterMap<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V>
 {
     inner: Iter<'a, Pair<K, V>>,
 }
 
-impl<'a, K, V> Iterator for IterMap<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> Iterator for IterMap<'a, K, V>
 {
     type Item = (&'a K, &'a V);
 
@@ -3163,9 +3179,7 @@ where
     }
 }
 
-impl<'a, K, V> DoubleEndedIterator for IterMap<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> DoubleEndedIterator for IterMap<'a, K, V>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3176,7 +3190,7 @@ where
     }
 }
 
-impl<'a, K, V> FusedIterator for IterMap<'a, K, V> where K: Ord {}
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> FusedIterator for IterMap<'a, K, V> {}
 
 /// An owning iterator over the entries of a `BTreeMap`.
 ///
@@ -3184,16 +3198,12 @@ impl<'a, K, V> FusedIterator for IterMap<'a, K, V> where K: Ord {}
 /// (provided by the [`IntoIterator`] trait). See its documentation for more.
 ///
 /// [`into_iter`]: IntoIterator::into_iter
-pub struct IntoIterMap<K, V>
-where
-    K: Ord,
+pub struct IntoIterMap<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V>
 {
     inner: IntoIter<Pair<K, V>>,
 }
 
-impl<K, V> Iterator for IntoIterMap<K, V>
-where
-    K: Ord,
+impl<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> Iterator for IntoIterMap<K, V>
 {
     type Item = (K, V);
 
@@ -3206,9 +3216,7 @@ where
     }
 }
 
-impl<K, V> DoubleEndedIterator for IntoIterMap<K, V>
-where
-    K: Ord,
+impl<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> DoubleEndedIterator for IntoIterMap<K, V>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3219,7 +3227,7 @@ where
     }
 }
 
-impl<K, V> FusedIterator for IntoIterMap<K, V> where K: Ord {}
+impl<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> FusedIterator for IntoIterMap<K, V> {}
 
 /// An owning iterator over the keys of a `BTreeMap`.
 ///
@@ -3227,16 +3235,12 @@ impl<K, V> FusedIterator for IntoIterMap<K, V> where K: Ord {}
 /// See its documentation for more.
 ///
 /// [`into_keys`]: BTreeMap::into_keys
-pub struct IntoKeys<K, V>
-where
-    K: Ord,
+pub struct IntoKeys<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V>
 {
     inner: IntoIterMap<K, V>,
 }
 
-impl<K, V> Iterator for IntoKeys<K, V>
-where
-    K: Ord,
+impl<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> Iterator for IntoKeys<K, V>
 {
     type Item = K;
 
@@ -3249,9 +3253,7 @@ where
     }
 }
 
-impl<K, V> DoubleEndedIterator for IntoKeys<K, V>
-where
-    K: Ord,
+impl<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> DoubleEndedIterator for IntoKeys<K, V>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3262,7 +3264,7 @@ where
     }
 }
 
-impl<K, V> FusedIterator for IntoKeys<K, V> where K: Ord {}
+impl<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> FusedIterator for IntoKeys<K, V> {}
 
 /// An owning iterator over the values of a `BTreeMap`.
 ///
@@ -3270,16 +3272,14 @@ impl<K, V> FusedIterator for IntoKeys<K, V> where K: Ord {}
 /// See its documentation for more.
 ///
 /// [`into_values`]: BTreeMap::into_values
-pub struct IntoValues<K, V>
+pub struct IntoValues<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V>
 where
     K: Ord,
 {
     inner: IntoIterMap<K, V>,
 }
 
-impl<K, V> Iterator for IntoValues<K, V>
-where
-    K: Ord,
+impl<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> Iterator for IntoValues<K, V>
 {
     type Item = V;
 
@@ -3292,9 +3292,7 @@ where
     }
 }
 
-impl<K, V> DoubleEndedIterator for IntoValues<K, V>
-where
-    K: Ord,
+impl<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> DoubleEndedIterator for IntoValues<K, V>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3305,7 +3303,7 @@ where
     }
 }
 
-impl<K, V> FusedIterator for IntoValues<K, V> where K: Ord {}
+impl<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> FusedIterator for IntoValues<K, V> {}
 
 /// An iterator over a sub-range of entries in a `BTreeMap`.
 ///
@@ -3313,16 +3311,12 @@ impl<K, V> FusedIterator for IntoValues<K, V> where K: Ord {}
 /// documentation for more.
 ///
 /// [`range`]: BTreeMap::range
-pub struct RangeMap<'a, K, V>
-where
-    K: Ord,
+pub struct RangeMap<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V>
 {
     inner: Range<'a, Pair<K, V>>,
 }
 
-impl<'a, K, V> Iterator for RangeMap<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> Iterator for RangeMap<'a, K, V>
 {
     type Item = (&'a K, &'a V);
 
@@ -3335,9 +3329,7 @@ where
     }
 }
 
-impl<'a, K, V> DoubleEndedIterator for RangeMap<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> DoubleEndedIterator for RangeMap<'a, K, V>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3348,7 +3340,7 @@ where
     }
 }
 
-impl<'a, K, V> FusedIterator for RangeMap<'a, K, V> where K: Ord {}
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> FusedIterator for RangeMap<'a, K, V> {}
 
 /// An iterator over the values of a `BTreeMap`.
 ///
@@ -3356,16 +3348,12 @@ impl<'a, K, V> FusedIterator for RangeMap<'a, K, V> where K: Ord {}
 /// documentation for more.
 ///
 /// [`values`]: BTreeMap::values
-pub struct Values<'a, K, V>
-where
-    K: Ord,
+pub struct Values<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V>
 {
     inner: Iter<'a, Pair<K, V>>,
 }
 
-impl<'a, K, V> Iterator for Values<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> Iterator for Values<'a, K, V>
 {
     type Item = &'a V;
 
@@ -3378,9 +3366,7 @@ where
     }
 }
 
-impl<'a, K, V> DoubleEndedIterator for Values<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> DoubleEndedIterator for Values<'a, K, V>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3391,7 +3377,7 @@ where
     }
 }
 
-impl<'a, K, V> FusedIterator for Values<'a, K, V> where K: Ord {}
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> FusedIterator for Values<'a, K, V> {}
 
 /// An iterator over the keys of a `BTreeMap`.
 ///
@@ -3399,16 +3385,12 @@ impl<'a, K, V> FusedIterator for Values<'a, K, V> where K: Ord {}
 /// documentation for more.
 ///
 /// [`keys`]: BTreeMap::keys
-pub struct Keys<'a, K, V>
-where
-    K: Ord,
+pub struct Keys<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V>
 {
     inner: Iter<'a, Pair<K, V>>,
 }
 
-impl<'a, K, V> Iterator for Keys<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> Iterator for Keys<'a, K, V>
 {
     type Item = &'a K;
 
@@ -3421,9 +3403,7 @@ where
     }
 }
 
-impl<'a, K, V> DoubleEndedIterator for Keys<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> DoubleEndedIterator for Keys<'a, K, V>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3434,7 +3414,7 @@ where
     }
 }
 
-impl<'a, K, V> FusedIterator for Keys<'a, K, V> where K: Ord {}
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> FusedIterator for Keys<'a, K, V> {}
 
 /// A mutable iterator over the entries of a `BTreeMap`.
 ///
@@ -3442,9 +3422,7 @@ impl<'a, K, V> FusedIterator for Keys<'a, K, V> where K: Ord {}
 /// documentation for more.
 ///
 /// [`iter_mut`]: BTreeMap::iter_mut
-pub struct IterMut<'a, K: 'a, V: 'a>
-where
-    K: Ord,
+pub struct IterMut<'a, K: 'a + Ord, #[cfg(feature="multiset")] V: 'a + PartialEq, #[cfg(not(feature="multiset"))] V: 'a>
 {
     inner: std::slice::IterMut<'a, Node<Pair<K, V>>>,
     current_front_node_idx: usize,
@@ -3455,9 +3433,7 @@ where
     current_back_iterator: std::slice::IterMut<'a, Pair<K, V>>,
 }
 
-impl<'a, K, V> Iterator for IterMut<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> Iterator for IterMut<'a, K, V>
 {
     type Item = (&'a K, &'a mut V);
 
@@ -3495,9 +3471,7 @@ where
     }
 }
 
-impl<'a, K, V> DoubleEndedIterator for IterMut<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> DoubleEndedIterator for IterMut<'a, K, V>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.current_front_idx == self.current_back_idx + 1 {
@@ -3535,7 +3509,7 @@ where
     }
 }
 
-impl<'a, K, V> FusedIterator for IterMut<'a, K, V> where K: Ord {}
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> FusedIterator for IterMut<'a, K, V> {}
 
 /// A mutable iterator over the values of a `BTreeMap`.
 ///
@@ -3543,16 +3517,12 @@ impl<'a, K, V> FusedIterator for IterMut<'a, K, V> where K: Ord {}
 /// documentation for more.
 ///
 /// [`values_mut`]: BTreeMap::values_mut
-pub struct ValuesMut<'a, K: 'a, V: 'a>
-where
-    K: Ord,
+pub struct ValuesMut<'a, K: 'a + Ord, #[cfg(feature="multiset")] V: 'a + PartialEq, #[cfg(not(feature="multiset"))] V: 'a>
 {
     inner: IterMut<'a, K, V>,
 }
 
-impl<'a, K, V> Iterator for ValuesMut<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> Iterator for ValuesMut<'a, K, V>
 {
     type Item = &'a mut V;
 
@@ -3565,9 +3535,7 @@ where
     }
 }
 
-impl<'a, K, V> DoubleEndedIterator for ValuesMut<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> DoubleEndedIterator for ValuesMut<'a, K, V>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -3578,7 +3546,7 @@ where
     }
 }
 
-impl<'a, K, V> FusedIterator for ValuesMut<'a, K, V> where K: Ord {}
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> FusedIterator for ValuesMut<'a, K, V> {}
 
 /// A mutable iterator over a sub-range of entries in a `BTreeMap`.
 ///
@@ -3586,16 +3554,14 @@ impl<'a, K, V> FusedIterator for ValuesMut<'a, K, V> where K: Ord {}
 /// documentation for more.
 ///
 /// [`range_mut`]: BTreeMap::range_mut
-pub struct RangeMut<'a, K: 'a, V: 'a>
+pub struct RangeMut<'a, K: 'a + Ord, #[cfg(feature="multiset")] V: 'a + PartialEq, #[cfg(not(feature="multiset"))] V: 'a>
 where
     K: Ord,
 {
     inner: IterMut<'a, K, V>,
 }
 
-impl<'a, K, V> Iterator for RangeMut<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> Iterator for RangeMut<'a, K, V>
 {
     type Item = (&'a K, &'a mut V);
 
@@ -3604,18 +3570,16 @@ where
     }
 }
 
-impl<'a, K, V> DoubleEndedIterator for RangeMut<'a, K, V>
-where
-    K: Ord,
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> DoubleEndedIterator for RangeMut<'a, K, V>
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.inner.next_back()
     }
 }
 
-impl<'a, K, V> FusedIterator for RangeMut<'a, K, V> where K: Ord {}
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> FusedIterator for RangeMut<'a, K, V> {}
 
-impl<K, Q, V> Index<&Q> for BTreeMap<K, V>
+impl<K, Q, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> Index<&Q> for BTreeMap<K, V>
 where
     K: Borrow<Q> + Ord,
 
@@ -3676,15 +3640,12 @@ impl<'a, T: Ord> Cursor<'a, T> {
     }
 }
 
-pub struct CursorMap<'a, K, V>
-where
-    K: 'a + Ord,
-    V: 'a,
+pub struct CursorMap<'a, K: 'a + Ord, #[cfg(feature="multiset")] V: 'a + PartialEq, #[cfg(not(feature="multiset"))] V: 'a>
 {
     cursor: Cursor<'a, Pair<K, V>>,
 }
 
-impl<'a, K: Ord, V> CursorMap<'a, K, V> {
+impl<'a, K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> CursorMap<'a, K, V> {
     pub fn move_next(&mut self) {
         self.cursor.move_next()
     }
@@ -3756,7 +3717,7 @@ mod tests {
             input
                 .iter()
                 .fold(Node::with_capacity(DEFAULT_INNER_SIZE), |mut acc, curr| {
-                    NodeLike::insert(&mut acc, *curr);
+                    NodeLike::insert_unique(&mut acc, *curr);
                     acc
                 });
 
@@ -3775,7 +3736,7 @@ mod tests {
 
         let mut former_node = Node::with_capacity(DEFAULT_INNER_SIZE);
         input.iter().for_each(|item| {
-            NodeLike::insert(&mut former_node, item.clone());
+            NodeLike::insert_unique(&mut former_node, item.clone());
         });
         let latter_node = former_node.halve();
 

@@ -10,7 +10,9 @@ pub trait NodeLike<T: Ord> {
     #[allow(dead_code)]
     fn len(&self) -> usize;
     #[allow(dead_code)]
-    fn insert(&mut self, value: T) -> (bool, usize);
+    fn insert_unique(&mut self, value: T) -> (bool, usize);
+    #[allow(dead_code)]
+    fn insert_sorted(&mut self, value: T) -> (bool, usize);
     #[allow(dead_code)]
     fn contains<Q: Ord + ?Sized>(&self, value: &Q) -> bool
     where
@@ -108,11 +110,22 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         self.len()
     }
     #[inline]
-    fn insert(&mut self, value: T) -> (bool, usize) {
+    fn insert_unique(&mut self, value: T) -> (bool, usize) {
         match search(&self, &value) {
             Ok(idx) => (false, idx),
             Err(idx) => {
                 self.insert(idx, value);
+                (true, idx)
+            }
+        }
+    }
+    #[inline]
+    fn insert_sorted(&mut self, value: T) -> (bool, usize) {
+        match search(&self, &value) {
+            Ok(idx) => (false, idx),
+            Err(idx) => {
+                self.insert(idx, value);
+
                 (true, idx)
             }
         }
