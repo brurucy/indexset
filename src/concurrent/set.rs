@@ -151,7 +151,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             let mut operation = None;
             if node_guard.len() < self.node_capacity {
                 let old_max = node_guard.last().cloned();
-                let (inserted, idx) = NodeLike::insert_unique(&mut *node_guard, value.clone());
+                let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {
                     if node_guard.last().cloned() == old_max {
                         #[cfg(feature = "cdc")]

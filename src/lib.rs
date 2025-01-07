@@ -364,7 +364,7 @@ impl<T: Ord> BTreeSet<T> {
             }
 
             self.inner.insert(node_idx + 1, new_node);
-            if NodeLike::insert_unique(&mut self.inner[insert_node_idx], value).0 {
+            if NodeLike::insert(&mut self.inner[insert_node_idx], value).0 {
                 // Reconstruct the index after the new node and inner value inserts.
                 self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
                 self.len += 1;
@@ -375,7 +375,7 @@ impl<T: Ord> BTreeSet<T> {
                 self.index = FenwickTree::from_iter(self.inner.iter().map(|node| node.len()));
                 false
             }
-        } else if NodeLike::insert_unique(&mut self.inner[node_idx], value).0 {
+        } else if NodeLike::insert(&mut self.inner[node_idx], value).0 {
             self.index.add_at(node_idx, 1);
             self.len += 1;
 
@@ -1744,12 +1744,11 @@ pub enum Entry<'a, K: 'a + Ord,
 }
 
 impl<'a, K: Ord, 
-#[cfg(feature="multiset")]
-V: PartialEq,
+    #[cfg(feature="multiset")]
+    V: PartialEq,
+    #[cfg(not(feature="multiset"))]
+    V,
 > Entry<'a, K, V>
-where
-    K: 'a + Ord,
-    V: 'a,
 {
     pub fn or_insert(self, default: V) -> &'a mut V {
         match self {
@@ -1811,6 +1810,8 @@ impl<'a,
 K: Ord,
 #[cfg(feature="multiset")]
 V: PartialEq,
+#[cfg(not(feature="multiset"))]
+V,
 > OccupiedEntry<'a, K, V>
 {
     pub fn key(&self) -> &K {
@@ -1841,8 +1842,11 @@ V: PartialEq,
 }
 
 impl<'a, K: Ord, 
-#[cfg(feature="multiset")]
-V: PartialEq> VacantEntry<'a, K, V>
+    #[cfg(feature="multiset")]
+    V: PartialEq,
+    #[cfg(not(feature="multiset"))]
+    V,
+> VacantEntry<'a, K, V>
 where
     K: Ord,
 {
@@ -3132,7 +3136,7 @@ impl<K: Ord, V: PartialEq, const N: usize> From<[(K, V); N]> for BTreeMap<K, V>
     }
 }
 
-impl<K: Ord, V: PartialEq> IntoIterator for BTreeMap<K, V> {
+impl<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V> IntoIterator for BTreeMap<K, V> {
     type Item = (K, V);
     type IntoIter = IntoIterMap<K, V>;
 
@@ -3273,8 +3277,6 @@ impl<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multise
 ///
 /// [`into_values`]: BTreeMap::into_values
 pub struct IntoValues<K: Ord, #[cfg(feature="multiset")] V: PartialEq, #[cfg(not(feature="multiset"))] V>
-where
-    K: Ord,
 {
     inner: IntoIterMap<K, V>,
 }
@@ -3717,7 +3719,7 @@ mod tests {
             input
                 .iter()
                 .fold(Node::with_capacity(DEFAULT_INNER_SIZE), |mut acc, curr| {
-                    NodeLike::insert_unique(&mut acc, *curr);
+                    NodeLike::insert(&mut acc, *curr);
                     acc
                 });
 
@@ -3736,7 +3738,7 @@ mod tests {
 
         let mut former_node = Node::with_capacity(DEFAULT_INNER_SIZE);
         input.iter().for_each(|item| {
-            NodeLike::insert_unique(&mut former_node, item.clone());
+            NodeLike::insert(&mut former_node, item.clone());
         });
         let latter_node = former_node.halve();
 
