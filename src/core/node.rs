@@ -10,7 +10,9 @@ pub trait NodeLike<T: Ord> {
     #[allow(dead_code)]
     fn len(&self) -> usize;
     #[allow(dead_code)]
-    fn insert(&mut self, value: T) -> (bool, usize);
+    fn insert_set(&mut self, value: T) -> (bool, usize);
+    #[allow(dead_code)]
+    fn insert_multiset(&mut self, value: T) -> (bool, usize);
     #[allow(dead_code)]
     fn contains<Q: Ord + ?Sized>(&self, value: &Q) -> bool
     where
@@ -101,20 +103,28 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     }
     #[inline]
     fn halve(&mut self) -> Self {
-        self.split_off(DEFAULT_CUTOFF)
+        self.split_off(self.capacity() / 2)
     }
     #[inline]
     fn len(&self) -> usize {
         self.len()
     }
     #[inline]
-    fn insert(&mut self, value: T) -> (bool, usize) {
+    fn insert_set(&mut self, value: T) -> (bool, usize) {
         match search(&self, &value) {
             Ok(idx) => {
-                #[cfg(not(feature = "multiset"))]
                 return(false, idx);
-
-                #[cfg(feature = "multiset")]
+            }
+            Err(idx) => {
+                self.insert(idx, value);
+                (true, idx)
+            }
+        }
+    }
+    #[inline]
+    fn insert_multiset(&mut self, value: T) -> (bool, usize) {
+        match search(&self, &value) {
+            Ok(idx) => {
                 if self[idx] == value {
                     return (false, idx)
                 }

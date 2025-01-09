@@ -114,7 +114,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
         loop {
             let mut cdc = vec![];
             let _global_guard = self.index_lock.read();
-            let target_node_entry = match self.index.lower_bound(std::ops::Bound::Included(&value))
+            let target_node_entry = match self.index.upper_bound(std::ops::Bound::Included(&value))
             {
                 Some(entry) => entry,
                 None => {
@@ -151,7 +151,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             let mut operation = None;
             if node_guard.len() < self.node_capacity {
                 let old_max = node_guard.last().cloned();
-                let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
+                let (inserted, idx) = NodeLike::insert_multiset(&mut *node_guard, value.clone());
                 if inserted {
                     if node_guard.last().cloned() == old_max {
                         #[cfg(feature = "cdc")]
@@ -503,7 +503,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         if (self.last_front.is_some() || self.last_back.is_some())
-            && self.last_front == self.last_back
+            && self.last_front.eq(&self.last_back)
         {
             return None;
         }
@@ -658,8 +658,9 @@ where
         let start_bound = range.start_bound();
         let current_front_entry = btree
             .index
-            .lower_bound(start_bound)
-            .or_else(|| btree.index.back());
+            .upper_bound(start_bound)
+            .and_then(|ub| ub.next() )
+            .or_else(|| btree.index.front());
 
         let (current_front_entry_guard, mut current_front_entry_iter) = if let Some(current_entry) =
             current_front_entry.clone()
@@ -671,7 +672,7 @@ where
                 match start_bound {
                     std::ops::Bound::Included(_) if position == 0 => {}
                     _ => {
-                        iter.nth(position - 1);
+                        iter.nth(if position == 0 { 0 } else { position - 1 });
                     }
                 }
             }
@@ -858,7 +859,7 @@ where
 
         let start_bound = range.start_bound();
         let end_bound = range.end_bound();
-        let potential_front_entry = self.index.lower_bound(start_bound);
+        let potential_front_entry = self.index.upper_bound(start_bound).and_then(|ub| ub.next()).or_else(|| self.index.front());
 
         let potential_back_entry = self.index.lower_bound(end_bound);
 

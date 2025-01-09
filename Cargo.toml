@@ -26,10 +26,9 @@ crossbeam-skiplist = { version = "0.1.3", optional = true}
 serde = ["dep:serde"]
 concurrent = ["dep:crossbeam-utils", "dep:crossbeam-skiplist", "dep:parking_lot"]
 cdc = ["concurrent"]
-multiset = []
 
 [package.metadata.docs.rs]
-features = ["cdc", "concurrent"]
+features = ["cdc", "concurrent", "serde"]
 
 [[bench]]
 name = "stdlib"

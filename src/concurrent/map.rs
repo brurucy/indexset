@@ -5,11 +5,11 @@ use crate::{cdc::change::ChangeEvent, core::pair::Pair};
 use super::set::BTreeSet;
 
 #[derive(Debug)]
-pub struct BTreeMap<K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + Clone + 'static, #[cfg(feature="multiset")] V: Send + Clone + PartialEq + 'static> {
+pub struct BTreeMap<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> {
     pub(crate) set: BTreeSet<Pair<K, V>>,
 }
 
-impl<K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + Clone + 'static, #[cfg(feature="multiset")] V: Send + Clone + PartialEq + 'static> Default for BTreeMap<K, V> {
+impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> Default for BTreeMap<K, V> {
     fn default() -> Self {
         Self {
             set: Default::default(),
@@ -17,11 +17,11 @@ impl<K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + 
     }
 }
 
-pub struct Iter<'a, K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + Clone + 'static, #[cfg(feature="multiset")] V: Send + Clone + PartialEq + 'static> {
+pub struct Iter<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> {
     inner: super::set::Iter<'a, Pair<K, V>>,
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + Clone + 'static, #[cfg(feature="multiset")] V: Send + Clone + PartialEq + 'static> Iterator for Iter<'a, K, V> {
+impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> Iterator for Iter<'a, K, V> {
 
     type Item = (&'a K, &'a V);
 
@@ -34,7 +34,7 @@ impl<'a, K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Sen
     }
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + Clone + 'static, #[cfg(feature="multiset")] V: Send + Clone + PartialEq + 'static> DoubleEndedIterator for Iter<'a, K, V> {
+impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> DoubleEndedIterator for Iter<'a, K, V> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
             return Some((&entry.key, &entry.value));
@@ -44,14 +44,14 @@ impl<'a, K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Sen
     }
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + Clone + 'static, #[cfg(feature="multiset")] V: Send + Clone + PartialEq + 'static> FusedIterator for Iter<'a, K, V> {
+impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> FusedIterator for Iter<'a, K, V> {
 }
 
-pub struct Range<'a, K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + Clone + 'static, #[cfg(feature="multiset")] V: Send + Clone + PartialEq + 'static> {
+pub struct Range<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> {
     inner: super::set::Range<'a, Pair<K, V>>,
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + Clone + 'static, #[cfg(feature="multiset")] V: Send + Clone + PartialEq + 'static> Iterator for Range<'a, K, V> {
+impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> Iterator for Range<'a, K, V> {
     type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -63,7 +63,7 @@ impl<'a, K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Sen
     }
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + Clone + 'static, #[cfg(feature="multiset")] V: Send + Clone + PartialEq + 'static> DoubleEndedIterator for Range<'a, K, V> {
+impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> DoubleEndedIterator for Range<'a, K, V> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
             return Some((&entry.key, &entry.value));
@@ -73,10 +73,10 @@ impl<'a, K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Sen
     }
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + Clone + 'static, #[cfg(feature="multiset")] V: Send + Clone + PartialEq + 'static> FusedIterator for Range<'a, K, V> {
+impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> FusedIterator for Range<'a, K, V> {
 }
 
-impl<K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + Clone + 'static, #[cfg(feature="multiset")] V: Send + Clone + PartialEq + 'static> BTreeMap<K, V> {
+impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> {
     /// Makes a new, empty, persistent `BTreeMap`.
     ///
     /// # Examples
@@ -94,6 +94,20 @@ impl<K: Send + Ord + Clone + 'static, #[cfg(not(feature="multiset"))] V: Send + 
     pub fn new() -> Self {
         Self {
             set: Default::default(),
+        }
+    }
+    /// Makes a new, empty `BTreeMap` with the given maximum node size. Allocates one vec with
+    /// the capacity set to be the specified node size.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use indexset::concurrent::map::BTreeMap;
+    ///
+    /// let map: BTreeMap<i32, i32> = BTreeMap::with_maximum_node_size(128);
+    pub fn with_maximum_node_size(node_capacity: usize) -> Self {
+        Self {
+            set: BTreeSet::with_maximum_node_size(node_capacity),
         }
     }
     /// Returns `true` if the map contains a value for the specified key.

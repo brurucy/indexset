@@ -6,47 +6,32 @@ use std::fmt::Debug;
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Hash)]
-pub struct Pair<K: Ord, #[cfg(not(feature = "multiset"))] V, #[cfg(feature = "multiset")] V: PartialEq> {
+pub struct Pair<K: Ord, V> {
     pub key: K,
     pub value: V,
 }
 
-impl<K: Ord, #[cfg(not(feature = "multiset"))] V, #[cfg(feature = "multiset")] V: PartialEq> Eq for Pair<K, V> {}
+impl<K: Ord, V> Eq for Pair<K, V> {}
 
-#[cfg(not(feature = "multiset"))]
-impl<K, V> PartialEq<Self> for Pair<K, V>
-where
-    K: Ord,
-{
+impl<K: Ord, V> PartialEq<Self> for Pair<K, V> {
     fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
+        self.key.eq(&other.key)
     }
 }
 
-#[cfg(feature = "multiset")]
-impl<K, V> PartialEq<Self> for Pair<K, V>
-where
-    K: Ord,
-    V: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.key == other.key && self.value == other.value
-    }
-}
-
-impl<K: Ord, #[cfg(not(feature = "multiset"))] V, #[cfg(feature = "multiset")] V: PartialEq> PartialOrd<Self> for Pair<K, V> {
+impl<K: Ord, V> PartialOrd<Self> for Pair<K, V> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.key.partial_cmp(&other.key)
     }
 }
 
-impl<K: Ord, #[cfg(not(feature = "multiset"))] V, #[cfg(feature = "multiset")] V: PartialEq> Ord for Pair<K, V> {
+impl<K: Ord, V> Ord for Pair<K, V> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.key.cmp(&other.key)
     }
 }
 
-impl<K: Ord, #[cfg(not(feature = "multiset"))] V, #[cfg(feature = "multiset")] V: PartialEq> Borrow<K> for Pair<K, V> {
+impl<K: Ord, V> Borrow<K> for Pair<K, V> {
     fn borrow(&self) -> &K {
         &self.key
     }
@@ -67,10 +52,7 @@ mod test {
     fn eq_test() {
         let pair_one = Pair { key: 1usize, value: 2usize };
         let pair_two = Pair { key: 1usize, value: 3usize };
-        #[cfg(not(feature = "multiset"))]
         assert_eq!(pair_one, pair_two);
-        #[cfg(feature = "multiset")]
-        assert_ne!(pair_one, pair_two);
     }
 
     #[test]
@@ -80,23 +62,15 @@ mod test {
         let p2 = Pair { key: 1, value: "b" };
         let p3 = Pair { key: 2, value: "c" };
      
-        NodeLike::insert(&mut vec, p1.clone());
-        NodeLike::insert(&mut vec, p2.clone());
+        NodeLike::insert_set(&mut vec, p1.clone());
+        NodeLike::insert_set(&mut vec, p2.clone());
 
-        #[cfg(not(feature = "multiset"))]
-        {
-            assert_eq!(vec.len(), 1);
-        }
-        #[cfg(feature = "multiset")]
-        {
-            assert_eq!(vec.len(), 2); 
-        }
-     
-        NodeLike::insert(&mut vec, p3.clone());
+        assert_eq!(vec.len(), 1);
+    
+        NodeLike::insert_set(&mut vec, p3.clone());
         assert!(vec.contains(&1));
-        assert_eq!(vec.len(), 3);
 
-        NodeLike::insert(&mut vec, p3.clone());
-        assert_eq!(vec.len(), 3);
-     }
+        NodeLike::insert_set(&mut vec, p3.clone());
+        assert_eq!(vec.len(), 2);
+    }
 }
