@@ -9,7 +9,7 @@ use fastrand;
 pub struct MultiPair<K: Ord, V: PartialEq> {
     pub key: K,
     pub value: V,
-    discriminator: u64,
+    pub discriminator: u64,
 }
 
 impl<K: Ord, V: PartialEq> MultiPair<K, V> {

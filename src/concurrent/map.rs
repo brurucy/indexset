@@ -342,7 +342,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     /// ```
     pub fn range<Q, R>(&self, range: R) -> Range<K, V>
     where
-        Pair<K, V>: Borrow<Q> + Ord,
+        Pair<K, V>: Borrow<Q>,
         Q: Ord + ?Sized,
         R: RangeBounds<Q>,
     {
@@ -354,7 +354,30 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::BTreeSet;
+    use super::BTreeMap;
+    use super::ChangeEvent;
+    use super::Pair;
+
+    #[test]
+    fn test_range_edge_cast() {
+        let maximum_node_size = 3;
+        let map = BTreeMap::with_maximum_node_size(maximum_node_size);
+        
+        map.insert(1usize, "a");
+        map.insert(2usize, "b");
+        map.insert(3usize, "c");
+        map.insert(4usize, "d");
+        map.insert(5usize, "e");
+        map.insert(6usize, "f");
+        map.insert(7usize, "g");
+
+        let mid_range = map.range::<usize, _>(3..5).collect::<BTreeSet<_>>();
+        assert_eq!(mid_range, vec![
+            (&3usize, &"c"),
+            (&4usize, &"d"),
+        ].into_iter().collect::<BTreeSet<_>>());
+    }
 
     #[derive(Debug, Default)]
     struct PersistedBTreeMap<K, V>

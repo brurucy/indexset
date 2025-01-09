@@ -684,10 +684,16 @@ where
         loop {
             if self.current_front_entry_iter.is_none() {
                 if let Some(next_entry) = self.current_front_entry.take().and_then(|e| e.next()) {
+                    let next_entry_key = next_entry.key();
+
                     if let Some(next_entry_equals_to_next_back_entry) = self
                         .current_back_entry
                         .as_ref()
-                        .and_then(|next_back_entry| Some(next_entry.key() == next_back_entry.key()))
+                        .and_then(|next_back_entry| { 
+                            let next_back_entry_key = next_back_entry.key();
+
+                            Some(next_entry_key.eq(next_back_entry_key)) 
+                        })
                     {
                         if !next_entry_equals_to_next_back_entry {
                             let guard = next_entry.value().lock_arc();
@@ -843,8 +849,9 @@ where
             if position < guard.len() {
                 match start_bound {
                     std::ops::Bound::Included(_) if position == 0 => {}
+                    std::ops::Bound::Unbounded => {}
                     _ => {
-                        iter.nth(if position == 0 { 0 } else { position - 1 });
+                        iter.nth(position - 1);
                     }
                 }
             }
@@ -868,20 +875,24 @@ where
                 if let Some(front_entry) = current_front_entry.as_ref() {
                     if !Arc::ptr_eq(current_entry.value(), front_entry.value()) {
                         let new_guard = current_entry.value().lock_arc();
+                        let new_guard_len = new_guard.len();
                         let mut iter_local: std::slice::Iter<'_, T> =
                             unsafe { std::mem::transmute(new_guard.iter()) };
                         let position = new_guard.rank(end_bound, false);
-                        if position < new_guard.len() {
+                        if position < new_guard_len {
                             match end_bound {
                                 std::ops::Bound::Included(_) => {
-                                    if position < new_guard.len() {
-                                        iter_local.nth_back(
-                                            new_guard.len().wrapping_sub(position).wrapping_sub(2),
-                                        );
+                                    if position < new_guard_len {
+                                        let places_to_skip = new_guard_len.wrapping_sub(position).wrapping_sub(2);
+
+                                        iter_local.nth_back(places_to_skip);
                                     }
-                                }
+                                },
+                                std::ops::Bound::Unbounded => {},
                                 _ => {
-                                    iter_local.nth_back(new_guard.len().wrapping_sub(position));
+                                    let places_to_skip = new_guard_len.wrapping_sub(position);
+
+                                    iter_local.nth_back(places_to_skip);
                                 }
                             }
                         }
@@ -894,8 +905,10 @@ where
                             .and_then(|g| Some((g.len(), g.rank(end_bound, false))))
                         {
                             if position < len {
+                                let places_to_skip = len.wrapping_sub(position).wrapping_sub(1);
+
                                 current_front_entry_iter.as_mut().and_then(|i| {
-                                    i.nth_back(len.wrapping_sub(position).wrapping_sub(1))
+                                    i.nth_back(places_to_skip)
                                 });
                             }
                         }
@@ -906,6 +919,11 @@ where
             } else {
                 (None, None)
             };
+
+
+        // let first_front_entry = current_front_entry_iter.clone().unwrap().collect::<Vec<_>>();
+        // let back_entry = current_back_entry_guard.as_ref().unwrap().iter().collect::<Vec<_>>();
+        // let first_back_entry = current_back_entry_iter.clone().unwrap().collect::<Vec<_>>();
 
         Self {
             iter: Iter {

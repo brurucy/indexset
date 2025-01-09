@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2025-01-09
+
+### Added
+- `BTreeMultiMap`, a concurrent BTree that allows multiple values per key.
+
 ## [0.9.0] - 2025-01-04
 
 ### Changed
