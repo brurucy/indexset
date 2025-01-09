@@ -844,7 +844,7 @@ where
                 match start_bound {
                     std::ops::Bound::Included(_) if position == 0 => {}
                     _ => {
-                        iter.nth(position - 1);
+                        iter.nth(if position == 0 { 0 } else { position - 1 });
                     }
                 }
             }

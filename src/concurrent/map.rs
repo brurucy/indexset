@@ -131,6 +131,20 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
             set: Default::default(),
         }
     }
+    /// Makes a new, empty `BTreeMap` with the given maximum node size. Allocates one vec with
+    /// the capacity set to be the specified node size.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use indexset::concurrent::map::BTreeMap;
+    ///
+    /// let map: BTreeMap<i32, i32> = BTreeMap::with_maximum_node_size(128);
+    pub fn with_maximum_node_size(node_capacity: usize) -> Self {
+        Self {
+            set: BTreeSet::with_maximum_node_size(node_capacity),
+        }
+    }
     /// Returns `true` if the map contains a value for the specified key.
     ///
     /// The key may be any borrowed form of the map's key type, but the ordering
