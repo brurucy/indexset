@@ -68,10 +68,9 @@ impl<K: Ord, V: PartialEq> Borrow<K> for MultiPair<K, V> {
 
 #[cfg(test)]
 mod test {
-    use std::mem::MaybeUninit;
-
     use super::*;
     use crate::core::node::NodeLike;
+    use std::ops::Bound::*;
 
     #[test]
     fn borrow_test() {
@@ -131,16 +130,16 @@ mod test {
         NodeLike::insert(&mut vec, p3c.clone());
         assert_eq!(vec.len(), 10);
 
-        let start_1 = vec.rank(std::ops::Bound::Included(&MultiPair::with_infimum(1)), true);
-        let end_1 = vec.rank(std::ops::Bound::Included(&MultiPair::with_supremum(1)), true);
-        let range_1 = &vec[start_1..end_1];
+        let start_1 = vec.rank(Included(&MultiPair::with_infimum(1)), true).or_else(|| Some(0)).unwrap();
+        let end_1 = vec.rank(Excluded(&MultiPair::with_supremum(1)), true).unwrap();
+        let range_1 = &vec[start_1..=end_1];
         assert_eq!(range_1.len(), 3);
         assert!(range_1.contains(&p1a));
         assert!(range_1.contains(&p1b));
         assert!(range_1.contains(&p1c));
 
-        let end_2 = vec.rank(std::ops::Bound::Included(&MultiPair::with_supremum(2)), true);
-        let range_2 = &vec[start_1..end_2];
+        let end_2 = vec.rank(Excluded(&MultiPair::with_supremum(2)), true).unwrap();
+        let range_2 = &vec[start_1..=end_2];
         assert_eq!(range_2.len(), 5);
         assert!(range_2.contains(&p1a));
         assert!(range_2.contains(&p1b));
@@ -149,18 +148,18 @@ mod test {
         assert!(range_2.contains(&p2b));
         assert_ne!(range_2.contains(&p3a), true);
 
-        let start_3 = vec.rank(std::ops::Bound::Included(&MultiPair::with_infimum(3)), true);
-        let end_3 = vec.rank(std::ops::Bound::Included(&MultiPair::with_supremum(3)), true);
-        let range_3 = &vec[start_3..end_3];
+        let start_3 = vec.rank(Included(&MultiPair::with_infimum(3)), true).unwrap() + 1;
+        let end_3 = vec.rank(Excluded(&MultiPair::with_supremum(3)), true).unwrap();
+        let range_3 = &vec[start_3..=end_3];
         assert_eq!(range_3.len(), 4);
         assert!(range_3.contains(&p3a));
         assert!(range_3.contains(&p3b));
         assert!(range_3.contains(&p3c));
         assert!(range_3.contains(&p3d));
 
-        let start_4 = vec.rank(std::ops::Bound::Included(&MultiPair::with_infimum(4)), true);
-        let end_4 = vec.rank(std::ops::Bound::Included(&MultiPair::with_supremum(4)), true);
-        let range_4 = &vec[start_4..end_4];
+        let start_4 = vec.rank(Included(&MultiPair::with_infimum(4)), true).unwrap() + 1;
+        let end_4 = vec.rank(Excluded(&MultiPair::with_supremum(4)), true).unwrap();
+        let range_4 = &vec[start_4..=end_4];
         assert_eq!(range_4.len(), 1);
         assert!(range_4.contains(&p4a));
      }

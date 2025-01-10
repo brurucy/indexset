@@ -845,15 +845,9 @@ where
         {
             let guard = current_entry.value().lock_arc();
             let mut iter: std::slice::Iter<'_, T> = unsafe { std::mem::transmute(guard.iter()) };
-            let position = guard.rank(start_bound, true);
-            if position < guard.len() {
-                match start_bound {
-                    std::ops::Bound::Included(_) if position == 0 => {}
-                    std::ops::Bound::Unbounded => {}
-                    _ => {
-                        iter.nth(position - 1);
-                    }
-                }
+            let forward_nth = guard.rank(start_bound, true);
+            if let Some(forward_nth) = forward_nth {
+                iter.nth(forward_nth);
             }
 
             (Some(guard), Some(iter))
@@ -875,40 +869,22 @@ where
                 if let Some(front_entry) = current_front_entry.as_ref() {
                     if !Arc::ptr_eq(current_entry.value(), front_entry.value()) {
                         let new_guard = current_entry.value().lock_arc();
-                        let new_guard_len = new_guard.len();
-                        let mut iter_local: std::slice::Iter<'_, T> =
-                            unsafe { std::mem::transmute(new_guard.iter()) };
-                        let position = new_guard.rank(end_bound, false);
-                        if position < new_guard_len {
-                            match end_bound {
-                                std::ops::Bound::Included(_) => {
-                                    if position < new_guard_len {
-                                        let places_to_skip = new_guard_len.wrapping_sub(position).wrapping_sub(2);
-
-                                        iter_local.nth_back(places_to_skip);
-                                    }
-                                },
-                                std::ops::Bound::Unbounded => {},
-                                _ => {
-                                    let places_to_skip = new_guard_len.wrapping_sub(position);
-
-                                    iter_local.nth_back(places_to_skip);
-                                }
-                            }
+                        let mut iter_local: std::slice::Iter<'_, T> = unsafe { std::mem::transmute(new_guard.iter()) };
+                        let backward_nth = new_guard.rank(end_bound, false);
+                        if let Some(backward_nth) = backward_nth {
+                            iter_local.nth_back(backward_nth);
                         }
 
                         iter = Some(iter_local);
                         guard = Some(new_guard);
                     } else {
-                        if let Some((len, position)) = current_front_entry_guard
+                        if let Some(backward_nth) = current_front_entry_guard
                             .as_ref()
-                            .and_then(|g| Some((g.len(), g.rank(end_bound, false))))
+                            .and_then(|g| Some(g.rank(end_bound, false)))
                         {
-                            if position < len {
-                                let places_to_skip = len.wrapping_sub(position).wrapping_sub(1);
-
+                            if let Some(backward_nth) = backward_nth {
                                 current_front_entry_iter.as_mut().and_then(|i| {
-                                    i.nth_back(places_to_skip)
+                                    i.nth_back(backward_nth)
                                 });
                             }
                         }
@@ -920,10 +896,6 @@ where
                 (None, None)
             };
 
-
-        // let first_front_entry = current_front_entry_iter.clone().unwrap().collect::<Vec<_>>();
-        // let back_entry = current_back_entry_guard.as_ref().unwrap().iter().collect::<Vec<_>>();
-        // let first_back_entry = current_back_entry_iter.clone().unwrap().collect::<Vec<_>>();
 
         Self {
             iter: Iter {
@@ -1050,7 +1022,6 @@ where
         let start_bound = range.start_bound();
         let end_bound = range.end_bound();
         let potential_front_entry = self.index.lower_bound(start_bound);
-
         let potential_back_entry = self.index.lower_bound(end_bound);
 
         let (potential_front_entry_guard, potential_front_position) =
@@ -1058,8 +1029,7 @@ where
                 let mut front_position = 0;
 
                 let guard = front_entry.value().lock_arc();
-                let position = guard.rank(start_bound, true);
-                if position < guard.len() {
+                if let Some(position) = guard.rank(start_bound, true) {
                     front_position = position;
                 }
 
@@ -1077,11 +1047,13 @@ where
                     if !Arc::ptr_eq(back_entry.value(), front_entry.value()) {
                         let new_guard = back_entry.value().lock_arc();
                         let position = new_guard.rank(end_bound, true);
-                        back_position = {
-                            if position > 0 {
-                                position - 1
-                            } else {
-                                new_guard.len()
+                        if let Some(position) = position {
+                            back_position = {
+                                if position > 0 {
+                                    position
+                                } else {
+                                    new_guard.len()
+                                }
                             }
                         };
 
@@ -1091,11 +1063,13 @@ where
                             .as_ref()
                             .and_then(|g| Some((g.len(), g.rank(end_bound, true))))
                         {
-                            back_position = {
-                                if position > 0 {
-                                    position - 1
-                                } else {
-                                    len
+                            if let Some(position) = position {
+                                back_position = {
+                                    if position > 0 {
+                                        position
+                                    } else {
+                                        len
+                                    }
                                 }
                             }
                         }
