@@ -73,7 +73,7 @@ Command: `cargo bench --bench stdlib --all-features`
 Getting the i-th element is **3400x** faster than stdlib's btree, `contains` is 25% faster, and iterating is twice 
 as fast, at the cost of insertions being 30% slower.
 
-If your use case of `std::collections::BTreeSet` and `BTreeMap` i read-heavy, or if you really need to index by
+If your use case of `std::collections::BTreeSet` and `BTreeMap` is read-heavy, or if you really need to index by
 sorted-order position, it might be worth checking out `indexset` instead.
 
 ### Concurrent
