@@ -187,6 +187,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     ///
     /// ```
     /// use indexset::concurrent::multimap::BTreeMultiMap;
+    /// use indexset::BTreeSet;
     ///
     /// let mut map = BTreeMultiMap::new();
     /// 
@@ -194,9 +195,9 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     /// map.insert(1, "a");
     /// map.insert(2, "c");
     /// 
-    /// let all_with_key = map.get(&1).collect::<Vec<_>>();
+    /// let all_with_key = map.get(&1).collect::<BTreeSet<_>>();
     /// assert_eq!(all_with_key.len(), 2);
-    /// assert_eq!(all_with_key, vec![(&1, &"a"), (&1, &"b")]);
+    /// assert_eq!(all_with_key, vec![(&1, &"a"), (&1, &"b")].into_iter().collect::<BTreeSet<_>>());
     /// ```
     pub fn get(&self, key: &K) -> Range<K, V>
     {
@@ -512,5 +513,43 @@ mod tests {
 
         let empty_range = map.range(5..).collect::<BTreeSet<_>>();
         assert_eq!(empty_range, vec![].into_iter().collect::<BTreeSet<_>>());
+    }
+
+    #[test]
+    fn test_get_works_as_expected() {
+        let maximum_node_size = 10;
+        let map = BTreeMultiMap::with_maximum_node_size(maximum_node_size);
+        
+        map.insert(1usize, "a");
+        map.insert(1usize, "b");
+        map.insert(2usize, "c");
+        map.insert(2usize, "d");
+        map.insert(3usize, "e");
+        map.insert(4usize, "f");
+        map.insert(4usize, "g");
+
+        let range = map.get(&1).collect::<BTreeSet<_>>();
+
+        assert_eq!(range, vec![
+            (&1, &"b"),
+            (&1, &"a"),
+        ].into_iter().collect::<BTreeSet<_>>());
+
+        let range = map.get(&2).collect::<BTreeSet<_>>();
+        assert_eq!(range, vec![
+            (&2, &"d"),
+            (&2, &"c"),
+        ].into_iter().collect::<BTreeSet<_>>());
+
+        let range = map.get(&3).collect::<BTreeSet<_>>();
+        assert_eq!(range, vec![
+            (&3, &"e"),
+        ].into_iter().collect::<BTreeSet<_>>());
+
+        let range = map.get(&4).collect::<BTreeSet<_>>();
+        assert_eq!(range, vec![
+            (&4, &"g"),
+            (&4, &"f"),
+        ].into_iter().collect::<BTreeSet<_>>());
     }
 }

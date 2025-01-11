@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::iter::{self, FusedIterator};
+use std::iter::FusedIterator;
 use std::ops::RangeBounds;
 use std::{borrow::Borrow, sync::Arc};
 
@@ -703,7 +703,8 @@ where
         let mut current_back_entry = btree
             .index
             .upper_bound(end_bound)
-            .and_then(|e| e.next());
+            .and_then(|e| e.next())
+            .or_else(|| btree.index.front());
 
         if current_back_entry.is_none() {
             match end_bound {
