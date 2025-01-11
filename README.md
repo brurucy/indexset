@@ -14,6 +14,23 @@ threads.
 Both the concurrent and single-threaded versions are meant to be drop-in replacements for the stdlib BTree. This 
 is mostly true for the latter but not for the former, yet.
 
+The following table describes the variants of this data structure that are available:
+
+| Variant                                    | tl;dr                                                     | Stability |
+|--------------------------------------------|-----------------------------------------------------------|-----------|
+| crate::BTreeSet                            | A single-threaded ordered set                             | Stable    |
+| crate::BTreeMap                            | A single-threaded ordered map                             | Stable    |
+| crate::concurrent::set::BTreeSet           | A concurrent ordered set                                  | Beta      |
+| crate::concurrent::map::BTreeMap           | A concurrent ordered map                                  | Beta      |
+| crate::concurrent::multimap::BTreeMultiMap | A concurrent ordered map where keys need not to be unique | Alpha     |
+
+## Features
+
+* `serde`: implements serialization and deserialization traits for the single-threaded trees 
+* `concurrent`: enables the three concurrent variants of `BTreeSet` referenced in the table above
+* `cdc`: provides helper methods to persist all concurrent trees
+* `multimap`: enables `BTreeMultiMap`
+
 # Background
 
 This was heavily inspired by [`indexmap`](https://crates.io/crates/indexmap), and
@@ -22,7 +39,7 @@ python's [`sortedcontainers`](https://github.com/grantjenks/python-sortedcontain
 It differs from both in that:
 
 * `indexmap` is a hashmap that provides numerical lookups, but does not maintain order in case of removals, while
-  `indexset` is a b-tree that irrespective of which mutating operation is run, always maintains order.
+  `indexset`'s core data structure is a b-tree that irrespective of which mutating operation is run, always maintains order.
 * `sortecontainers` is similar in spirit, but utilizes a different routine for balancing the tree, and relies
   on a heap for numerical lookups.
 
@@ -32,7 +49,7 @@ It differs from both in that:
 - Zero indirection.
 - Lookups by position and range.
 - Minimal amount of allocations.
-- `select`(lookups by position) and `rank` operations in near constant time.
+- `select`(lookups by position) and `rank` operations in near constant time (not yet in the concurrent versions).
 
 # Performance
 
@@ -105,12 +122,12 @@ In this benchmark threads have high locality and tend to focus on specific parts
 ## Limitations
 
 * `BTreeMap` is less polished than `BTreeSet`. This crate has been optimised for a leaner `BTreeSet`.
-* `Concurrent` `BTreeMap` and `BtreeSet` do not support `serde` serialization and deserialization nor are they order-statistic trees. 
+* `Concurrent` `BtreeSet`, `BTreeMap` and `BTreeMultiMap` do not support `serde` serialization and deserialization nor are they order-statistic trees.
 
 ## Naming
 
-This library is called `indexset`, because the base data structure is `BTreeSet`. `BTreeMap` is a `BTreeSet` with
-a `Pair<K, V>` item type.
+This library is called `indexset` because the base data structure is `BTreeSet`. `BTreeMap` is a `BTreeSet` with
+a `Pair<K, V>` item type, and `BTreeMultiMap` is one with a `MultiPair<K, V>` item.
 
 ## Changelog
 
