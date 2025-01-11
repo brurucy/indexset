@@ -209,10 +209,8 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
             },
         }
     }
-    /// Inserts a key-value pair into the map.
+    /// Inserts a key-value pair into the multi map.
     /// 
-    /// If the map did not have this key-value pair present, it will be inserted.
-    ///
     /// # Examples
     ///
     /// Basic usage:
@@ -225,8 +223,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     /// assert_eq!(map.len() == 0, false);
     ///
     /// map.insert(37, "b");
-    /// assert_eq!(map.insert(37, "c"), Some("b"));
-    /// assert_eq!(map.get(&37).and_then(|e| Some(e.get().value)), Some("c"));
+    /// assert_eq!(map.insert(37, "c"), None);
     /// ```
     pub fn insert(&self, key: K, value: V) -> Option<V> {
         let new_entry = MultiPair::new(key, value);
@@ -259,8 +256,13 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     /// let map = BTreeMultiMap::new();
     /// map.insert(1, "b");
     /// map.insert(1, "a");
-    /// assert_eq!(map.remove_some(&1), Some((1, "a")));
-    /// assert_eq!(map.remove_some(&1), Some((1, "b")));
+    /// 
+    /// let first_removed = map.remove_some(&1).unwrap();
+    /// let second_removed = map.remove_some(&1).unwrap();
+    /// let removals = vec![first_removed, second_removed];
+    /// 
+    /// assert!(removals.contains(&(1, "a")));
+    /// assert!(removals.contains(&(1, "b")));
     /// ```
     pub fn remove_some<Q>(&self, key: &Q) -> Option<(K, V)>
     where
@@ -285,6 +287,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     /// let map = BTreeMultiMap::new();
     /// map.insert(1, "b");
     /// map.insert(1, "a");
+    /// 
     /// assert_eq!(map.remove(&1, &"a"), Some((1, "a")));
     /// assert_eq!(map.remove(&1, &"b"), Some((1, "b")));
     /// ```
@@ -375,7 +378,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     /// map.insert(3, "a");
     /// map.insert(5, "b");
     /// map.insert(8, "c");
-    /// for (&key, &value) in map.range::<i32, _>((Included(&4), Included(&8))) {
+    /// for (&key, &value) in map.range((Included(&4), Included(&8))) {
     ///     println!("{key}: {value}");
     /// }
     /// assert_eq!(Some((&5, &"b")), map.range(4..).next());
