@@ -365,10 +365,13 @@ mod tests {
         let map = BTreeMap::with_maximum_node_size(maximum_node_size);
         
         map.insert(1usize, "a");
+
         map.insert(2usize, "b");
         map.insert(3usize, "c");
+
         map.insert(4usize, "d");
         map.insert(5usize, "e");
+
         map.insert(6usize, "f");
         map.insert(7usize, "g");
 

@@ -20,7 +20,7 @@ where
     K: Ord,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
+        self.key.eq(&other.key)
     }
 }
 

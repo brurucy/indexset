@@ -403,7 +403,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::BTreeMultiMap;
     use crate::BTreeSet;
 
     #[test]

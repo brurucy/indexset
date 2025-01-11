@@ -559,7 +559,7 @@ where
                 if let Some(old_guard) = self.current_front_entry_guard.take() {
                     if let Some(last_value) = old_guard.last() {
                         if let Some(last_back) = self.last_back.as_ref() {
-                            if last_value.ne(&last_back) {
+                            if last_back.lt(last_value) {
                                 return None;
                             }
                         }
@@ -628,7 +628,15 @@ where
                 return Some(next_value);
             } else {
                 self.current_back_entry_iter.take();
-                self.current_back_entry_guard.take();
+                if let Some(old_guard) = self.current_back_entry_guard.take() { 
+                    if let Some(first_value) = old_guard.first() {
+                        if let Some(last_front) = self.last_front.as_ref() {
+                            if last_front.gt(first_value) {
+                                return None;
+                            }
+                        }
+                    }
+                }
 
                 continue;
             }
@@ -694,7 +702,8 @@ where
         let end_bound = range.end_bound();
         let mut current_back_entry = btree
             .index
-            .lower_bound(end_bound);
+            .upper_bound(end_bound)
+            .and_then(|e| e.next());
 
         if current_back_entry.is_none() {
             match end_bound {
@@ -1113,19 +1122,32 @@ mod tests {
 
     #[test]
     fn test_bidirectional_iteration() {
-        let set = BTreeSet::new();
-        for i in 1..=100000 {
+        let set = BTreeSet::with_maximum_node_size(3);
+        for i in 1..=20 {
             set.insert(i);
         }
         let mut iter = set.into_iter();
-        for i in 1..=50000 {
+        for i in 0..10 {
+            // (1, 20), (2, 19), (3, 18), (4, 17), (5, 16), (6, 15), (7, 14), (8, 13), (9, 12), (10, 11)
+            let tree = set.index.iter().collect::<Vec<_>>();
+
+            let expected_next = i + 1;
+            let actual_next = iter.next();
             assert_eq!(
-                iter.next(),
-                Some(&i),
+                actual_next,
+                Some(&expected_next),
                 "Tree: {:?}",
-                set.index.iter().collect::<Vec<_>>()
+                tree
             );
-            assert_eq!(iter.next_back(), Some(&(100001 - i)));
+
+            let expected_next_back = 20 - i;
+            let actual_next_back = iter.next_back();
+            assert_eq!(
+                actual_next_back,
+                Some(&expected_next_back),
+                "Tree: {:?}",
+                tree
+            );
         }
         assert_eq!(iter.next(), None);
         assert_eq!(iter.next_back(), None);
