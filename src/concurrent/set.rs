@@ -874,8 +874,8 @@ where
                 let mut front_position = 0;
 
                 let guard = front_entry.value().lock_arc();
-                if let Some(position) = guard.rank(start_bound, false) {
-                    front_position = guard.len().wrapping_sub(position).wrapping_sub(2);
+                if let Some(position) = guard.rank(start_bound, true) {
+                    front_position = position.wrapping_add(1);
                 }
 
                 (Some(guard), front_position)
@@ -895,8 +895,8 @@ where
                         if let Some(position) = position {
                             back_position = position;
                         } else {
-                            back_position = new_guard.len();
-                        };
+                            back_position = new_guard.len()
+                        }
 
                         guard = Some(new_guard);
                     } else {
@@ -1255,39 +1255,42 @@ mod tests {
         let actual_len = btree.len();
         assert_eq!(expected_len, actual_len);
 
+        // We now clear the tree
         btree.remove_range(..);
         assert_eq!(btree.len(), 0);
 
+        // Re-insert everything
         for i in 0..(DEFAULT_INNER_SIZE * 2) {
             btree.insert(i);
         }
-        assert_eq!(btree.len(), DEFAULT_INNER_SIZE * 2);
+        let expected_len = DEFAULT_INNER_SIZE * 2;
+        let actual_len = btree.len();
+        assert_eq!(expected_len, actual_len);
 
         btree.remove_range((std::ops::Bound::Excluded(5), std::ops::Bound::Excluded(15)));
-        let subset = btree.range(0..20).collect::<Vec<_>>();
-        assert_eq!(
-            btree.range(0..DEFAULT_INNER_SIZE).count(),
-            DEFAULT_INNER_SIZE - 9
-        );
+        let expected_len = expected_len - 9;
+        let actual_len = btree.len();
+        assert_eq!(expected_len, actual_len);
 
-        let everything = btree.iter().collect::<Vec<_>>();
         btree.remove_range((
             std::ops::Bound::Included(DEFAULT_INNER_SIZE),
             std::ops::Bound::Excluded(DEFAULT_INNER_SIZE + 10),
         ));
-        let everything = btree.iter().collect::<Vec<_>>();
-        let subset = btree.range(0..DEFAULT_INNER_SIZE * 2).collect::<Vec<_>>();
-        assert_eq!(
-            subset.len(),
-            DEFAULT_INNER_SIZE * 2 - 19
-        );
+        let expected_len = expected_len - 10;
+        let actual_len = btree.len();
+        assert_eq!(expected_len, actual_len);
 
-        let original_count = btree.len();
+        // This range exceeds the size of the tree
         btree.remove_range(DEFAULT_INNER_SIZE * 3..DEFAULT_INNER_SIZE * 4);
-        assert_eq!(btree.len(), original_count);
+        let expected_len = expected_len;
+        let actual_len = btree.len();
+        assert_eq!(expected_len, actual_len);
 
+        // This range starts at the very end of the tree, and exceeds it
         btree.remove_range(DEFAULT_INNER_SIZE * 2 - 5..DEFAULT_INNER_SIZE * 3);
-        assert_eq!(btree.len(), original_count - 5);
+        let expected_len = expected_len - 5;
+        let actual_len = btree.len();
+        assert_eq!(expected_len, actual_len);
     }
 
     #[test]
