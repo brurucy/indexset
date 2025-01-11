@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2025-01-11
+
 ### Changed
 - Improved the README.
 
@@ -164,7 +166,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.10.2...HEAD
+
+[0.10.2]: https://github.com/brurucy/indexset/releases/tag/v0.10.2
 
 [0.10.1]: https://github.com/brurucy/indexset/releases/tag/v0.10.1
 
