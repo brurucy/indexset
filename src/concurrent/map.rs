@@ -186,7 +186,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     /// assert_eq!(map.get(&1).and_then(|e| Some(e.get().value)), Some("a"));
     /// assert_eq!(map.get(&2).and_then(|e| Some(e.get().value)), None);
     /// ```
-    pub fn get<Q>(&self, key: &Q) -> Option<super::set::Ref<Pair<K, V>>>
+    pub fn get<Q>(&self, key: &Q) -> Option<super::r#ref::Ref<Pair<K, V>>>
     where
         Pair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
