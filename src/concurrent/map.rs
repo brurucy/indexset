@@ -417,7 +417,7 @@ mod tests {
                 ChangeEvent::RemoveAt {
                     max_value,
                     index,
-                    value,
+                    value: _,
                 } => {
                     if let Some(node) = self.nodes.get_mut(&max_value.key) {
                         node.remove(*index);
