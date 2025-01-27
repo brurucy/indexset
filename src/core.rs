@@ -1,6 +1,6 @@
-pub(crate) mod constants;
-pub(crate) mod node;
-pub(crate) mod pair;
+pub mod constants;
+pub mod node;
+pub mod pair;
 
 #[cfg(feature = "multimap")]
-pub(crate) mod multipair;
+pub mod multipair;
