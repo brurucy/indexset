@@ -3908,6 +3908,18 @@ mod tests {
     }
 
     #[test]
+    fn test_map_get() {
+        let btree = BTreeMap::from_iter((0..(DEFAULT_INNER_SIZE * 10)).map(|i| (i, i)));
+
+        assert_eq!(btree.len(), DEFAULT_INNER_SIZE * 10);
+
+        for item in 0..DEFAULT_INNER_SIZE * 10 {
+            assert_eq!(btree.get(&(item + 1)), None);
+            assert_eq!(btree.get(&item), Some(&item));
+        }
+    }
+
+    #[test]
     fn test_get_contains_lower_bound() {
         let input: Vec<usize> = (0..(DEFAULT_INNER_SIZE + 1)).into_iter().rev().collect();
         let expected_output: Vec<usize> = (0..(DEFAULT_INNER_SIZE + 1)).collect();
