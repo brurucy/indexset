@@ -2150,7 +2150,9 @@ where
             .locate_value_cmp(|item: &Pair<K, V>| item.key.borrow() < key);
         if let Some(candidate_node) = self.set.inner.get(node_idx) {
             if let Some(candidate_value) = candidate_node.get(position_within_node) {
-                return Some((&candidate_value.key, &candidate_value.value));
+                if candidate_value.key.borrow() == key {
+                    return Some((&candidate_value.key, &candidate_value.value));
+                }
             }
         }
 
