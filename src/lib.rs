@@ -2150,7 +2150,9 @@ where
             .locate_value_cmp(|item: &Pair<K, V>| item.key.borrow() < key);
         if let Some(candidate_node) = self.set.inner.get(node_idx) {
             if let Some(candidate_value) = candidate_node.get(position_within_node) {
-                return Some((&candidate_value.key, &candidate_value.value));
+                if candidate_value.key.borrow() == key {
+                    return Some((&candidate_value.key, &candidate_value.value));
+                }
             }
         }
 
@@ -3905,6 +3907,18 @@ mod tests {
                 assert_eq!(back_spine.last(), None);
             }
         });
+    }
+
+    #[test]
+    fn test_map_get() {
+        let btree = BTreeMap::from_iter((0..(DEFAULT_INNER_SIZE * 10)).map(|i| (i, i)));
+
+        assert_eq!(btree.len(), DEFAULT_INNER_SIZE * 10);
+
+        for item in 0..DEFAULT_INNER_SIZE * 10 {
+            assert_eq!(btree.get(&(item + 1)), None);
+            assert_eq!(btree.get(&item), Some(&item));
+        }
     }
 
     #[test]
