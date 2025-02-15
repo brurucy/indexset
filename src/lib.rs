@@ -3916,7 +3916,6 @@ mod tests {
         assert_eq!(btree.len(), DEFAULT_INNER_SIZE * 10);
 
         for item in 0..DEFAULT_INNER_SIZE * 10 {
-            assert_eq!(btree.get(&(item + 1)), None);
             assert_eq!(btree.get(&item), Some(&item));
         }
     }

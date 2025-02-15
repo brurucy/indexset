@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.4] - 2025-02-15
+
+### Fixed
+- `BTreeMap::get` getting the __closest__ value instead of the __exact__ value
+
 ## [0.10.3] - 2025-01-27
 
 ### Changed
@@ -171,7 +176,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.10.3...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.10.4...HEAD
+
+[0.10.4]: https://github.com/brurucy/indexset/releases/tag/v0.10.4
 
 [0.10.3]: https://github.com/brurucy/indexset/releases/tag/v0.10.3
 

@@ -1,6 +1,6 @@
 [package]
 name = "indexset"
-version = "0.10.3"
+version = "0.10.4"
 edition = "2021"
 documentation = "https://docs.rs/indexset/"
 repository = "https://github.com/brurucy/indexset"
