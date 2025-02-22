@@ -270,10 +270,19 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
         MultiPair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        return self
+        self
             .set
             .remove(key)
-            .and_then(|pair| Some((pair.key, pair.value)));
+            .and_then(|pair| Some((pair.key, pair.value)))
+    }
+    pub fn remove_some_cdc<Q>(&self, key: &Q) -> (Option<(K, V)>, Vec<ChangeEvent<MultiPair<K, V>>>)
+    where
+        MultiPair<K, V>: Borrow<Q> + Ord,
+        Q: Ord + ?Sized,
+    {
+        let (old_value, cdc) = self.set.remove_cdc(key);
+
+        (old_value.and_then(|pair| Some((pair.key, pair.value))), cdc)
     }
     /// Removes a specific key-value pair from the map returning the key and the value if the key
     /// was previously in the map.
@@ -301,16 +310,19 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
             return self.set.remove(&pair_to_remove).and_then(|pair| Some((pair.key, pair.value)));
         }
 
-        return None;
+        None
     }
-    pub fn remove_cdc<Q>(&self, key: &Q) -> (Option<(K, V)>, Vec<ChangeEvent<MultiPair<K, V>>>)
-    where
-        MultiPair<K, V>: Borrow<Q> + Ord,
-        Q: Ord + ?Sized,
+    pub fn remove_cdc(&self, key: &K, value: &V) -> (Option<(K, V)>, Vec<ChangeEvent<MultiPair<K, V>>>)
     {
-        let (old_value, cdc) = self.set.remove_cdc(key);
+        let discriminant_to_remove = self.raw_get(&key).find(|pair| pair.2 == value);
+        if let Some(discriminant_to_remove) = discriminant_to_remove {
+            let pair_to_remove = MultiPair { key: discriminant_to_remove.0.clone(), value: discriminant_to_remove.2.clone(), discriminator: *discriminant_to_remove.1 };
 
-        (old_value.and_then(|pair| Some((pair.key, pair.value))), cdc)
+            let (res, evs) = self.set.remove_cdc(&pair_to_remove);
+            return (res.map(|pair| (pair.key, pair.value)), evs)
+        }
+
+        (None, vec![])
     }
     /// Returns the number of elements in the map.
     ///
