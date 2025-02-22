@@ -6,8 +6,6 @@ use std::borrow::Borrow;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Hash)]
 pub struct Pair<K, V>
-where
-    K: Ord,
 {
     pub key: K,
     pub value: V,
