@@ -1,6 +1,10 @@
 use std::{borrow::Borrow, iter::FusedIterator, ops::RangeBounds};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use crate::{cdc::change::ChangeEvent, core::pair::Pair};
+use crate::concurrent::operation::Node;
 
 use super::set::BTreeSet;
 
@@ -144,6 +148,14 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
         Self {
             set: BTreeSet::with_maximum_node_size(node_capacity),
         }
+    }
+    #[cfg(feature = "cdc")]
+    pub fn attach_node(&self, node: Vec<Pair<K, V>>) {
+        self.set.attach_node(Arc::new(Mutex::new(node)))
+    }
+    #[cfg(feature = "cdc")]
+    pub fn iter_nodes(&self) -> impl Iterator<Item=Node<Pair<K,V>>> + '_ {
+        self.set.index.iter().map(|e| e.value().clone())
     }
     /// Returns `true` if the map contains a value for the specified key.
     ///

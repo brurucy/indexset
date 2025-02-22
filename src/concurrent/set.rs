@@ -110,6 +110,14 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             node_capacity,
         }
     }
+    pub fn attach_node(&self, node: Node<T>) {
+        let node_id = {
+            let node = node.lock_arc();
+            node.last().cloned().expect("node should contain at least one value to be correct node")
+        };
+        let _global_guard = self.index_lock.write();
+        self.index.insert(node_id, node);
+    }
     pub(crate) fn put_cdc(&self, value: T) -> (Option<T>, Vec<ChangeEvent<T>>) {
         loop {
             let mut cdc = vec![];
