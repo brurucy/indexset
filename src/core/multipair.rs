@@ -1,12 +1,16 @@
-use core::cmp::Ordering;
+use std::fmt::Debug;
 use std::{borrow::Borrow, mem::MaybeUninit};
+
+use core::cmp::Ordering;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
 use fastrand;
+
+use crate::core::pair::Pair;
+
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Hash)]
-pub struct MultiPair<K: Ord, V: PartialEq> {
+pub struct MultiPair<K, V> {
     pub key: K,
     pub value: V,
     pub discriminator: u64,
@@ -63,6 +67,25 @@ impl<K: Ord, V: PartialEq> PartialOrd for MultiPair<K, V> {
 impl<K: Ord, V: PartialEq> Borrow<K> for MultiPair<K, V> {
     fn borrow(&self) -> &K {
         &self.key
+    }
+}
+
+impl<K: Ord, V: PartialEq> From<Pair<K, V>> for MultiPair<K, V> {
+    fn from(pair: Pair<K, V>) -> Self {
+        MultiPair {
+            key: pair.key,
+            value: pair.value,
+            discriminator: fastrand::u64(..),
+        }
+    }
+}
+
+impl<K: Ord, V: PartialEq> From<MultiPair<K, V>> for Pair<K, V> {
+    fn from(pair: MultiPair<K, V>) -> Self {
+        Pair {
+            key: pair.key,
+            value: pair.value,
+        }
     }
 }
 
