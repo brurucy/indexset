@@ -304,7 +304,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                 drop(node_guard);
                 let _global_guard = self.index_lock.write();
 
-                if let Ok(_) = operation.unwrap().commit(&self.index) {
+                if let Ok((_, cdc)) = operation.unwrap().commit(&self.index) {
                     return (Some(deleted), cdc);
                 }
 
