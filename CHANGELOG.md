@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2025-03-03
+
+### Added
+- `remove_some_cdc` to `BTreeMultiMap`
+
+### Changed
+- `MultiPair` has a bijection to `Pair`
+
 ## [0.10.4] - 2025-02-15
 
 ### Fixed
@@ -176,7 +184,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.10.4...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.11.0...HEAD
+
+[0.11.0]: https://github.com/brurucy/indexset/releases/tag/v0.11.0
 
 [0.10.4]: https://github.com/brurucy/indexset/releases/tag/v0.10.4
 

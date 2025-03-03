@@ -1,4 +1,6 @@
+#[cfg(feature = "multimap")]
 use crate::core::multipair::MultiPair;
+
 use crate::core::pair::Pair;
 
 pub enum ChangeEvent<T> {
@@ -39,39 +41,41 @@ pub enum ChangeEvent<T> {
     },
 }
 
+#[cfg(feature = "multimap")]
 impl<K: Ord, V: PartialEq> From<ChangeEvent<MultiPair<K, V>>> for ChangeEvent<Pair<K, V>> {
     fn from(ev: ChangeEvent<MultiPair<K, V>>) -> Self {
         match ev {
-            ChangeEvent::InsertAt { max_value, value, index } => {
-                ChangeEvent::InsertAt {
-                    max_value: max_value.into(),
-                    value: value.into(),
-                    index
-                }
-            }
-            ChangeEvent::RemoveAt { max_value, value, index } => {
-                ChangeEvent::RemoveAt {
-                    max_value: max_value.into(),
-                    value: value.into(),
-                    index
-                }
-            }
-            ChangeEvent::CreateNode { max_value } => {
-                ChangeEvent::CreateNode {
-                    max_value: max_value.into()
-                }
-            }
-            ChangeEvent::RemoveNode { max_value } => {
-                ChangeEvent::RemoveNode {
-                    max_value: max_value.into()
-                }
-            }
-            ChangeEvent::SplitNode { max_value, split_index } => {
-                ChangeEvent::SplitNode {
-                    max_value: max_value.into(),
-                    split_index
-                }
-            }
+            ChangeEvent::InsertAt {
+                max_value,
+                value,
+                index,
+            } => ChangeEvent::InsertAt {
+                max_value: max_value.into(),
+                value: value.into(),
+                index,
+            },
+            ChangeEvent::RemoveAt {
+                max_value,
+                value,
+                index,
+            } => ChangeEvent::RemoveAt {
+                max_value: max_value.into(),
+                value: value.into(),
+                index,
+            },
+            ChangeEvent::CreateNode { max_value } => ChangeEvent::CreateNode {
+                max_value: max_value.into(),
+            },
+            ChangeEvent::RemoveNode { max_value } => ChangeEvent::RemoveNode {
+                max_value: max_value.into(),
+            },
+            ChangeEvent::SplitNode {
+                max_value,
+                split_index,
+            } => ChangeEvent::SplitNode {
+                max_value: max_value.into(),
+                split_index,
+            },
         }
     }
 }

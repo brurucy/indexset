@@ -1,6 +1,6 @@
 [package]
 name = "indexset"
-version = "0.10.4"
+version = "0.11.0"
 edition = "2021"
 documentation = "https://docs.rs/indexset/"
 repository = "https://github.com/brurucy/indexset"
@@ -12,20 +12,27 @@ readme = "README.md"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
-rand = "0.8.5"
+rand = "0.9.0"
 scc = { version = "2.2.5" }
 
 [dependencies]
 serde = { version = "1.0.151", optional = true, features = ["derive"] }
 ftree = { version = "1.1.0", features = ["serde"] }
-parking_lot = { version = "0.12.3", features = ["send_guard", "arc_lock"], optional = true }
+parking_lot = { version = "0.12.3", features = [
+    "send_guard",
+    "arc_lock",
+], optional = true }
 crossbeam-utils = { version = "0.8.20", optional = true }
-crossbeam-skiplist = { version = "0.1.3", optional = true}
+crossbeam-skiplist = { version = "0.1.3", optional = true }
 fastrand = { version = "2.3.0", optional = true }
 
 [features]
 serde = ["dep:serde"]
-concurrent = ["dep:crossbeam-utils", "dep:crossbeam-skiplist", "dep:parking_lot"]
+concurrent = [
+    "dep:crossbeam-utils",
+    "dep:crossbeam-skiplist",
+    "dep:parking_lot",
+]
 cdc = ["concurrent"]
 multimap = ["concurrent", "dep:fastrand"]
 
