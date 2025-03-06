@@ -4,7 +4,7 @@ pub mod concurrent;
 #[cfg(feature = "concurrent")]
 pub mod cdc;
 
-mod core;
+pub mod core;
 
 use crate::Entry::{Occupied, Vacant};
 use core::constants::DEFAULT_INNER_SIZE;
