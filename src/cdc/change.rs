@@ -3,6 +3,7 @@ use crate::core::multipair::MultiPair;
 
 use crate::core::pair::Pair;
 
+#[derive(Debug, Clone)]
 pub enum ChangeEvent<T> {
     /// Describes value insert event.
     InsertAt {
