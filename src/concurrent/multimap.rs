@@ -358,6 +358,30 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     pub fn len(&self) -> usize {
         self.set.len()
     }
+    /// Returns the total number of allocated slots across all internal nodes.
+    ///
+    /// This represents the number of key-value pairs the multimap can hold
+    /// without reallocating memory in its internal vectors.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use indexset::concurrent::multimap::BTreeMultiMap;
+    ///
+    /// let mut a = BTreeMultiMap::with_node_capacity(8);
+    /// assert_eq!(a.capacity(), 8);
+    ///
+    /// a.insert(1, "a");
+    /// a.insert(1, "b");
+    ///
+    /// // Capacity remains unchanged until reallocation occurs
+    /// assert_eq!(a.capacity(), 8);
+    /// ```
+    pub fn capacity(&self) -> usize {
+        self.set.capacity()
+    }
     /// Gets an iterator over the entries of the map, sorted by key.
     ///
     /// # Examples

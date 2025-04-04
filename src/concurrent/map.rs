@@ -297,6 +297,30 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + 'static> BTreeMap<K, V> 
     pub fn len(&self) -> usize {
         self.set.len()
     }
+    /// Returns the total number of allocated slots across all internal nodes.
+    ///
+    /// This represents the number of key-value pairs the map can hold
+    /// without reallocating memory in its internal vectors.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use indexset::concurrent::map::BTreeMap;
+    ///
+    /// let mut a = BTreeMap::with_maximum_node_size(16);
+    /// assert_eq!(a.capacity(), 16);
+    ///
+    /// a.insert(1, "a");
+    /// a.insert(2, "b");
+    ///
+    /// // Capacity remains the same until node is split or reallocated
+    /// assert_eq!(a.capacity(), 16);
+    /// ```
+    pub fn capacity(&self) -> usize {
+        self.set.capacity()
+    }
     /// Gets an iterator over the entries of the map, sorted by key.
     ///
     /// # Examples
