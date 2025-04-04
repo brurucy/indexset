@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.3] - 2025-04-04
+
+### Added
+- capacity and node_count methods.
+
 ## [0.11.2] - 2025-03-08
 
 ### Added
@@ -194,7 +199,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.11.3...HEAD
+
+[0.11.3]: https://github.com/brurucy/indexset/releases/tag/v0.11.3
+
+[0.11.2]: https://github.com/brurucy/indexset/releases/tag/v0.11.2
 
 [0.11.1]: https://github.com/brurucy/indexset/releases/tag/v0.11.1
 
