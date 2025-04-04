@@ -9,6 +9,8 @@ pub trait NodeLike<T: Ord> {
     #[allow(dead_code)]
     fn len(&self) -> usize;
     #[allow(dead_code)]
+    fn capacity(&self) -> usize;
+    #[allow(dead_code)]
     fn insert(&mut self, value: T) -> (bool, usize);
     #[allow(dead_code)]
     fn contains<Q: Ord + ?Sized>(&self, value: &Q) -> bool
@@ -133,6 +135,10 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     #[inline]
     fn len(&self) -> usize {
         self.len()
+    }
+    #[inline]
+    fn capacity(&self) -> usize {
+        self.capacity()
     }
     #[inline]
     fn insert(&mut self, value: T) -> (bool, usize) {

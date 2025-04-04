@@ -408,6 +408,18 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             .map(|node| node.value().lock().len())
             .sum()
     }
+    pub fn capacity(&self) -> usize {
+        self.index
+            .iter()
+            .map(|entry| {
+                let guard = entry.value().lock();
+                guard.capacity()
+            })
+            .sum()
+    }
+    pub fn node_count(&self) -> usize {
+        self.index.len()
+    }
 }
 
 impl<T> FromIterator<T> for BTreeSet<T>
