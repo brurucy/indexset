@@ -382,6 +382,28 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     pub fn capacity(&self) -> usize {
         self.set.capacity()
     }
+    /// Returns the total number of nodes.
+    ///
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use indexset::concurrent::map::BTreeMap;
+    ///
+    /// let mut a = BTreeMap::with_maximum_node_size(16);
+    /// assert_eq!(a.node_count(), 16);
+    ///
+    /// a.insert(1, "a");
+    /// a.insert(2, "b");
+    ///
+    /// // Capacity remains the same until node is split or reallocated
+    /// assert_eq!(a.node_count(), 2);
+    /// ```
+    pub fn node_count(&self) -> usize {
+        self.set.node_count()
+    }
     /// Gets an iterator over the entries of the map, sorted by key.
     ///
     /// # Examples

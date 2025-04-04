@@ -417,6 +417,9 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             })
             .sum()
     }
+    pub fn node_count(&self) -> usize {
+        self.index.len()
+    }
 }
 
 impl<T> FromIterator<T> for BTreeSet<T>
