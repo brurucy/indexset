@@ -4,17 +4,24 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::{cdc::change::ChangeEvent, core::multipair::MultiPair};
-use crate::concurrent::operation::Node;
-use crate::core::pair::Pair;
+use crate::core::node::NodeLike;
 
 use super::set::BTreeSet;
 
 #[derive(Debug)]
-pub struct BTreeMultiMap<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> {
-    pub(crate) set: BTreeSet<MultiPair<K, V>>,
+pub struct BTreeMultiMap<K, V, Node = Vec<MultiPair<K, V>>>
+where K: Send + Ord + Clone + 'static,
+    V:  Send + Clone + PartialEq + 'static,
+    Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{
+    pub(crate) set: BTreeSet<MultiPair<K, V>, Node>,
 }
 
-impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> Default for BTreeMultiMap<K, V> {
+impl<K, V, Node> Default for BTreeMultiMap<K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{
     fn default() -> Self {
         Self {
             set: Default::default(),
@@ -22,11 +29,19 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> Def
     }
 }
 
-pub struct Iter<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> {
-    inner: super::set::Iter<'a, MultiPair<K, V>>,
+pub struct Iter<'a, K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{
+    inner: super::set::Iter<'a, MultiPair<K, V>, Node>,
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> Iterator for Iter<'a, K, V> {
+impl<'a, K, V, Node> Iterator for Iter<'a, K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{
 
     type Item = (&'a K, &'a V);
 
@@ -39,7 +54,11 @@ impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static>
     }
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> DoubleEndedIterator for Iter<'a, K, V> {
+impl<'a, K, V, Node> DoubleEndedIterator for Iter<'a, K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
             return Some((&entry.key, &entry.value));
@@ -49,13 +68,26 @@ impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static>
     }
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> FusedIterator for Iter<'a, K, V> {}
+impl<'a, K, V, Node> FusedIterator for Iter<'a, K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{}
 
-pub struct RawRange<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> {
-    inner: super::set::Range<'a, MultiPair<K, V>>,
+pub struct RawRange<'a, K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V: Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+
+{
+    inner: super::set::Range<'a, MultiPair<K, V>, Node>,
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> Iterator for RawRange<'a, K, V> {
+impl<'a, K, V, Node> Iterator for RawRange<'a, K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{
     type Item = (&'a K, &'a u64, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -67,7 +99,11 @@ impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static>
     }
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> DoubleEndedIterator for RawRange<'a, K, V> {
+impl<'a, K, V, Node> DoubleEndedIterator for RawRange<'a, K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
             return Some((&entry.key, &entry.discriminator, &entry.value));
@@ -77,14 +113,26 @@ impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static>
     }
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> FusedIterator for RawRange<'a, K, V> {}
+impl<'a, K, V, Node> FusedIterator for RawRange<'a, K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{}
 
 
-pub struct Range<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> {
-    inner: RawRange<'a, K, V>,
+pub struct Range<'a, K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{
+    inner: RawRange<'a, K, V, Node>,
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> Iterator for Range<'a, K, V> {
+impl<'a, K, V, Node> Iterator for Range<'a, K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{
     type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -96,7 +144,11 @@ impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static>
     }
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> DoubleEndedIterator for Range<'a, K, V> {
+impl<'a, K, V, Node> DoubleEndedIterator for Range<'a, K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(raw_entry) = self.inner.next_back() {
             return Some((&raw_entry.0, &raw_entry.2));
@@ -106,10 +158,18 @@ impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static>
     }
 }
 
-impl<'a, K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> FusedIterator for Range<'a, K, V> {
+impl<'a, K, V, Node> FusedIterator for Range<'a, K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{
 }
 
-impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTreeMultiMap<K, V> {
+impl<K, V, Node> BTreeMultiMap<K, V, Node>
+where K: Send + Ord + Clone + 'static,
+      V:  Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
+{
     /// Makes a new, empty, persistent `BTreeMultiMap`.
     ///
     /// # Examples
@@ -144,15 +204,11 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
         }
     }
     #[cfg(feature = "cdc")]
-    pub fn attach_multi_node(&self, node: Vec<MultiPair<K, V>>) {
-        self.set.attach_node(Arc::new(Mutex::new(node)))
+    pub fn attach_multi_node(&self, node: Node) {
+        self.set.attach_node(node)
     }
     #[cfg(feature = "cdc")]
-    pub fn attach_node(&self, node: Vec<Pair<K, V>>) {
-        self.set.attach_node(Arc::new(Mutex::new(node.into_iter().map(|p| p.into()).collect())))
-    }
-    #[cfg(feature = "cdc")]
-    pub fn iter_nodes(&self) -> impl Iterator<Item=Node<MultiPair<K,V>>> + '_ {
+    pub fn iter_nodes(&self) -> impl Iterator<Item=Arc<Mutex<Node>>> + '_ {
         self.set.index.iter().map(|e| e.value().clone())
     }
     /// Returns `true` if the map contains at least one occurance of the specified key.
@@ -180,7 +236,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     {
         self.set.contains(key)
     }
-    fn _range<Q, R>(&self, range: R) -> Range<K, V>
+    fn _range<Q, R>(&self, range: R) -> Range<K, V,Node>
     where
         MultiPair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
@@ -192,7 +248,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
             },
         }
     }
-    fn raw_get(&self, key: &K) -> RawRange<K, V> {
+    fn raw_get(&self, key: &K) -> RawRange<K, V, Node> {
         let infimum = MultiPair::with_infimum(key.clone());
         let supremum = MultiPair::with_supremum(key.clone());
 
@@ -216,7 +272,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     /// assert_eq!(all_with_key.len(), 2);
     /// assert_eq!(all_with_key, vec![(&1, &"a"), (&1, &"b")].into_iter().collect::<BTreeSet<_>>());
     /// ```
-    pub fn get(&self, key: &K) -> Range<K, V>
+    pub fn get(&self, key: &K) -> Range<K, V, Node>
     {
         let infimum = MultiPair::with_infimum(key.clone());
         let supremum = MultiPair::with_supremum(key.clone());
@@ -370,7 +426,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     /// ```
     /// use indexset::concurrent::multimap::BTreeMultiMap;
     ///
-    /// let mut a = BTreeMultiMap::with_node_capacity(8);
+    /// let mut a = BTreeMultiMap::with_maximum_node_size(8);
     /// assert_eq!(a.capacity(), 8);
     ///
     /// a.insert(1, "a");
@@ -425,7 +481,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     /// let (first_key, first_value) = map.iter().next().unwrap();
     /// assert_eq!((*first_key, *first_value), (1, "a"));
     /// ```
-    pub fn iter(&self) -> Iter<K, V> {
+    pub fn iter(&self) -> Iter<K, V, Node> {
         Iter {
             inner: self.set.iter(),
         }
@@ -459,7 +515,7 @@ impl<K: Send + Ord + Clone + 'static, V: Send + Clone + PartialEq + 'static> BTr
     /// }
     /// assert_eq!(Some((&5, &"b")), map.range(4..).next());
     /// ```
-    pub fn range<R>(&self, range: R) -> Range<K, V>
+    pub fn range<R>(&self, range: R) -> Range<K, V, Node>
     where
         R: RangeBounds<K>,
     {
@@ -488,7 +544,7 @@ mod tests {
     #[test]
     fn test_insert_works_as_expected() {
         let maximum_node_size = 3;
-        let multi_map = BTreeMultiMap::with_maximum_node_size(maximum_node_size);
+        let multi_map = BTreeMultiMap::<usize, &str>::with_maximum_node_size(maximum_node_size);
 
         multi_map.insert(1usize, "a");
         multi_map.insert(1usize, "b");
@@ -517,7 +573,7 @@ mod tests {
     #[test]
     fn test_insert_all_same_key_works_as_expected() {
         let maximum_node_size = 3;
-        let map = BTreeMultiMap::with_maximum_node_size(maximum_node_size);
+        let map = BTreeMultiMap::<usize, &str>::with_maximum_node_size(maximum_node_size);
 
         map.insert(1usize, "a");
         map.insert(1usize, "b");
@@ -536,7 +592,7 @@ mod tests {
     #[test]
     fn test_range_edge_cast() {
         let maximum_node_size = 3;
-        let map = BTreeMultiMap::with_maximum_node_size(maximum_node_size);
+        let map = BTreeMultiMap::<usize, &str>::with_maximum_node_size(maximum_node_size);
         
         map.insert(1usize, "a");
         map.insert(1usize, "b");
@@ -557,7 +613,7 @@ mod tests {
     #[test]
     fn test_range_works_as_expected() {
         let maximum_node_size = 3;
-        let map = BTreeMultiMap::with_maximum_node_size(maximum_node_size);
+        let map = BTreeMultiMap::<usize, &str>::with_maximum_node_size(maximum_node_size);
         
         map.insert(1usize, "a");
         map.insert(1usize, "b");
@@ -593,7 +649,7 @@ mod tests {
     #[test]
     fn test_get_works_as_expected() {
         let maximum_node_size = 10;
-        let map = BTreeMultiMap::with_maximum_node_size(maximum_node_size);
+        let map = BTreeMultiMap::<usize, &str>::with_maximum_node_size(maximum_node_size);
         
         map.insert(1usize, "a");
         map.insert(1usize, "b");

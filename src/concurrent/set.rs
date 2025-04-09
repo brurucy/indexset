@@ -2,6 +2,7 @@ use std::fmt::Debug;
 use std::iter::FusedIterator;
 use std::ops::RangeBounds;
 use std::{borrow::Borrow, sync::Arc};
+use std::marker::PhantomData;
 
 use crossbeam_skiplist::SkipMap;
 use crossbeam_utils::sync::ShardedLock;
@@ -70,15 +71,16 @@ use super::r#ref::Ref;
 /// let set = BTreeSet::from_iter([1, 2, 3]);
 /// ```
 #[derive(Debug)]
-pub struct BTreeSet<T>
+pub struct BTreeSet<T, Node = Vec<T>>
 where
     T: Ord + Clone + 'static,
+    Node: NodeLike<T>
 {
-    pub(crate) index: SkipMap<T, Node<T>>,
+    pub(crate) index: SkipMap<T, Arc<Mutex<Node>>>,
     index_lock: ShardedLock<()>,
     node_capacity: usize,
 }
-impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
+impl<T: Ord + Clone + 'static, Node: NodeLike<T>> Default for BTreeSet<T, Node> {
     fn default() -> Self {
         let index = SkipMap::new();
 
@@ -90,7 +92,10 @@ impl<T: Ord + Clone + 'static> Default for BTreeSet<T> {
     }
 }
 
-impl<T: Ord + Clone + Send> BTreeSet<T> {
+impl<T, Node> BTreeSet<T, Node>
+where T: Ord + Clone + Send,
+        Node: NodeLike<T> + Send + 'static
+{
     pub fn new() -> Self {
         Self::default()
     }
@@ -110,13 +115,10 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             node_capacity,
         }
     }
-    pub fn attach_node(&self, node: Node<T>) {
-        let node_id = {
-            let node = node.lock_arc();
-            node.last().cloned().expect("node should contain at least one value to be correct node")
-        };
+    pub fn attach_node(&self, node: Node) {
+        let node_id = node.max().cloned().expect("node should contain at least one value to be correct node");
         let _global_guard = self.index_lock.write();
-        self.index.insert(node_id, node);
+        self.index.insert(node_id, Arc::new(Mutex::new(node)));
     }
     pub(crate) fn put_cdc(&self, value: T) -> (Option<T>, Vec<ChangeEvent<T>>) {
         loop {
@@ -129,11 +131,11 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                     if let Some(last) = self.index.back() {
                         last
                     } else {
-                        let mut first_vec = Vec::with_capacity(self.node_capacity);
+                        let mut first_node = Node::with_capacity(self.node_capacity);
 
-                        first_vec.push(value.clone());
+                        first_node.insert(value.clone());
 
-                        let first_node = Arc::new(Mutex::new(first_vec));
+                        let first_node = Arc::new(Mutex::new(first_node));
 
                         drop(_global_guard);
                         if let Ok(_) = self.index_lock.try_write() {
@@ -158,10 +160,10 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
             let mut node_guard = target_node_entry.value().lock_arc();
             let mut operation = None;
             if node_guard.len() < self.node_capacity {
-                let old_max = node_guard.last().cloned();
+                let old_max = node_guard.max().cloned();
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {
-                    if node_guard.last().cloned() == old_max {
+                    if node_guard.max().cloned() == old_max {
                         #[cfg(feature = "cdc")]
                         {
                             let node_element_insertion = ChangeEvent::InsertAt {
@@ -266,7 +268,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                 self.index.lower_bound(std::ops::Bound::Included(&value))
             {
                 let mut node_guard = target_node_entry.value().lock_arc();
-                let old_max = node_guard.last().cloned();
+                let old_max = node_guard.max().cloned();
                 let deleted = NodeLike::delete(&mut *node_guard, value);
                 if deleted.is_none() {
                     return (None, cdc);
@@ -274,7 +276,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                 let (deleted, idx) = deleted.expect("should be ok as checked before");
 
                 let operation = if node_guard.len() > 0 {
-                    if old_max.as_ref() == node_guard.last() {
+                    if old_max.as_ref() == node_guard.max() {
                         #[cfg(feature = "cdc")]
                         {
                             let node_element_removal = ChangeEvent::RemoveAt {
@@ -343,7 +345,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
     {
         self.remove_cdc(value).0
     }
-    fn locate_node<Q>(&self, value: &Q) -> Option<Arc<Mutex<Vec<T>>>>
+    fn locate_node<Q>(&self, value: &Q) -> Option<Arc<Mutex<Node>>>
     where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
@@ -383,7 +385,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
 
         false
     }
-    pub fn get<'a, Q>(&'a self, value: &'a Q) -> Option<Ref<T>>
+    pub fn get<'a, Q>(&'a self, value: &'a Q) -> Option<Ref<T, Node>>
     where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
@@ -396,6 +398,7 @@ impl<T: Ord + Clone + Send> BTreeSet<T> {
                 return Some(Ref {
                     node_guard,
                     position,
+                    phantom_data: PhantomData
                 });
             }
         }
@@ -451,26 +454,28 @@ where
     }
 }
 
-pub struct Iter<'a, T>
+pub struct Iter<'a, T, Node>
 where
     T: Ord + Clone + Send + 'static,
+    Node: NodeLike<T> + Send + 'static
 {
-    _btree: &'a BTreeSet<T>,
-    current_front_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Vec<T>>>>>,
-    current_front_entry_guard: Option<ArcMutexGuard<RawMutex, Vec<T>>>,
+    _btree: &'a BTreeSet<T, Node>,
+    current_front_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Node>>>>,
+    current_front_entry_guard: Option<ArcMutexGuard<RawMutex, Node>>,
     current_front_entry_iter: Option<std::slice::Iter<'a, T>>,
-    current_back_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Vec<T>>>>>,
-    current_back_entry_guard: Option<ArcMutexGuard<RawMutex, Vec<T>>>,
+    current_back_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Node>>>>,
+    current_back_entry_guard: Option<ArcMutexGuard<RawMutex, Node>>,
     current_back_entry_iter: Option<std::slice::Iter<'a, T>>,
     last_front: Option<T>,
     last_back: Option<T>,
 }
 
-impl<'a, T> Iter<'a, T>
+impl<'a, T, Node> Iter<'a, T, Node>
 where
     T: Ord + Clone + Send + 'static,
+    Node: NodeLike<T> + Send + 'static
 {
-    pub fn new(btree: &'a BTreeSet<T>) -> Self {
+    pub fn new(btree: &'a BTreeSet<T, Node>) -> Self {
         let current_front_entry = btree.index.front();
         let (current_front_entry_guard, current_front_entry_iter) =
             if let Some(current_entry) = current_front_entry.clone() {
@@ -515,9 +520,10 @@ where
     }
 }
 
-impl<'a, T> Iterator for Iter<'a, T>
+impl<'a, T, Node> Iterator for Iter<'a, T, Node>
 where
     T: Ord + Clone + Send + 'static,
+    Node: NodeLike<T> + Send + 'static
 {
     type Item = &'a T;
 
@@ -577,7 +583,7 @@ where
             } else {
                 self.current_front_entry_iter.take();
                 if let Some(old_guard) = self.current_front_entry_guard.take() {
-                    if let Some(last_value) = old_guard.last() {
+                    if let Some(last_value) = old_guard.max() {
                         if let Some(last_back) = self.last_back.as_ref() {
                             if last_back.lt(last_value) {
                                 return None;
@@ -592,9 +598,10 @@ where
     }
 }
 
-impl<'a, T> DoubleEndedIterator for Iter<'a, T>
+impl<'a, T, Node> DoubleEndedIterator for Iter<'a, T, Node>
 where
     T: Ord + Clone + Send + 'static,
+    Node: NodeLike<T> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if (self.last_front.is_some() || self.last_back.is_some())
@@ -649,7 +656,7 @@ where
             } else {
                 self.current_back_entry_iter.take();
                 if let Some(old_guard) = self.current_back_entry_guard.take() { 
-                    if let Some(first_value) = old_guard.first() {
+                    if let Some(first_value) = old_guard.min() {
                         if let Some(last_front) = self.last_front.as_ref() {
                             if last_front.gt(first_value) {
                                 return None;
@@ -664,33 +671,36 @@ where
     }
 }
 
-impl<'a, T: Ord + Clone + Send> FusedIterator for Iter<'a, T> where T: Ord {}
+impl<'a, T: Ord + Clone + Send, Node: NodeLike<T> + Send + 'static> FusedIterator for Iter<'a, T, Node> {}
 
-impl<'a, T> IntoIterator for &'a BTreeSet<T>
+impl<'a, T, Node> IntoIterator for &'a BTreeSet<T, Node>
 where
     T: Ord + Send + Clone,
+    Node: NodeLike<T> + Send + 'static
 {
     type Item = &'a T;
 
-    type IntoIter = Iter<'a, T>;
+    type IntoIter = Iter<'a, T, Node>;
 
     fn into_iter(self) -> Self::IntoIter {
         Iter::new(self)
     }
 }
 
-pub struct Range<'a, T>
+pub struct Range<'a, T, Node>
 where
     T: Ord + Clone + Send + 'static,
+    Node: NodeLike<T> + Send + 'static
 {
-    iter: Iter<'a, T>,
+    iter: Iter<'a, T, Node>,
 }
 
-impl<'a, T> Range<'a, T>
+impl<'a, T, Node> Range<'a, T, Node>
 where
     T: Ord + Clone + Send + 'static,
+    Node: NodeLike<T> + Send + 'static
 {
-    pub fn new<Q, R>(btree: &'a BTreeSet<T>, range: R) -> Self
+    pub fn new<Q, R>(btree: &'a BTreeSet<T, Node>, range: R) -> Self
     where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
@@ -788,9 +798,10 @@ where
     }
 }
 
-impl<'a, T> Iterator for Range<'a, T>
+impl<'a, T, Node> Iterator for Range<'a, T, Node>
 where
     T: Ord + Clone + Send + 'static,
+    Node: NodeLike<T> + Send + 'static
 {
     type Item = &'a T;
 
@@ -799,20 +810,22 @@ where
     }
 }
 
-impl<'a, T> DoubleEndedIterator for Range<'a, T>
+impl<'a, T, Node> DoubleEndedIterator for Range<'a, T, Node>
 where
     T: Ord + Clone + Send + 'static,
+    Node: NodeLike<T> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.iter.next_back()
     }
 }
 
-impl<'a, T> FusedIterator for Range<'a, T> where T: Ord + Clone + Send + 'static {}
+impl<'a, T, Node> FusedIterator for Range<'a, T, Node> where T: Ord + Clone + Send + 'static, Node: NodeLike<T> + Send + 'static {}
 
-impl<'a, T> BTreeSet<T>
+impl<'a, T, Node> BTreeSet<T, Node>
 where
     T: Ord + Clone + Send + 'static,
+    Node: NodeLike<T> + Send + 'static
 {
     /// Gets an iterator that visits the elements in the `BTreeSet` in ascending
     /// order.
@@ -842,7 +855,7 @@ where
     /// assert_eq!(set_iter.next(), Some(&3));
     /// assert_eq!(set_iter.next(), None);
     /// ```
-    pub fn iter(&'a self) -> Iter<'a, T> {
+    pub fn iter(&'a self) -> Iter<'a, T, Node> {
         Iter::new(self)
     }
     /// Constructs a double-ended iterator over a sub-range of elements in the set.
@@ -872,7 +885,7 @@ where
     /// }
     /// assert_eq!(Some(&5), set.range(4..).next());
     /// ```
-    pub fn range<Q, R>(&'a self, range: R) -> Range<'a, T>
+    pub fn range<Q, R>(&'a self, range: R) -> Range<'a, T, Node>
     where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
@@ -1119,7 +1132,7 @@ mod tests {
 
     #[test]
     fn test_single_element() {
-        let set = BTreeSet::new();
+        let set = BTreeSet::<i32>::new();
         set.insert(1);
         let mut iter = set.into_iter();
         assert_eq!(iter.next(), Some(&1));
@@ -1129,7 +1142,7 @@ mod tests {
 
     #[test]
     fn test_multiple_elements() {
-        let set = BTreeSet::new();
+        let set = BTreeSet::<i32>::new();
         set.insert(1);
         set.insert(2);
         set.insert(3);
@@ -1143,7 +1156,7 @@ mod tests {
 
     #[test]
     fn test_bidirectional_iteration() {
-        let set = BTreeSet::with_maximum_node_size(3);
+        let set = BTreeSet::<i32>::with_maximum_node_size(3);
         for i in 1..=20 {
             set.insert(i);
         }
@@ -1176,7 +1189,7 @@ mod tests {
 
     #[test]
     fn test_fused_iterator() {
-        let set = BTreeSet::new();
+        let set = BTreeSet::<i32>::new();
         set.insert(1);
         let mut iter = set.into_iter();
         assert_eq!(iter.next(), Some(&1));

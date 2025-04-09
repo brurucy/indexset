@@ -1,7 +1,10 @@
 use core::borrow::Borrow;
 use core::cmp::Ordering;
+use std::ops::Deref;
 
 pub trait NodeLike<T: Ord> {
+    #[allow(dead_code)]
+    fn with_capacity(capacity: usize) -> Self;
     #[allow(dead_code)]
     fn get_ith(&self, index: usize) -> Option<&T>;
     #[allow(dead_code)]
@@ -32,6 +35,10 @@ pub trait NodeLike<T: Ord> {
     fn replace(&mut self, idx: usize, value: T) -> Option<T>;
     #[allow(dead_code)]
     fn max(&self) -> Option<&T>;
+    #[allow(dead_code)]
+    fn min(&self) -> Option<&T>;
+    #[allow(dead_code)]
+    fn iter<'a>(&'a self) -> std::slice::Iter<'a, T> where T: 'a;
 }
 
 #[inline]
@@ -124,6 +131,9 @@ where
 }
 
 impl<T: Ord> NodeLike<T> for Vec<T> {
+    fn with_capacity(capacity: usize) -> Self {
+        Vec::with_capacity(capacity)
+    }
     #[inline]
     fn get_ith(&self, index: usize) -> Option<&T> {
         self.get(index)
@@ -203,6 +213,17 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     #[inline]
     fn max(&self) -> Option<&T> {
         self.last()
+    }
+
+    fn min(&self) -> Option<&T> {
+        self.first()
+    }
+
+    #[inline]
+    fn iter<'a>(&'a self) -> std::slice::Iter<'a, T>
+    where T: 'a
+    {
+        self.deref().iter()
     }
 }
 
