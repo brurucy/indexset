@@ -17,7 +17,7 @@ pub enum Operation<T: Send + Ord, Node: NodeLike<T>> {
 
 impl<T, Node> Operation<T, Node>
 where T: Ord + Send + Clone + 'static,
-        Node: NodeLike<T> + Send + 'static,
+      Node: NodeLike<T> + Send + 'static,
 {
     pub fn commit(self, index: &SkipMap<T, Arc<Mutex<Node>>>) -> Result<(Option<T>, Vec<ChangeEvent<T>>), ()> {
         match self {
