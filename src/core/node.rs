@@ -10,6 +10,8 @@ pub trait NodeLike<T: Ord> {
     #[allow(dead_code)]
     fn halve(&mut self) -> Self;
     #[allow(dead_code)]
+    fn need_to_split(&self) -> bool;
+    #[allow(dead_code)]
     fn len(&self) -> usize;
     #[allow(dead_code)]
     fn capacity(&self) -> usize;
@@ -143,6 +145,12 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     fn halve(&mut self) -> Self {
         self.split_off(self.capacity() / 2)
     }
+
+    #[inline]
+    fn need_to_split(&self) -> bool {
+        self.len() >= self.capacity()
+    }
+
     #[inline]
     fn len(&self) -> usize {
         self.len()

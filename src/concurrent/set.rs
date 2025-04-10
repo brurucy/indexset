@@ -159,7 +159,7 @@ where T: Ord + Clone + Send,
 
             let mut node_guard = target_node_entry.value().lock_arc();
             let mut operation = None;
-            if node_guard.len() < self.node_capacity {
+            if !node_guard.need_to_split() {
                 let old_max = node_guard.max().cloned();
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {

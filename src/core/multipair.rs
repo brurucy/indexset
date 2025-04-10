@@ -9,7 +9,7 @@ use fastrand;
 use crate::core::pair::Pair;
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Default, Clone, Hash)]
 pub struct MultiPair<K, V> {
     pub key: K,
     pub value: V,

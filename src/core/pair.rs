@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Default, Clone, Hash)]
 pub struct Pair<K, V>
 {
     pub key: K,
