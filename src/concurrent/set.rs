@@ -1045,11 +1045,11 @@ mod tests {
 
         let test_data: Vec<Vec<(i32, i32)>> = (0..num_threads)
             .map(|_| {
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 (0..operations_per_thread)
                     .map(|_| {
-                        let value = rng.gen_range(0..100000);
-                        let operation = rng.gen_range(0..2);
+                        let value = rng.random_range(0..100000);
+                        let operation = rng.random_range(0..2);
                         (operation, value)
                     })
                     .collect()
