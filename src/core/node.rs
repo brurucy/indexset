@@ -131,6 +131,7 @@ where
 }
 
 impl<T: Ord> NodeLike<T> for Vec<T> {
+    #[inline]
     fn with_capacity(capacity: usize) -> Self {
         Vec::with_capacity(capacity)
     }
@@ -215,6 +216,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         self.last()
     }
 
+    #[inline]
     fn min(&self) -> Option<&T> {
         self.first()
     }
