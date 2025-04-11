@@ -179,7 +179,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::multimap::BTreeMultiMap;
     ///
-    /// let mut map = BTreeMultiMap::new();
+    /// let mut map = BTreeMultiMap::<usize, &str>::new();
     ///
     /// // entries can now be inserted into the empty map
     /// map.insert(1, "a");
@@ -197,7 +197,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::multimap::BTreeMultiMap;
     ///
-    /// let map: BTreeMultiMap<i32, i32> = BTreeMultiMap::with_maximum_node_size(128);
+    /// let map = BTreeMultiMap::<i32, i32>::with_maximum_node_size(128);
     pub fn with_maximum_node_size(node_capacity: usize) -> Self {
         Self {
             set: BTreeSet::with_maximum_node_size(node_capacity),
@@ -223,7 +223,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::multimap::BTreeMultiMap;
     ///
-    /// let mut map = BTreeMultiMap::new();
+    /// let mut map = BTreeMultiMap::<usize, &str>::new();
     /// map.insert(1, "a");
     /// map.insert(1, "b");
     /// assert_eq!(map.contains_key(&1), true);
@@ -262,7 +262,7 @@ where K: Send + Ord + Clone + 'static,
     /// use indexset::concurrent::multimap::BTreeMultiMap;
     /// use indexset::BTreeSet;
     ///
-    /// let mut map = BTreeMultiMap::new();
+    /// let mut map = BTreeMultiMap::<usize, &str>::new();
     /// 
     /// map.insert(1, "b");
     /// map.insert(1, "a");
@@ -292,7 +292,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::multimap::BTreeMultiMap;
     ///
-    /// let mut map = BTreeMultiMap::new();
+    /// let mut map = BTreeMultiMap::<usize, &str>::new();
     /// assert_eq!(map.insert(37, "a"), None);
     /// assert_eq!(map.len() == 0, false);
     ///
@@ -327,7 +327,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::multimap::BTreeMultiMap;
     ///
-    /// let map = BTreeMultiMap::new();
+    /// let map = BTreeMultiMap::<usize, &str>::new();
     /// map.insert(1, "b");
     /// map.insert(1, "a");
     /// 
@@ -367,7 +367,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::multimap::BTreeMultiMap;
     ///
-    /// let map = BTreeMultiMap::new();
+    /// let map = BTreeMultiMap::<usize, &str>::new();
     /// map.insert(1, "b");
     /// map.insert(1, "a");
     /// 
@@ -406,7 +406,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::multimap::BTreeMultiMap;
     ///
-    /// let mut a = BTreeMultiMap::new();
+    /// let mut a = BTreeMultiMap::<usize, &str>::new();
     /// assert_eq!(a.len(), 0);
     /// a.insert(1, "a");
     /// assert_eq!(a.len(), 1);
@@ -426,8 +426,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::multimap::BTreeMultiMap;
     ///
-    /// let mut a = BTreeMultiMap::with_maximum_node_size(8);
-    /// assert_eq!(a.capacity(), 8);
+    /// let mut a = BTreeMultiMap::<usize, &str>::with_maximum_node_size(8);
     ///
     /// a.insert(1, "a");
     /// a.insert(1, "b");
@@ -448,14 +447,12 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::map::BTreeMap;
     ///
-    /// let mut a = BTreeMap::with_maximum_node_size(16);
-    /// assert_eq!(a.node_count(), 16);
+    /// let mut a = BTreeMap::<usize, &str>::with_maximum_node_size(16);
     ///
     /// a.insert(1, "a");
     /// a.insert(2, "b");
     ///
-    /// // Capacity remains the same until node is split or reallocated
-    /// assert_eq!(a.node_count(), 2);
+    /// assert_eq!(a.node_count(), 1);
     /// ```
     pub fn node_count(&self) -> usize {
         self.set.node_count()
@@ -469,7 +466,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::multimap::BTreeMultiMap;
     ///
-    /// let mut map = BTreeMultiMap::new();
+    /// let mut map = BTreeMultiMap::<usize, &str>::new();
     /// map.insert(3, "c");
     /// map.insert(2, "b");
     /// map.insert(1, "a");
@@ -506,7 +503,7 @@ where K: Send + Ord + Clone + 'static,
     /// use indexset::concurrent::multimap::BTreeMultiMap;
     /// use std::ops::Bound::Included;
     ///
-    /// let mut map = BTreeMultiMap::new();
+    /// let mut map = BTreeMultiMap::<usize, &str>::new();
     /// map.insert(3, "a");
     /// map.insert(5, "b");
     /// map.insert(8, "c");

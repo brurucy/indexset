@@ -40,7 +40,7 @@ use super::r#ref::Ref;
 ///
 /// // Type inference lets us omit an explicit type signature (which
 /// // would be `BTreeSet<&str>` in this example).
-/// let mut books = BTreeSet::new();
+/// let mut books = BTreeSet::<&str>::new();
 ///
 /// // Add some books.
 /// books.insert("A Dance With Dragons");
@@ -159,7 +159,7 @@ where T: Ord + Clone + Send,
 
             let mut node_guard = target_node_entry.value().lock_arc();
             let mut operation = None;
-            if node_guard.len() < self.node_capacity {
+            if !node_guard.need_to_split(self.node_capacity) {
                 let old_max = node_guard.max().cloned();
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {
@@ -243,7 +243,7 @@ where T: Ord + Clone + Send,
     /// ```
     /// use indexset::concurrent::set::BTreeSet;
     ///
-    /// let mut set = BTreeSet::new();
+    /// let mut set = BTreeSet::<usize>::new();
     ///
     /// assert_eq!(set.insert(2), true);
     /// assert_eq!(set.insert(2), false);
@@ -332,7 +332,7 @@ where T: Ord + Clone + Send,
     /// ```
     /// use indexset::concurrent::set::BTreeSet;
     ///
-    /// let mut set = BTreeSet::new();
+    /// let mut set = BTreeSet::<usize>::new();
     ///
     /// set.insert(2);
     /// assert_eq!(set.remove(&2).is_some(), true);
@@ -876,7 +876,7 @@ where
     /// use indexset::concurrent::set::BTreeSet;
     /// use std::ops::Bound::Included;
     ///
-    /// let mut set = BTreeSet::new();
+    /// let mut set = BTreeSet::<usize>::new();
     /// set.insert(3);
     /// set.insert(5);
     /// set.insert(8);

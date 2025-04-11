@@ -141,7 +141,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::map::BTreeMap;
     ///
-    /// let mut map = BTreeMap::new();
+    /// let mut map = BTreeMap::<usize, &str>::new();
     ///
     /// // entries can now be inserted into the empty map
     /// map.insert(1, "a");
@@ -159,7 +159,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::map::BTreeMap;
     ///
-    /// let map: BTreeMap<i32, i32> = BTreeMap::with_maximum_node_size(128);
+    /// let map = BTreeMap::<i32, i32>::with_maximum_node_size(128);
     pub fn with_maximum_node_size(node_capacity: usize) -> Self {
         Self {
             set: BTreeSet::with_maximum_node_size(node_capacity),
@@ -185,7 +185,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::map::BTreeMap;
     ///
-    /// let mut map = BTreeMap::new();
+    /// let mut map = BTreeMap::<usize, &str>::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.contains_key(&1), true);
     /// assert_eq!(map.contains_key(&2), false);
@@ -209,7 +209,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::map::BTreeMap;
     ///
-    /// let mut map = BTreeMap::new();
+    /// let mut map = BTreeMap::<usize, &str>::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.get(&1).and_then(|e| Some(e.get().value)), Some("a"));
     /// assert_eq!(map.get(&2).and_then(|e| Some(e.get().value)), None);
@@ -236,7 +236,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::map::BTreeMap;
     ///
-    /// let mut map = BTreeMap::new();
+    /// let mut map = BTreeMap::<usize, &str>::new();
     /// assert_eq!(map.insert(37, "a"), None);
     /// assert_eq!(map.len() == 0, false);
     ///
@@ -272,7 +272,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::map::BTreeMap;
     ///
-    /// let map = BTreeMap::new();
+    /// let map = BTreeMap::<usize, &str>::new();
     /// map.insert(1, "a");
     /// assert_eq!(map.remove(&1), Some((1, "a")));
     /// assert_eq!(map.remove(&1), None);
@@ -282,11 +282,14 @@ where K: Send + Ord + Clone + 'static,
         Pair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        return self
+        self
             .set
             .remove(key)
-            .and_then(|pair| Some((pair.key, pair.value)));
+            .and_then(|pair| Some((pair.key, pair.value)))
     }
+    /// Removes a key from the map, returning the key and the value if the key
+    /// was previously in the map and [`ChangeEvent`]s describing changes caused
+    /// by this action.
     pub fn remove_cdc<Q>(&self, key: &Q) -> (Option<(K, V)>, Vec<ChangeEvent<Pair<K, V>>>)
     where
         Pair<K, V>: Borrow<Q> + Ord,
@@ -305,7 +308,7 @@ where K: Send + Ord + Clone + 'static,
     /// ```
     /// use indexset::concurrent::map::BTreeMap;
     ///
-    /// let mut a = BTreeMap::new();
+    /// let mut a = BTreeMap::<usize, &str>::new();
     /// assert_eq!(a.len(), 0);
     /// a.insert(1, "a");
     /// assert_eq!(a.len(), 1);
@@ -326,7 +329,6 @@ where K: Send + Ord + Clone + 'static,
     /// use indexset::concurrent::map::BTreeMap;
     ///
     /// let mut a = BTreeMap::<usize, &str>::with_maximum_node_size(16);
-    /// assert_eq!(a.capacity(), 16);
     ///
     /// a.insert(1, "a");
     /// a.insert(2, "b");
@@ -348,13 +350,11 @@ where K: Send + Ord + Clone + 'static,
     /// use indexset::concurrent::map::BTreeMap;
     ///
     /// let mut a = BTreeMap::<usize, &str>::with_maximum_node_size(16);
-    /// assert_eq!(a.node_count(), 16);
     ///
     /// a.insert(1, "a");
     /// a.insert(2, "b");
     ///
-    /// // Capacity remains the same until node is split or reallocated
-    /// assert_eq!(a.node_count(), 2);
+    /// assert_eq!(a.node_count(), 1);
     /// ```
     pub fn node_count(&self) -> usize {
         self.set.node_count()
@@ -405,7 +405,7 @@ where K: Send + Ord + Clone + 'static,
     /// use indexset::concurrent::map::BTreeMap;
     /// use std::ops::Bound::Included;
     ///
-    /// let mut map = BTreeMap::<usize, &str>::new();
+    /// let mut map = BTreeMap::<i32, &str>::new();
     /// map.insert(3, "a");
     /// map.insert(5, "b");
     /// map.insert(8, "c");

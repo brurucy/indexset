@@ -10,7 +10,7 @@ pub trait NodeLike<T: Ord> {
     #[allow(dead_code)]
     fn halve(&mut self) -> Self;
     #[allow(dead_code)]
-    fn need_to_split(&self) -> bool;
+    fn need_to_split(&self, border: usize) -> bool;
     #[allow(dead_code)]
     fn len(&self) -> usize;
     #[allow(dead_code)]
@@ -145,12 +145,10 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     fn halve(&mut self) -> Self {
         self.split_off(self.capacity() / 2)
     }
-
     #[inline]
-    fn need_to_split(&self) -> bool {
-        self.len() >= self.capacity()
+    fn need_to_split(&self, border: usize) -> bool {
+        self.len() >= border
     }
-
     #[inline]
     fn len(&self) -> usize {
         self.len()
@@ -223,12 +221,10 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     fn max(&self) -> Option<&T> {
         self.last()
     }
-
     #[inline]
     fn min(&self) -> Option<&T> {
         self.first()
     }
-
     #[inline]
     fn iter<'a>(&'a self) -> std::slice::Iter<'a, T>
     where T: 'a
