@@ -4298,7 +4298,7 @@ mod tests {
         let mut btree = BTreeSet::new();
         let n = 100_000;
         for _ in 0..n {
-            let value: u64 = rng.gen_range(1..10000);
+            let value: u64 = rng.random_range(1..10000);
             let lower: u64 = 1650;
             let len_before = btree.len();
             // Use max to increase the number of duplicates

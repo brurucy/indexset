@@ -165,10 +165,13 @@ where K: Send + Ord + Clone + 'static,
             set: BTreeSet::with_maximum_node_size(node_capacity),
         }
     }
+    /// Adds full [`Node`] to this set. [`Node`] should be correct node with
+    /// values sorted.
     #[cfg(feature = "cdc")]
     pub fn attach_node(&self, node: Node) {
         self.set.attach_node(node)
     }
+    /// Returns iterator over this set's [`Node`]'s.
     #[cfg(feature = "cdc")]
     pub fn iter_nodes(&self) -> impl Iterator<Item=Arc<Mutex<Node>>> + '_ {
         self.set.index.iter().map(|e| e.value().clone())
@@ -252,6 +255,9 @@ where K: Send + Ord + Clone + 'static,
             .0
             .and_then(|pair| Some(pair.value))
     }
+    /// Inserts a key-value pair into the map and returns old value (if it was
+    /// already in set) with [`ChangeEvent`]'s that describes this insert
+    /// action.
     pub fn insert_cdc(&self, key: K, value: V) -> (Option<V>, Vec<ChangeEvent<Pair<K, V>>>) {
         let new_entry = Pair { key, value };
 
@@ -421,7 +427,7 @@ where K: Send + Ord + Clone + 'static,
         R: RangeBounds<Q>,
     {
         Range {
-            inner: super::set::BTreeSet::range(&self.set, range),
+            inner: BTreeSet::range(&self.set, range),
         }
     }
 }

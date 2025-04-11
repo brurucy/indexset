@@ -203,10 +203,13 @@ where K: Send + Ord + Clone + 'static,
             set: BTreeSet::with_maximum_node_size(node_capacity),
         }
     }
+    /// Adds full [`Node`] to this multiset. [`Node`] should be correct node with
+    /// values sorted.
     #[cfg(feature = "cdc")]
     pub fn attach_multi_node(&self, node: Node) {
         self.set.attach_node(node)
     }
+    /// Returns iterator over this multiset's [`Node`]'s.
     #[cfg(feature = "cdc")]
     pub fn iter_nodes(&self) -> impl Iterator<Item=Arc<Mutex<Node>>> + '_ {
         self.set.index.iter().map(|e| e.value().clone())
@@ -307,6 +310,10 @@ where K: Send + Ord + Clone + 'static,
             .0
             .and_then(|pair| Some(pair.value))
     }
+    /// Inserts a key-value pair into the map and returns old value (if it was
+    /// already in set) with [`ChangeEvent`]'s that describes this insert
+    /// action.
+    #[cfg(feature = "cdc")]
     pub fn insert_cdc(&self, key: K, value: V) -> (Option<V>, Vec<ChangeEvent<MultiPair<K, V>>>) {
         let new_entry = MultiPair::new(key, value);
 
@@ -314,8 +321,8 @@ where K: Send + Ord + Clone + 'static,
 
         (old_value.and_then(|pair| Some(pair.value)), cdc)
     }
-    /// Removes some key from the map that matches the given key, returning the key and the value if the key
-    /// was previously in the map.
+    /// Removes some key from the map that matches the given key, returning the
+    /// key and the value if the key was previously in the map.
     ///
     /// The key may be any borrowed form of the map's key type, but the ordering
     /// on the borrowed form *must* match the ordering on the key type.
@@ -348,6 +355,10 @@ where K: Send + Ord + Clone + 'static,
             .remove(key)
             .and_then(|pair| Some((pair.key, pair.value)))
     }
+    /// Removes some key from the map that matches the given key, returning the
+    /// key and the value if the key was previously in the map with
+    /// [`ChangeEvent`]'s describing this `remove_some` action.
+    #[cfg(feature = "cdc")]
     pub fn remove_some_cdc<Q>(&self, key: &Q) -> (Option<(K, V)>, Vec<ChangeEvent<MultiPair<K, V>>>)
     where
         MultiPair<K, V>: Borrow<Q> + Ord,
@@ -385,6 +396,10 @@ where K: Send + Ord + Clone + 'static,
 
         None
     }
+    /// Removes a specific key-value pair from the map returning the key and the
+    /// value if the key was previously in the map with [`ChangeEvent`]'s
+    /// describing this `remove_some` action.
+    #[cfg(feature = "cdc")]
     pub fn remove_cdc(&self, key: &K, value: &V) -> (Option<(K, V)>, Vec<ChangeEvent<MultiPair<K, V>>>)
     {
         let discriminant_to_remove = self.raw_get(&key).find(|pair| pair.2 == value);

@@ -1097,13 +1097,13 @@ mod tests {
     #[test]
     fn test_insert_st() {
         let set = Arc::new(BTreeSet::<i32>::new());
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let n = 2048 * 100;
         let range = 0..n;
         let mut inserted_values = HashSet::new();
         for _ in range {
-            let value = rng.gen_range(0..n);
+            let value = rng.random_range(0..n);
             if inserted_values.insert(value) {
                 set.insert(value);
             }
