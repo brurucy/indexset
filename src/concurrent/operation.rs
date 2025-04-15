@@ -6,19 +6,20 @@ use parking_lot::Mutex;
 use crate::cdc::change::ChangeEvent;
 use crate::core::node::NodeLike;
 
-pub type Node<T> = Arc<Mutex<Vec<T>>>;
+type OldVersion<Node> = Arc<Mutex<Node>>;
+type CurrentVersion<Node> = Arc<Mutex<Node>>;
 
-type OldVersion<T> = Node<T>;
-type CurrentVersion<T> = Node<T>;
-
-pub enum Operation<T: Send> {
-    Split(OldVersion<T>, T, T),
-    UpdateMax(CurrentVersion<T>, T),
-    MakeUnreachable(CurrentVersion<T>, T),
+pub enum Operation<T: Send + Ord, Node: NodeLike<T>> {
+    Split(OldVersion<Node>, T, T),
+    UpdateMax(CurrentVersion<Node>, T),
+    MakeUnreachable(CurrentVersion<Node>, T),
 }
 
-impl<T: Ord + Send + Clone + 'static> Operation<T> {
-    pub fn commit(self, index: &SkipMap<T, Node<T>>) -> Result<(Option<T>, Vec<ChangeEvent<T>>), ()> {
+impl<T, Node> Operation<T, Node>
+where T: Ord + Send + Clone + 'static,
+      Node: NodeLike<T> + Send + 'static,
+{
+    pub fn commit(self, index: &SkipMap<T, Arc<Mutex<Node>>>) -> Result<(Option<T>, Vec<ChangeEvent<T>>), ()> {
         match self {
             Operation::Split(old_node, old_max, value) => {
                 let mut guard = old_node.lock_arc();
@@ -39,7 +40,7 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
 
                         let mut old_value: Option<T> = None;
                         let mut insert_attempted = false;
-                        if let Some(max) = guard.last().cloned() {
+                        if let Some(max) = guard.max().cloned() {
                             if max > value {
                                 let (inserted, idx) = NodeLike::insert(&mut *guard, value.clone());
                                 insert_attempted = true;
@@ -69,7 +70,7 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
                             index.insert(max, old_node.clone());
                         }
 
-                        if let Some(mut max) = new_vec.last().cloned() {
+                        if let Some(mut max) = new_vec.max().cloned() {
                             if !insert_attempted {
                                 let (inserted, idx) = NodeLike::insert(&mut new_vec, value.clone());
                                 let old_max = max.clone();
@@ -112,7 +113,7 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
             }
             Operation::UpdateMax(node, old_max) => {
                 let guard = node.lock_arc();
-                let new_max = guard.last().unwrap();
+                let new_max = guard.max().unwrap();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &node) {
                         let mut cdc = vec![];
@@ -142,7 +143,7 @@ impl<T: Ord + Send + Clone + 'static> Operation<T> {
             }
             Operation::MakeUnreachable(node, old_max) => {
                 let guard = node.lock_arc();
-                let new_max = guard.last();
+                let new_max = guard.max();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &node) {
                         return match new_max.cmp(&Some(&old_max)) {
