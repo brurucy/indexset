@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2025-04-15
+
+### Changed
+- The BTree is now generic over the container.
+
 ## [0.11.3] - 2025-04-04
 
 ### Added
@@ -199,7 +204,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.11.3...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.12.0...HEAD
+
+[0.12.0]: https://github.com/brurucy/indexset/releases/tag/v0.12.0
 
 [0.11.3]: https://github.com/brurucy/indexset/releases/tag/v0.11.3
 
