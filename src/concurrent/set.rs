@@ -585,7 +585,7 @@ where
                 if let Some(old_guard) = self.current_front_entry_guard.take() {
                     if let Some(last_value) = old_guard.max() {
                         if let Some(last_back) = self.last_back.as_ref() {
-                            if last_back.lt(last_value) {
+                            if last_back.le(last_value) {
                                 return None;
                             }
                         }
@@ -733,7 +733,7 @@ where
         let mut current_back_entry = btree
             .index
             .upper_bound(end_bound)
-            .and_then(|e| e.next())
+            .and_then(|e| e.next().or_else(|| btree.index.back()))
             .or_else(|| btree.index.front());
 
         if current_back_entry.is_none() {
