@@ -695,4 +695,21 @@ mod tests {
             (&4, &"f"),
         ].into_iter().collect::<BTreeSet<_>>());
     }
+
+    #[test]
+    fn test_get_works_as_expected_at_big_amounts() {
+        let maximum_node_size = 100;
+        let map = BTreeMultiMap::<String, usize>::with_maximum_node_size(maximum_node_size);
+
+        for i in 1..2000 {
+            map.insert(format!("ValueNum{}", i), i);
+        }
+
+        for i in 1..2000 {
+            let range = map.get(&format!("ValueNum{}", i)).collect::<BTreeSet<_>>();
+            assert_eq!(range, vec![
+                (&format!("ValueNum{}", i), &i),
+            ].into_iter().collect::<BTreeSet<_>>());
+        }
+    }
 }
