@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] - 2025-04-22
+
+### Fixed
+- A **Bug** that affects only the non-concurrent versions of the Tree.
+
+### Changed
+- Made `range_idx` public for BTreeSet and BTreeMap.
+
 ## [0.12.1] - 2025-04-21
 
 ### Fixed
@@ -209,7 +217,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.12.2...HEAD
+
+[0.12.2]: https://github.com/brurucy/indexset/releases/tag/v0.12.2
+
+[0.12.1]: https://github.com/brurucy/indexset/releases/tag/v0.12.1
 
 [0.12.0]: https://github.com/brurucy/indexset/releases/tag/v0.12.0
 

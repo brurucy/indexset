@@ -356,7 +356,7 @@ impl<T: Ord> BTreeSet<T> {
     /// ```
     pub fn insert(&mut self, value: T) -> bool {
         let node_idx = self.locate_node(&value);
-        if self.inner[node_idx].len() == DEFAULT_INNER_SIZE {
+        if self.inner[node_idx].len() == self.node_capacity {
             let new_node = self.inner[node_idx].halve();
             let mut insert_node_idx = node_idx;
             if value >= new_node[0] {
@@ -1213,7 +1213,7 @@ impl<T: Ord> BTreeSet<T> {
 
         offset + position_within_node
     }
-    fn range_idx<R>(&self, range: R) -> Range<'_, T>
+    pub fn range_idx<R>(&self, range: R) -> Range<'_, T>
     where
         R: RangeBounds<usize>,
     {
@@ -2604,6 +2604,14 @@ where
 
         RangeMap {
             inner: self.set.range_idx(start_idx..=end_idx),
+        }
+    }
+    pub fn range_idx<R>(&self, range: R) -> RangeMap<K, V>
+    where
+        R: RangeBounds<usize>,
+    {
+        RangeMap {
+            inner: self.set.range_idx(range),
         }
     }
     fn range_to_idx<Q, R>(&self, range: R) -> (usize, usize)
