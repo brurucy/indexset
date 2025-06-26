@@ -276,18 +276,17 @@ where T: Ord + Clone + Send,
                 let (deleted, idx) = deleted.expect("should be ok as checked before");
 
                 let operation = if node_guard.len() > 0 {
+                    #[cfg(feature = "cdc")]
+                    {
+                        let node_element_removal = ChangeEvent::RemoveAt {
+                            max_value: old_max
+                                .expect("Max value should exist as Node is not empty"),
+                            value: deleted.clone(),
+                            index: idx,
+                        };
+                        cdc.push(node_element_removal);
+                    }
                     if old_max.as_ref() == node_guard.max() {
-                        #[cfg(feature = "cdc")]
-                        {
-                            let node_element_removal = ChangeEvent::RemoveAt {
-                                max_value: old_max
-                                    .expect("Max value should exist as Node is not empty"),
-                                value: deleted.clone(),
-                                index: idx,
-                            };
-                            cdc.push(node_element_removal);
-                        }
-
                         return (Some(deleted), cdc);
                     }
 
@@ -306,7 +305,7 @@ where T: Ord + Clone + Send,
                 drop(node_guard);
                 let _global_guard = self.index_lock.write();
 
-                if let Ok((_, cdc)) = operation.unwrap().commit(&self.index) {
+                if let Ok((_, _)) = operation.unwrap().commit(&self.index) {
                     return (Some(deleted), cdc);
                 }
 
