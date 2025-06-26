@@ -584,7 +584,7 @@ where
                 if let Some(old_guard) = self.current_front_entry_guard.take() {
                     if let Some(last_value) = old_guard.max() {
                         if let Some(last_back) = self.last_back.as_ref() {
-                            if last_back.lt(last_value) {
+                            if last_back.le(last_value) {
                                 return None;
                             }
                         }
@@ -613,12 +613,12 @@ where
             if self.current_back_entry_iter.is_none() {
                 if let Some(next_back_entry) = self.current_back_entry.take().and_then(|e| e.prev())
                 {
-                    if let Some(next_entry_equals_to_next_back_entry) = self
+                    if let Some(front_entry_greater_than_next_back_entry) = self
                         .current_front_entry
                         .as_ref()
-                        .and_then(|next_entry| Some(next_entry.key().eq(next_back_entry.key())))
+                        .and_then(|front_entry| Some(front_entry.key().ge(next_back_entry.key())))
                     {
-                        if !next_entry_equals_to_next_back_entry {
+                        if !front_entry_greater_than_next_back_entry {
                             let guard = next_back_entry.value().lock_arc();
                             let iter = unsafe { std::mem::transmute(guard.iter()) };
 
@@ -657,7 +657,7 @@ where
                 if let Some(old_guard) = self.current_back_entry_guard.take() { 
                     if let Some(first_value) = old_guard.min() {
                         if let Some(last_front) = self.last_front.as_ref() {
-                            if last_front.gt(first_value) {
+                            if last_front.ge(first_value) {
                                 return None;
                             }
                         }
@@ -732,7 +732,7 @@ where
         let mut current_back_entry = btree
             .index
             .upper_bound(end_bound)
-            .and_then(|e| e.next())
+            .and_then(|e| e.next().or_else(|| btree.index.back()))
             .or_else(|| btree.index.front());
 
         if current_back_entry.is_none() {
@@ -1448,5 +1448,133 @@ mod tests {
         for i in 0..n {
             assert!(!set.contains(&i), "Element {} should not be in the set", i);
         }
+    }
+
+    #[test]
+    fn test_range_edge_cases() {
+        let set = BTreeSet::<i32>::with_maximum_node_size(10);
+        for i in 0..20 {
+            set.insert(i);
+        }
+        // Nodes are:
+        // [0, 1, 2, 3, 4]
+        // [5, 6, 7, 8, 9]
+        // [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+
+        // First value of the node only
+        assert_eq!(set.range(0..=0).collect::<Vec<_>>(), vec![&0]);
+        assert_eq!(set.range(0..1).collect::<Vec<_>>(), vec![&0]);
+
+        assert_eq!(set.range(5..=5).collect::<Vec<_>>(), vec![&5]);
+        assert_eq!(set.range(5..6).collect::<Vec<_>>(), vec![&5]);
+
+        assert_eq!(set.range(10..=10).collect::<Vec<_>>(), vec![&10]);
+        assert_eq!(set.range(10..11).collect::<Vec<_>>(), vec![&10]);
+
+        // From first value to middle
+        assert_eq!(set.range(0..=3).collect::<Vec<_>>(), vec![&0, &1, &2, &3]);
+        assert_eq!(set.range(0..3).collect::<Vec<_>>(), vec![&0, &1, &2]);
+
+        assert_eq!(set.range(5..=8).collect::<Vec<_>>(), vec![&5, &6, &7, &8]);
+        assert_eq!(set.range(5..8).collect::<Vec<_>>(), vec![&5, &6, &7]);
+
+        assert_eq!(set.range(10..=13).collect::<Vec<_>>(), vec![&10, &11, &12, &13]);
+        assert_eq!(set.range(10..13).collect::<Vec<_>>(), vec![&10, &11, &12]);
+
+        // Last value of the node
+        assert_eq!(set.range(4..=4).collect::<Vec<_>>(), vec![&4]);
+        assert_eq!(set.range(4..5).collect::<Vec<_>>(), vec![&4]);
+
+        assert_eq!(set.range(9..=9).collect::<Vec<_>>(), vec![&9]);
+        assert_eq!(set.range(9..10).collect::<Vec<_>>(), vec![&9]);
+
+        assert_eq!(set.range(19..=19).collect::<Vec<_>>(), vec![&19]);
+        assert_eq!(set.range(19..20).collect::<Vec<_>>(), vec![&19]);
+
+        // From middle to last value of the node
+        assert_eq!(set.range(17..=19).collect::<Vec<_>>(), vec![&17, &18, &19]);
+        assert_eq!(set.range(17..20).collect::<Vec<_>>(), vec![&17, &18, &19]);
+
+        assert_eq!(set.range(7..=9).collect::<Vec<_>>(), vec![&7, &8, &9]);
+        assert_eq!(set.range(7..10).collect::<Vec<_>>(), vec![&7, &8, &9]);
+
+        assert_eq!(set.range(2..=4).collect::<Vec<_>>(), vec![&2, &3, &4]);
+        assert_eq!(set.range(2..5).collect::<Vec<_>>(), vec![&2, &3, &4]);
+
+        // Full node
+        assert_eq!(set.range(0..=4).collect::<Vec<_>>(), vec![&0, &1, &2, &3, &4]);
+        assert_eq!(set.range(0..5).collect::<Vec<_>>(), vec![&0, &1, &2, &3, &4]);
+
+        assert_eq!(set.range(5..=9).collect::<Vec<_>>(), vec![&5, &6, &7, &8, &9]);
+        assert_eq!(set.range(5..10).collect::<Vec<_>>(), vec![&5, &6, &7, &8, &9]);
+
+        assert_eq!(set.range(10..=19).collect::<Vec<_>>(), vec![&10, &11, &12, &13, &14, &15, &16, &17, &18, &19]);
+        assert_eq!(set.range(10..20).collect::<Vec<_>>(), vec![&10, &11, &12, &13, &14, &15, &16, &17, &18, &19]);
+
+        // Node intersection
+        assert_eq!(set.range(3..=6).collect::<Vec<_>>(), vec![&3, &4, &5, &6]);
+        assert_eq!(set.range(3..7).collect::<Vec<_>>(), vec![&3, &4, &5, &6]);
+
+        assert_eq!(set.range(8..=11).collect::<Vec<_>>(), vec![&8, &9, &10, &11]);
+        assert_eq!(set.range(8..12).collect::<Vec<_>>(), vec![&8, &9, &10, &11]);
+
+        // REVERSED
+
+        // First value of the node only
+        assert_eq!(set.range(0..=0).rev().collect::<Vec<_>>(), vec![&0]);
+        assert_eq!(set.range(0..1).rev().collect::<Vec<_>>(), vec![&0]);
+
+        assert_eq!(set.range(5..=5).rev().collect::<Vec<_>>(), vec![&5]);
+        assert_eq!(set.range(5..6).rev().collect::<Vec<_>>(), vec![&5]);
+
+        assert_eq!(set.range(10..=10).rev().collect::<Vec<_>>(), vec![&10]);
+        assert_eq!(set.range(10..11).rev().collect::<Vec<_>>(), vec![&10]);
+
+        // From first value to middle
+        assert_eq!(set.range(0..=3).rev().collect::<Vec<_>>(), vec![&3, &2, &1, &0]);
+        assert_eq!(set.range(0..3).rev().collect::<Vec<_>>(), vec![&2, &1, &0]);
+
+        assert_eq!(set.range(5..=8).rev().collect::<Vec<_>>(), vec![&8, &7, &6, &5]);
+        assert_eq!(set.range(5..8).rev().collect::<Vec<_>>(), vec![&7, &6, &5]);
+
+        assert_eq!(set.range(10..=13).rev().collect::<Vec<_>>(), vec![&13, &12, &11, &10]);
+        assert_eq!(set.range(10..13).rev().collect::<Vec<_>>(), vec![&12, &11, &10]);
+
+        // Last value of the node
+        assert_eq!(set.range(4..=4).rev().collect::<Vec<_>>(), vec![&4]);
+        assert_eq!(set.range(4..5).rev().collect::<Vec<_>>(), vec![&4]);
+
+        assert_eq!(set.range(9..=9).rev().collect::<Vec<_>>(), vec![&9]);
+        assert_eq!(set.range(9..10).rev().collect::<Vec<_>>(), vec![&9]);
+
+        assert_eq!(set.range(19..=19).rev().collect::<Vec<_>>(), vec![&19]);
+        assert_eq!(set.range(19..20).rev().collect::<Vec<_>>(), vec![&19]);
+
+        // From middle to last value of the node
+        assert_eq!(set.range(17..=19).rev().collect::<Vec<_>>(), vec![&19, &18, &17]);
+        assert_eq!(set.range(17..20).rev().collect::<Vec<_>>(), vec![&19, &18, &17]);
+
+        assert_eq!(set.range(7..=9).rev().collect::<Vec<_>>(), vec![&9, &8, &7]);
+        assert_eq!(set.range(7..10).rev().collect::<Vec<_>>(), vec![&9, &8, &7]);
+
+        assert_eq!(set.range(2..=4).rev().collect::<Vec<_>>(), vec![&4, &3, &2]);
+        assert_eq!(set.range(2..5).rev().collect::<Vec<_>>(), vec![&4, &3, &2]);
+
+        // Full node
+        assert_eq!(set.range(0..=4).rev().collect::<Vec<_>>(), vec![&4, &3, &2, &1, &0]);
+        assert_eq!(set.range(0..5).rev().collect::<Vec<_>>(), vec![&4, &3, &2, &1, &0]);
+
+        assert_eq!(set.range(5..=9).rev().collect::<Vec<_>>(), vec![&9, &8, &7, &6, &5]);
+        assert_eq!(set.range(5..10).rev().collect::<Vec<_>>(), vec![&9, &8, &7, &6, &5]);
+
+        assert_eq!(set.range(10..=19).rev().collect::<Vec<_>>(), vec![&19, &18, &17, &16, &15, &14, &13, &12, &11, &10]);
+        assert_eq!(set.range(10..20).rev().collect::<Vec<_>>(), vec![&19, &18, &17, &16, &15, &14, &13, &12, &11, &10]);
+
+        // Node intersection
+        assert_eq!(set.range(3..=6).rev().collect::<Vec<_>>(), vec![&6, &5, &4, &3]);
+        assert_eq!(set.range(3..7).rev().collect::<Vec<_>>(), vec![&6, &5, &4, &3]);
+
+        assert_eq!(set.range(8..=11).rev().collect::<Vec<_>>(), vec![&11, &10, &9, &8]);
+        assert_eq!(set.range(8..12).rev().collect::<Vec<_>>(), vec![&11, &10, &9, &8]);
     }
 }
