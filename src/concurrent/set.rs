@@ -287,7 +287,7 @@ where T: Ord + Clone + Send,
                             };
                             cdc.push(node_element_removal);
                         }
-
+                        
                         return (Some(deleted), cdc);
                     }
 
