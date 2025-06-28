@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.3] - 2025-06-28
+
+### Fixed
+- A **Bug** with CDC.
+
 ## [0.12.2] - 2025-04-22
 
 ### Fixed
@@ -217,7 +222,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.12.2...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.12.3...HEAD
+
+[0.12.3]: https://github.com/brurucy/indexset/releases/tag/v0.12.3
 
 [0.12.2]: https://github.com/brurucy/indexset/releases/tag/v0.12.2
 
