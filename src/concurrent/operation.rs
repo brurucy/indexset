@@ -119,7 +119,7 @@ where T: Ord + Send + Clone + 'static,
                         let mut cdc = vec![];
                         return Ok(match new_max.cmp(&old_max) {
                             std::cmp::Ordering::Equal => (None, cdc),
-                            std::cmp::Ordering::Greater | std::cmp::Ordering::Less => {
+                            std::cmp::Ordering::Greater => {
                                 index.remove(&old_max);
                                 index.insert(new_max.clone(), node.clone());
 
@@ -129,6 +129,22 @@ where T: Ord + Send + Clone + 'static,
                                         max_value: old_max,
                                         value: new_max.clone(),
                                         index: guard.len() - 1,
+                                    };
+                                    cdc.push(update_max);
+                                }
+
+                                (None, cdc)
+                            }
+                            std::cmp::Ordering::Less => {
+                                index.remove(&old_max);
+                                index.insert(new_max.clone(), node.clone());
+
+                                #[cfg(feature = "cdc")]
+                                {
+                                    let update_max = ChangeEvent::RemoveAt {
+                                        max_value: old_max.clone(),
+                                        value: old_max,
+                                        index: guard.len(),
                                     };
                                     cdc.push(update_max);
                                 }
