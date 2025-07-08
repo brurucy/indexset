@@ -474,17 +474,18 @@ mod tests {
     impl<K: Ord + Clone, V: Clone + PartialEq> PersistedBTreeMap<K, V> {
         fn persist(&mut self, event: &ChangeEvent<Pair<K, V>>) {
             match event {
-                ChangeEvent::CreateNode { max_value } => {
+                ChangeEvent::CreateNode { max_value, event_id: _ } => {
                     let node = vec![max_value.clone()];
                     self.nodes.insert(max_value.key.clone(), node);
                 }
-                ChangeEvent::RemoveNode { max_value } => {
+                ChangeEvent::RemoveNode { max_value, event_id: _   } => {
                     self.nodes.remove(&max_value.key);
                 }
                 ChangeEvent::InsertAt {
                     max_value,
                     index,
                     value,
+                    event_id: _
                 } => {
                     if let Some(node) = self.nodes.get_mut(&max_value.key) {
                         node.insert(*index, value.clone());
@@ -497,7 +498,7 @@ mod tests {
                 ChangeEvent::RemoveAt {
                     max_value,
                     index,
-                    value: _,
+                    value: _, event_id: _
                 } => {
                     if let Some(node) = self.nodes.get_mut(&max_value.key) {
                         node.remove(*index);
@@ -505,7 +506,7 @@ mod tests {
                 }
                 ChangeEvent::SplitNode {
                     max_value,
-                    split_index,
+                    split_index, event_id: _
                 } => {
                     if let Some(mut old_node) = self.nodes.remove(&max_value.key) {
                         let new_node = old_node.split_off(*split_index);

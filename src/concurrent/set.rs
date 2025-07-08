@@ -3,6 +3,8 @@ use std::iter::FusedIterator;
 use std::ops::RangeBounds;
 use std::{borrow::Borrow, sync::Arc};
 use std::marker::PhantomData;
+#[cfg(feature = "cdc")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_skiplist::SkipMap;
 use crossbeam_utils::sync::ShardedLock;
@@ -79,6 +81,8 @@ where
     pub(crate) index: SkipMap<T, Arc<Mutex<Node>>>,
     index_lock: ShardedLock<()>,
     node_capacity: usize,
+    #[cfg(feature = "cdc")]
+    event_id: AtomicU64,
 }
 impl<T: Ord + Clone + 'static, Node: NodeLike<T>> Default for BTreeSet<T, Node> {
     fn default() -> Self {
@@ -88,6 +92,8 @@ impl<T: Ord + Clone + 'static, Node: NodeLike<T>> Default for BTreeSet<T, Node> 
             index,
             index_lock: ShardedLock::new(()),
             node_capacity: DEFAULT_INNER_SIZE,
+            #[cfg(feature = "cdc")]
+            event_id: AtomicU64::new(0),
         }
     }
 }
@@ -113,6 +119,8 @@ where T: Ord + Clone + Send,
             index: SkipMap::new(),
             index_lock: ShardedLock::new(()),
             node_capacity,
+            #[cfg(feature = "cdc")]
+            event_id: AtomicU64::new(0),
         }
     }
     pub fn attach_node(&self, node: Node) {
@@ -142,6 +150,9 @@ where T: Ord + Clone + Send,
                             #[cfg(feature = "cdc")]
                             {
                                 let node_insertion = ChangeEvent::CreateNode {
+                                    // is correct as index is locked and current thread is the only that can 
+                                    // fetch event_id.
+                                    event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
                                     max_value: value.clone(),
                                 };
                                 cdc.push(node_insertion);
@@ -157,7 +168,11 @@ where T: Ord + Clone + Send,
                 }
             };
 
+            // we need to unlock index to avoid deadlock when one thread is waiting for index write
+            // before operation `commit` and other is waiting for the node's mutex.
+            drop(_global_guard);
             let mut node_guard = target_node_entry.value().lock_arc();
+            let _global_guard = self.index_lock.read();
             let mut operation = None;
             if !node_guard.need_to_split(self.node_capacity) {
                 let old_max = node_guard.max().cloned();
@@ -167,6 +182,9 @@ where T: Ord + Clone + Send,
                         #[cfg(feature = "cdc")]
                         {
                             let node_element_insertion = ChangeEvent::InsertAt {
+                                // is correct as node is locked and current thread is the only that can 
+                                // fetch event_id, so events for this node will have monotonic id's.
+                                event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
                                 max_value: old_max
                                     .clone()
                                     .expect("Max value should exist as Node is not empty"),
@@ -182,6 +200,7 @@ where T: Ord + Clone + Send,
                     if old_max.is_some() {
                         operation = Some(Operation::UpdateMax(
                             target_node_entry.value().clone(),
+                            node_guard,
                             old_max.unwrap(),
                         ))
                     }
@@ -189,6 +208,9 @@ where T: Ord + Clone + Send,
                     #[cfg(feature = "cdc")]
                     {
                         let node_element_removal = ChangeEvent::RemoveAt {
+                            // is correct as node is locked and current thread is the only that can 
+                            // fetch event_id, so events for this node will have monotonic id's.
+                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
                             max_value: old_max
                                 .clone()
                                 .expect("Max value should exist as Node is not empty"),
@@ -196,6 +218,8 @@ where T: Ord + Clone + Send,
                             index: idx,
                         };
                         let node_element_insertion = ChangeEvent::InsertAt {
+                            // same as for previos.
+                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
                             max_value: old_max
                                 .clone()
                                 .expect("Max value should exist as Node is not empty"),
@@ -211,16 +235,21 @@ where T: Ord + Clone + Send,
             } else {
                 operation = Some(Operation::Split(
                     target_node_entry.value().clone(),
+                    node_guard,
                     target_node_entry.key().clone(),
                     value.clone(),
                 ))
             }
+            
+            #[cfg(feature = "cdc")]
+            // this id is generated before node guard is dropped to make id's of 
+            // cdc events in `commit` monotonic.
+            let operation_event_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
 
             drop(_global_guard);
-            drop(node_guard);
             let _global_guard = self.index_lock.write();
 
-            if let Ok(value_cdc) = operation.unwrap().commit(&self.index) {
+            if let Ok(value_cdc) = operation.unwrap().commit(&self.index, #[cfg(feature = "cdc")] operation_event_id) {
                 return value_cdc;
             }
             drop(_global_guard);
@@ -263,11 +292,13 @@ where T: Ord + Clone + Send,
     {
         loop {
             let mut cdc = vec![];
-            let mut _global_guard = self.index_lock.read();
+            let _global_guard = self.index_lock.read();
             if let Some(target_node_entry) =
                 self.index.lower_bound(std::ops::Bound::Included(&value))
             {
+                drop(_global_guard);
                 let mut node_guard = target_node_entry.value().lock_arc();
+                let _global_guard = self.index_lock.read();
                 let old_max = node_guard.max().cloned();
                 let deleted = NodeLike::delete(&mut *node_guard, value);
                 if deleted.is_none() {
@@ -280,6 +311,9 @@ where T: Ord + Clone + Send,
                         #[cfg(feature = "cdc")]
                         {
                             let node_element_removal = ChangeEvent::RemoveAt {
+                                // is correct as node is locked and current thread is the only that can 
+                                // fetch event_id, so events for this node will have monotonic id's.
+                                event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
                                 max_value: old_max
                                     .expect("Max value should exist as Node is not empty"),
                                 value: deleted.clone(),
@@ -293,20 +327,26 @@ where T: Ord + Clone + Send,
 
                     Some(Operation::UpdateMax(
                         target_node_entry.value().clone(),
+                        node_guard,
                         old_max.unwrap(),
                     ))
                 } else {
                     Some(Operation::MakeUnreachable(
                         target_node_entry.value().clone(),
+                        node_guard,
                         old_max.unwrap(),
                     ))
                 };
 
+                #[cfg(feature = "cdc")]
+                // this id is generated before node guard is dropped to make id's of 
+                // cdc events in `commit` monotonic.
+                let operation_event_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
+
                 drop(_global_guard);
-                drop(node_guard);
                 let _global_guard = self.index_lock.write();
 
-                if let Ok((_, cdc)) = operation.unwrap().commit(&self.index) {
+                if let Ok((_, cdc)) = operation.unwrap().commit(&self.index, #[cfg(feature = "cdc")] operation_event_id) {
                     return (Some(deleted), cdc);
                 }
 
