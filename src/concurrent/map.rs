@@ -494,7 +494,6 @@ mod tests {
                     value,
                     event_id,
                 } => {
-                    println!("{:?}", event_id);
                     if let Some(node) = self.nodes.get_mut(&max_value.key) {
                         node.insert(*index, value.clone());
                     }
@@ -539,10 +538,6 @@ mod tests {
                 }
             }
             false
-        }
-        
-        fn len(&self) -> usize {
-            self.nodes.values().map(|node| node.len()).sum()
         }
     }
 

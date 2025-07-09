@@ -241,13 +241,18 @@ where T: Debug + Ord + Clone + Send,
             
             let _global_guard = self.index_lock.write();
 
-            if let Ok((value, value_cdc)) = operation.unwrap().commit(&self.index, #[cfg(feature = "cdc")] &self.event_id) {
+            return if let Ok((value, value_cdc)) = 
+                operation.unwrap().commit(
+                    &self.index, 
+                    #[cfg(feature = "cdc")] 
+                    &self.event_id
+                )
+            {
                 cdc.extend(value_cdc);
-                return (value, cdc);
+                (value, cdc)
+            } else {
+                (None, cdc)
             }
-            drop(_global_guard);
-
-            continue;
         }
     }
 
@@ -332,14 +337,18 @@ where T: Debug + Ord + Clone + Send,
                 
                 let _global_guard = self.index_lock.write();
 
-                if let Ok((_, value_cdc)) = operation.unwrap().commit(&self.index, #[cfg(feature = "cdc")] &self.event_id) {
+                return if let Ok((_, value_cdc)) =
+                    operation.unwrap().commit(
+                        &self.index,
+                        #[cfg(feature = "cdc")]
+                        &self.event_id
+                    )
+                {
                     cdc.extend(value_cdc);
-                    return (Some(deleted), cdc);
+                    (Some(deleted), cdc)
+                } else {
+                    (Some(deleted), cdc)
                 }
-
-                drop(_global_guard);
-
-                continue;
             }
 
             break;
