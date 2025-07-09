@@ -659,7 +659,7 @@ mod tests {
 
     #[cfg(feature = "cdc")]
     #[test]
-    fn test_concurrent_insert() {
+    fn test_concurrent_insert_cdc() {
         let map = Arc::new(BTreeMap::<usize, String>::new());
         let num_threads = 8;
         let operations_per_thread = 1000;
