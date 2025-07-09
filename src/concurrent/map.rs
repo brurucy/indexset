@@ -435,7 +435,6 @@ where K: Debug + Send + Ord + Clone + 'static,
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
     use std::fmt::Debug;
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -492,7 +491,7 @@ mod tests {
                     max_value,
                     index,
                     value,
-                    event_id,
+                    event_id: _,
                 } => {
                     if let Some(node) = self.nodes.get_mut(&max_value.key) {
                         node.insert(*index, value.clone());

@@ -11,7 +11,6 @@ use crate::core::node::NodeLike;
 
 type OldVersion<Node> = Arc<Mutex<Node>>;
 type CurrentVersion<Node> = Arc<Mutex<Node>>;
-type Guard<Node> = ArcMutexGuard<RawMutex, Node>;
 
 pub enum Operation<T: Send + Ord, Node: NodeLike<T>> {
     Split(OldVersion<Node>, T, T),
@@ -124,11 +123,11 @@ where T: Debug + Ord + Send + Clone + 'static,
                 Err(())
             }
             Operation::UpdateMax(node, old_max) => {
-                let mut guard = node.lock_arc();
+                let guard = node.lock_arc();
                 let new_max = guard.max().unwrap();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &node) {
-                        let mut cdc = vec![];
+                        let cdc = vec![];
                         return Ok(match new_max.cmp(&old_max) {
                             std::cmp::Ordering::Equal => (None, cdc),
                             std::cmp::Ordering::Greater => {
@@ -150,7 +149,7 @@ where T: Debug + Ord + Send + Clone + 'static,
                 Err(())
             }
             Operation::MakeUnreachable(node, old_max) => {
-                let mut guard = node.lock_arc();
+                let guard = node.lock_arc();
                 let new_max = guard.max();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &node) {
