@@ -167,40 +167,36 @@ where T: Ord + Clone + Send,
                     }
                 }
             };
-
-            // we need to unlock index to avoid deadlock when one thread is waiting for index write
-            // before operation `commit` and other is waiting for the node's mutex.
-            drop(_global_guard);
+            
             let mut node_guard = target_node_entry.value().lock_arc();
-            let _global_guard = self.index_lock.read();
+            
             let mut operation = None;
             if !node_guard.need_to_split(self.node_capacity) {
                 let old_max = node_guard.max().cloned();
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {
+                    #[cfg(feature = "cdc")]
+                    {
+                        let node_element_insertion = ChangeEvent::InsertAt {
+                            // is correct as node is locked and current thread is the only that can 
+                            // fetch event_id, so events for this node will have monotonic id's.
+                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            max_value: old_max
+                                .clone()
+                                .expect("Max value should exist as Node is not empty"),
+                            value: value.clone(),
+                            index: idx,
+                        };
+                        cdc.push(node_element_insertion);
+                    }
+                    
                     if node_guard.max().cloned() == old_max {
-                        #[cfg(feature = "cdc")]
-                        {
-                            let node_element_insertion = ChangeEvent::InsertAt {
-                                // is correct as node is locked and current thread is the only that can 
-                                // fetch event_id, so events for this node will have monotonic id's.
-                                event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                                max_value: old_max
-                                    .clone()
-                                    .expect("Max value should exist as Node is not empty"),
-                                value: value.clone(),
-                                index: idx,
-                            };
-                            cdc.push(node_element_insertion);
-                        }
-
                         return (None, cdc);
                     }
 
                     if old_max.is_some() {
                         operation = Some(Operation::UpdateMax(
                             target_node_entry.value().clone(),
-                            node_guard,
                             old_max.unwrap(),
                         ))
                     }
@@ -235,22 +231,19 @@ where T: Ord + Clone + Send,
             } else {
                 operation = Some(Operation::Split(
                     target_node_entry.value().clone(),
-                    node_guard,
                     target_node_entry.key().clone(),
                     value.clone(),
                 ))
             }
             
-            #[cfg(feature = "cdc")]
-            // this id is generated before node guard is dropped to make id's of 
-            // cdc events in `commit` monotonic.
-            let operation_event_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
+            drop(node_guard);
             drop(_global_guard);
             
             let _global_guard = self.index_lock.write();
 
-            if let Ok(value_cdc) = operation.unwrap().commit(&self.index, #[cfg(feature = "cdc")] operation_event_id) {
-                return value_cdc;
+            if let Ok((value, value_cdc)) = operation.unwrap().commit(&self.index, #[cfg(feature = "cdc")] &self.event_id) {
+                cdc.extend(value_cdc);
+                return (value, cdc);
             }
             drop(_global_guard);
 
@@ -296,9 +289,7 @@ where T: Ord + Clone + Send,
             if let Some(target_node_entry) =
                 self.index.lower_bound(std::ops::Bound::Included(&value))
             {
-                drop(_global_guard);
                 let mut node_guard = target_node_entry.value().lock_arc();
-                let _global_guard = self.index_lock.read();
                 let old_max = node_guard.max().cloned();
                 let deleted = NodeLike::delete(&mut *node_guard, value);
                 if deleted.is_none() {
@@ -307,46 +298,42 @@ where T: Ord + Clone + Send,
                 let (deleted, idx) = deleted.expect("should be ok as checked before");
 
                 let operation = if node_guard.len() > 0 {
+                    #[cfg(feature = "cdc")]
+                    {
+                        let node_element_removal = ChangeEvent::RemoveAt {
+                            // is correct as node is locked and current thread is the only that can 
+                            // fetch event_id, so events for this node will have monotonic id's.
+                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            max_value: old_max
+                                .clone()
+                                .expect("Max value should exist as Node is not empty"),
+                            value: deleted.clone(),
+                            index: idx,
+                        };
+                        cdc.push(node_element_removal);
+                    }
+                    
                     if old_max.as_ref() == node_guard.max() {
-                        #[cfg(feature = "cdc")]
-                        {
-                            let node_element_removal = ChangeEvent::RemoveAt {
-                                // is correct as node is locked and current thread is the only that can 
-                                // fetch event_id, so events for this node will have monotonic id's.
-                                event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                                max_value: old_max
-                                    .expect("Max value should exist as Node is not empty"),
-                                value: deleted.clone(),
-                                index: idx,
-                            };
-                            cdc.push(node_element_removal);
-                        }
-                        
                         return (Some(deleted), cdc);
                     }
 
                     Some(Operation::UpdateMax(
                         target_node_entry.value().clone(),
-                        node_guard,
                         old_max.unwrap(),
                     ))
                 } else {
                     Some(Operation::MakeUnreachable(
                         target_node_entry.value().clone(),
-                        node_guard,
                         old_max.unwrap(),
                     ))
                 };
-
-                #[cfg(feature = "cdc")]
-                // this id is generated before node guard is dropped to make id's of 
-                // cdc events in `commit` monotonic.
-                let operation_event_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
+                drop(node_guard);
                 drop(_global_guard);
                 
                 let _global_guard = self.index_lock.write();
 
-                if let Ok((_, cdc)) = operation.unwrap().commit(&self.index, #[cfg(feature = "cdc")] operation_event_id) {
+                if let Ok((_, value_cdc)) = operation.unwrap().commit(&self.index, #[cfg(feature = "cdc")] &self.event_id) {
+                    cdc.extend(value_cdc);
                     return (Some(deleted), cdc);
                 }
 

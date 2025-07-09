@@ -434,6 +434,11 @@ where K: Send + Ord + Clone + 'static,
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use rand::Rng;
+    use scc::HashMap;
     use crate::BTreeSet;
     use super::BTreeMap;
     use super::ChangeEvent;
@@ -485,8 +490,9 @@ mod tests {
                     max_value,
                     index,
                     value,
-                    event_id: _
+                    event_id,
                 } => {
+                    println!("{:?}", event_id);
                     if let Some(node) = self.nodes.get_mut(&max_value.key) {
                         node.insert(*index, value.clone());
                     }
@@ -531,6 +537,10 @@ mod tests {
                 }
             }
             false
+        }
+        
+        fn len(&self) -> usize {
+            self.nodes.values().map(|node| node.len()).sum()
         }
     }
 
@@ -640,6 +650,76 @@ mod tests {
         }
 
         assert!(mock_state.nodes.len() > 1);
+
+        let expected_state = map
+            .set
+            .index
+            .iter()
+            .map(|e| (e.key().clone().key, e.value().lock_arc().clone()))
+            .collect::<_>();
+        assert_eq!(mock_state.nodes, expected_state);
+    }
+
+    #[cfg(feature = "cdc")]
+    #[test]
+    fn test_concurrent_insert() {
+        let map = Arc::new(BTreeMap::<usize, String>::new());
+        let num_threads = 8;
+        let operations_per_thread = 1000;
+        let mut handles = vec![];
+
+        let test_data: Vec<Vec<(i32, (usize, String))>> = (0..num_threads)
+            .map(|_| {
+                let mut rng = rand::rng();
+                (0..operations_per_thread)
+                    .map(|_| {
+                        let value = rng.random_range(0..100000);
+                        let operation = rng.random_range(0..2);
+                        (operation, (value, format!("val{value}")))
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let expected_values = Arc::new(Mutex::new(HashMap::new()));
+
+        for thread_idx in 0..num_threads {
+            let map_clone = Arc::clone(&map);
+            let expected_values = Arc::clone(&expected_values);
+            let thread_data = test_data[thread_idx].clone();
+
+            let handle = thread::spawn(move || {
+                let mut events = Vec::new();
+                for (operation, (k, v)) in thread_data {
+                    if operation == 0 {
+                        let (_, evs) = map_clone.insert_cdc(k, v.clone());
+                        events.extend(evs);
+                        let _ = expected_values.lock().unwrap().insert(k, v);
+                    }
+                }
+                events
+            });
+            handles.push(handle);
+        }
+
+        let mut final_events = Vec::new();
+        for handle in handles {
+            let thread_events = handle.join().unwrap();
+            final_events.extend(thread_events)
+        }
+        final_events.sort_by(|ev1, ev2| ev1.id().cmp(&ev2.id()));
+        
+        for ev in &final_events {
+            println!("{:?}", ev)
+        }
+
+        let mut mock_state = PersistedBTreeMap::default();
+        for ev in final_events {
+            mock_state.persist(&ev);
+        }
+
+        // let expected_values = expected_values.lock().unwrap();
+        // assert_eq!(mock_state.len(), expected_values.len());
 
         let expected_state = map
             .set

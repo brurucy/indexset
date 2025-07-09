@@ -1,21 +1,21 @@
 use std::sync::Arc;
+#[cfg(feature = "cdc")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_skiplist::SkipMap;
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
 
 use crate::cdc::change::ChangeEvent;
 use crate::core::node::NodeLike;
-#[cfg(feature = "cdc")]
-use crate::cdc::change::Id;
 
 type OldVersion<Node> = Arc<Mutex<Node>>;
 type CurrentVersion<Node> = Arc<Mutex<Node>>;
 type Guard<Node> = ArcMutexGuard<RawMutex, Node>;
 
 pub enum Operation<T: Send + Ord, Node: NodeLike<T>> {
-    Split(OldVersion<Node>, Guard<Node>, T, T),
-    UpdateMax(CurrentVersion<Node>, Guard<Node>, T),
-    MakeUnreachable(CurrentVersion<Node>, Guard<Node>, T),
+    Split(OldVersion<Node>, T, T),
+    UpdateMax(CurrentVersion<Node>, T),
+    MakeUnreachable(CurrentVersion<Node>,  T),
 }
 
 impl<T, Node> Operation<T, Node>
@@ -24,10 +24,11 @@ where T: Ord + Send + Clone + 'static,
 {
     pub fn commit(self,
                   index: &SkipMap<T, Arc<Mutex<Node>>>,
-                  #[cfg(feature = "cdc")] id: Id,
+                  #[cfg(feature = "cdc")] event_id: &AtomicU64,
     ) -> Result<(Option<T>, Vec<ChangeEvent<T>>), ()> {
         match self {
-            Operation::Split(old_node, mut guard, old_max, value) => {
+            Operation::Split(old_node,  old_max, value) => {
+                let mut guard = old_node.lock_arc();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &old_node) {
                         let mut cdc = vec![];
@@ -37,7 +38,7 @@ where T: Ord + Send + Clone + 'static,
                         #[cfg(feature = "cdc")]
                         {
                             let node_split = ChangeEvent::SplitNode {
-                                event_id: id,
+                                event_id: event_id.fetch_add(1, Ordering::Relaxed).into(),
                                 max_value: old_max.clone(),
                                 split_index: guard.len(),
                             };
@@ -55,7 +56,7 @@ where T: Ord + Send + Clone + 'static,
                                     #[cfg(feature = "cdc")]
                                     {
                                         let value_insertion = ChangeEvent::RemoveAt {
-                                            event_id: id,
+                                            event_id: event_id.fetch_add(1, Ordering::Relaxed).into(),
                                             max_value: max.clone(),
                                             index: idx,
                                             value: old_value.clone().unwrap(),
@@ -66,7 +67,7 @@ where T: Ord + Send + Clone + 'static,
                                 #[cfg(feature = "cdc")]
                                 {
                                     let value_insertion = ChangeEvent::InsertAt {
-                                        event_id: id,
+                                        event_id: event_id.fetch_add(1, Ordering::Relaxed).into(),
                                         max_value: max.clone(),
                                         index: idx,
                                         value: value.clone(),
@@ -91,7 +92,7 @@ where T: Ord + Send + Clone + 'static,
                                     #[cfg(feature = "cdc")]
                                     {
                                         let value_insertion = ChangeEvent::RemoveAt {
-                                            event_id: id,
+                                            event_id: event_id.fetch_add(1, Ordering::Relaxed).into(),
                                             max_value: old_max.clone(),
                                             index: idx,
                                             value: old_value.clone().unwrap(),
@@ -102,7 +103,7 @@ where T: Ord + Send + Clone + 'static,
                                 #[cfg(feature = "cdc")]
                                 {
                                     let value_insertion = ChangeEvent::InsertAt {
-                                        event_id: id,
+                                        event_id: event_id.fetch_add(1, Ordering::Relaxed).into(),
                                         max_value: old_max.clone(),
                                         index: idx,
                                         value: value.clone(),
@@ -121,7 +122,8 @@ where T: Ord + Send + Clone + 'static,
 
                 Err(())
             }
-            Operation::UpdateMax(node, guard, old_max) => {
+            Operation::UpdateMax(node, old_max) => {
+                let mut guard = node.lock_arc();
                 let new_max = guard.max().unwrap();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &node) {
@@ -132,33 +134,11 @@ where T: Ord + Send + Clone + 'static,
                                 index.remove(&old_max);
                                 index.insert(new_max.clone(), node.clone());
 
-                                #[cfg(feature = "cdc")]
-                                {
-                                    let update_max = ChangeEvent::InsertAt {
-                                        event_id: id,
-                                        max_value: old_max,
-                                        value: new_max.clone(),
-                                        index: guard.len() - 1,
-                                    };
-                                    cdc.push(update_max);
-                                }
-
                                 (None, cdc)
                             }
                             std::cmp::Ordering::Less => {
                                 index.remove(&old_max);
                                 index.insert(new_max.clone(), node.clone());
-
-                                #[cfg(feature = "cdc")]
-                                {
-                                    let update_max = ChangeEvent::RemoveAt {
-                                        event_id: id,
-                                        max_value: old_max.clone(),
-                                        value: old_max,
-                                        index: guard.len(),
-                                    };
-                                    cdc.push(update_max);
-                                }
 
                                 (None, cdc)
                             }
@@ -168,7 +148,8 @@ where T: Ord + Send + Clone + 'static,
 
                 Err(())
             }
-            Operation::MakeUnreachable(node, guard, old_max) => {
+            Operation::MakeUnreachable(node, old_max) => {
+                let mut guard = node.lock_arc();
                 let new_max = guard.max();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &node) {
@@ -179,7 +160,7 @@ where T: Ord + Send + Clone + 'static,
                                 #[cfg(feature = "cdc")]
                                 {
                                     let node_removal = ChangeEvent::RemoveNode {
-                                        event_id: id,
+                                        event_id: event_id.fetch_add(1, Ordering::Relaxed).into(),
                                         max_value: old_max.clone(),
                                     };
                                     cdc.push(node_removal);
