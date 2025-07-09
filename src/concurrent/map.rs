@@ -1,4 +1,5 @@
 use std::{borrow::Borrow, iter::FusedIterator, ops::RangeBounds};
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -31,8 +32,8 @@ where K: Send + Ord + Clone,
 
 pub struct Iter<'a, K, V, Node>
 where
-    K: Send + Ord + Clone + 'static,
-    V: Send + Clone + 'static,
+    K: Debug + Send + Ord + Clone + 'static,
+    V: Debug + Send + Clone + 'static,
     Node: NodeLike<Pair<K, V>> + Send + 'static
 {
     inner: super::set::Iter<'a, Pair<K, V>, Node>,
@@ -40,8 +41,8 @@ where
 
 impl<'a, K, V, Node> Iterator for Iter<'a, K, V, Node>
 where
-    K: Send + Ord + Clone + 'static,
-    V: Send + Clone + 'static,
+    K: Debug + Send + Ord + Clone + 'static,
+    V: Debug + Send + Clone + 'static,
     Node: NodeLike<Pair<K, V>> + Send + 'static
 {
     type Item = (&'a K, &'a V);
@@ -57,8 +58,8 @@ where
 
 impl<'a, K, V, Node> DoubleEndedIterator for Iter<'a, K, V, Node>
 where
-    K: Send + Ord + Clone + 'static,
-    V: Send + Clone + 'static,
+    K: Debug + Send + Ord + Clone + 'static,
+    V: Debug + Send + Clone + 'static,
     Node: NodeLike<Pair<K, V>> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -72,16 +73,16 @@ where
 
 impl<'a, K, V, Node> FusedIterator for Iter<'a, K, V, Node>
 where
-    K: Send + Ord + Clone + 'static,
-    V: Send + Clone + 'static,
+    K: Debug + Send + Ord + Clone + 'static,
+    V: Debug + Send + Clone + 'static,
     Node: NodeLike<Pair<K, V>> + Send + 'static
 {
 }
 
 pub struct Range<'a, K, V, Node>
 where
-    K: Send + Ord + Clone + 'static,
-    V: Send + Clone + 'static,
+    K: Debug + Send + Ord + Clone + 'static,
+    V: Debug + Send + Clone + 'static,
     Node: NodeLike<Pair<K, V>> + Send + 'static
 {
     inner: super::set::Range<'a, Pair<K, V>, Node>,
@@ -89,8 +90,8 @@ where
 
 impl<'a, K, V, Node> Iterator for Range<'a, K, V, Node>
 where
-    K: Send + Ord + Clone + 'static,
-    V: Send + Clone + 'static,
+    K: Debug + Send + Ord + Clone + 'static,
+    V: Debug + Send + Clone + 'static,
     Node: NodeLike<Pair<K, V>> + Send + 'static
 {
     type Item = (&'a K, &'a V);
@@ -106,8 +107,8 @@ where
 
 impl<'a, K, V, Node> DoubleEndedIterator for Range<'a, K, V, Node>
 where
-    K: Send + Ord + Clone + 'static,
-    V: Send + Clone + 'static,
+    K: Debug + Send + Ord + Clone + 'static,
+    V: Debug + Send + Clone + 'static,
     Node: NodeLike<Pair<K, V>> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -121,15 +122,15 @@ where
 
 impl<'a, K, V, Node> FusedIterator for Range<'a, K, V, Node>
 where
-    K: Send + Ord + Clone + 'static,
-    V: Send + Clone + 'static,
+    K: Debug + Send + Ord + Clone + 'static,
+    V: Debug + Send + Clone + 'static,
     Node: NodeLike<Pair<K, V>> + Send + 'static
 {
 }
 
 impl<K, V, Node> BTreeMap<K, V, Node>
-where K: Send + Ord + Clone + 'static,
-    V: Send + Clone + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+    V: Debug + Send + Clone + 'static,
     Node: NodeLike<Pair<K, V>> + Send + 'static
 {
     /// Makes a new, empty, persistent `BTreeMap`.
@@ -435,6 +436,7 @@ where K: Send + Ord + Clone + 'static,
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::fmt::Debug;
     use std::sync::{Arc, Mutex};
     use std::thread;
     use rand::Rng;
@@ -470,13 +472,13 @@ mod tests {
     #[derive(Debug, Default)]
     struct PersistedBTreeMap<K, V>
     where
-        K: Ord + Clone,
-        V: Clone + PartialEq,
+        K: Debug + Ord + Clone,
+        V: Debug + Clone + PartialEq,
     {
         nodes: std::collections::BTreeMap<K, Vec<Pair<K, V>>>,
     }
 
-    impl<K: Ord + Clone, V: Clone + PartialEq> PersistedBTreeMap<K, V> {
+    impl<K: Debug + Ord + Clone, V: Debug + Clone + PartialEq> PersistedBTreeMap<K, V> {
         fn persist(&mut self, event: &ChangeEvent<Pair<K, V>>) {
             match event {
                 ChangeEvent::CreateNode { max_value, event_id: _ } => {

@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::sync::Arc;
 #[cfg(feature = "cdc")]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,7 +20,7 @@ pub enum Operation<T: Send + Ord, Node: NodeLike<T>> {
 }
 
 impl<T, Node> Operation<T, Node>
-where T: Ord + Send + Clone + 'static,
+where T: Debug + Ord + Send + Clone + 'static,
       Node: NodeLike<T> + Send + 'static,
 {
     pub fn commit(self,

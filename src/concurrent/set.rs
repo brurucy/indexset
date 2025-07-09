@@ -99,7 +99,7 @@ impl<T: Ord + Clone + 'static, Node: NodeLike<T>> Default for BTreeSet<T, Node> 
 }
 
 impl<T, Node> BTreeSet<T, Node>
-where T: Ord + Clone + Send,
+where T: Debug + Ord + Clone + Send,
         Node: NodeLike<T> + Send + 'static
 {
     pub fn new() -> Self {
@@ -454,7 +454,7 @@ where T: Ord + Clone + Send,
 
 impl<T> FromIterator<T> for BTreeSet<T>
 where
-    T: Ord + Clone + Send,
+    T: Debug + Ord + Clone + Send,
 {
     fn from_iter<K: IntoIterator<Item = T>>(iter: K) -> Self {
         let btree = BTreeSet::new();
@@ -468,7 +468,7 @@ where
 
 impl<T, const N: usize> From<[T; N]> for BTreeSet<T>
 where
-    T: Ord + Clone + Send,
+    T: Debug + Ord + Clone + Send,
 {
     fn from(value: [T; N]) -> Self {
         let btree: BTreeSet<T> = Default::default();
@@ -483,7 +483,7 @@ where
 
 pub struct Iter<'a, T, Node>
 where
-    T: Ord + Clone + Send + 'static,
+    T: Debug + Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     _btree: &'a BTreeSet<T, Node>,
@@ -499,7 +499,7 @@ where
 
 impl<'a, T, Node> Iter<'a, T, Node>
 where
-    T: Ord + Clone + Send + 'static,
+    T: Debug + Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     pub fn new(btree: &'a BTreeSet<T, Node>) -> Self {
@@ -549,7 +549,7 @@ where
 
 impl<'a, T, Node> Iterator for Iter<'a, T, Node>
 where
-    T: Ord + Clone + Send + 'static,
+    T: Debug + Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     type Item = &'a T;
@@ -627,7 +627,7 @@ where
 
 impl<'a, T, Node> DoubleEndedIterator for Iter<'a, T, Node>
 where
-    T: Ord + Clone + Send + 'static,
+    T: Debug + Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -698,11 +698,11 @@ where
     }
 }
 
-impl<'a, T: Ord + Clone + Send, Node: NodeLike<T> + Send + 'static> FusedIterator for Iter<'a, T, Node> {}
+impl<'a, T: Debug + Ord + Clone + Send, Node: NodeLike<T> + Send + 'static> FusedIterator for Iter<'a, T, Node> {}
 
 impl<'a, T, Node> IntoIterator for &'a BTreeSet<T, Node>
 where
-    T: Ord + Send + Clone,
+    T: Debug + Ord + Send + Clone,
     Node: NodeLike<T> + Send + 'static
 {
     type Item = &'a T;
@@ -716,7 +716,7 @@ where
 
 pub struct Range<'a, T, Node>
 where
-    T: Ord + Clone + Send + 'static,
+    T: Debug + Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     iter: Iter<'a, T, Node>,
@@ -724,7 +724,7 @@ where
 
 impl<'a, T, Node> Range<'a, T, Node>
 where
-    T: Ord + Clone + Send + 'static,
+    T: Debug + Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     pub fn new<Q, R>(btree: &'a BTreeSet<T, Node>, range: R) -> Self
@@ -827,7 +827,7 @@ where
 
 impl<'a, T, Node> Iterator for Range<'a, T, Node>
 where
-    T: Ord + Clone + Send + 'static,
+    T: Debug + Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     type Item = &'a T;
@@ -839,7 +839,7 @@ where
 
 impl<'a, T, Node> DoubleEndedIterator for Range<'a, T, Node>
 where
-    T: Ord + Clone + Send + 'static,
+    T: Debug + Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -847,11 +847,11 @@ where
     }
 }
 
-impl<'a, T, Node> FusedIterator for Range<'a, T, Node> where T: Ord + Clone + Send + 'static, Node: NodeLike<T> + Send + 'static {}
+impl<'a, T, Node> FusedIterator for Range<'a, T, Node> where T: Debug + Ord + Clone + Send + 'static, Node: NodeLike<T> + Send + 'static {}
 
 impl<'a, T, Node> BTreeSet<T, Node>
 where
-    T: Ord + Clone + Send + 'static,
+    T: Debug + Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     /// Gets an iterator that visits the elements in the `BTreeSet` in ascending
@@ -924,7 +924,7 @@ where
 
 impl<T> BTreeSet<T>
 where
-    T: Ord + Clone + Send + 'static,
+    T: Debug + Ord + Clone + Send + 'static,
 {
     pub fn remove_range<R, Q>(&self, range: R)
     where
