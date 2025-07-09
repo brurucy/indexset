@@ -172,6 +172,7 @@ where T: Ord + Clone + Send,
             // before operation `commit` and other is waiting for the node's mutex.
             drop(_global_guard);
             let mut node_guard = target_node_entry.value().lock_arc();
+            let _global_guard = self.index_lock.read();
             let mut operation = None;
             if !node_guard.need_to_split(self.node_capacity) {
                 let old_max = node_guard.max().cloned();
@@ -244,6 +245,7 @@ where T: Ord + Clone + Send,
             // this id is generated before node guard is dropped to make id's of 
             // cdc events in `commit` monotonic.
             let operation_event_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
+            drop(_global_guard);
             
             let _global_guard = self.index_lock.write();
 
@@ -296,6 +298,7 @@ where T: Ord + Clone + Send,
             {
                 drop(_global_guard);
                 let mut node_guard = target_node_entry.value().lock_arc();
+                let _global_guard = self.index_lock.read();
                 let old_max = node_guard.max().cloned();
                 let deleted = NodeLike::delete(&mut *node_guard, value);
                 if deleted.is_none() {
@@ -339,6 +342,7 @@ where T: Ord + Clone + Send,
                 // this id is generated before node guard is dropped to make id's of 
                 // cdc events in `commit` monotonic.
                 let operation_event_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
+                drop(_global_guard);
                 
                 let _global_guard = self.index_lock.write();
 
