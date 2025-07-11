@@ -5,7 +5,6 @@ use std::{borrow::Borrow, sync::Arc};
 use std::marker::PhantomData;
 #[cfg(feature = "cdc")]
 use std::sync::atomic::{AtomicU64, Ordering};
-
 use crossbeam_skiplist::SkipMap;
 use crossbeam_utils::sync::ShardedLock;
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
@@ -171,6 +170,8 @@ where T: Debug + Ord + Clone + Send,
             let mut node_guard = target_node_entry.value().lock_arc();
             
             let mut operation = None;
+            #[cfg(feature = "cdc")]
+            let mut operation_id = 0.into();
             if !node_guard.need_to_split(self.node_capacity) {
                 let old_max = node_guard.max().cloned();
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
@@ -233,9 +234,14 @@ where T: Debug + Ord + Clone + Send,
                     target_node_entry.value().clone(),
                     target_node_entry.key().clone(),
                     value.clone(),
-                ))
+                ));
+                #[cfg(feature = "cdc")]
+                {
+                    operation_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
+                }
             }
             
+
             drop(node_guard);
             drop(_global_guard);
             
@@ -244,8 +250,8 @@ where T: Debug + Ord + Clone + Send,
             return if let Ok((value, value_cdc)) = 
                 operation.unwrap().commit(
                     &self.index, 
-                    #[cfg(feature = "cdc")] 
-                    &self.event_id
+                    #[cfg(feature = "cdc")]
+                    operation_id
                 )
             {
                 cdc.extend(value_cdc);
@@ -332,6 +338,10 @@ where T: Debug + Ord + Clone + Send,
                         old_max.unwrap(),
                     ))
                 };
+
+                #[cfg(feature = "cdc")]
+                let operation_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
+                
                 drop(node_guard);
                 drop(_global_guard);
                 
@@ -341,7 +351,7 @@ where T: Debug + Ord + Clone + Send,
                     operation.unwrap().commit(
                         &self.index,
                         #[cfg(feature = "cdc")]
-                        &self.event_id
+                        operation_id
                     )
                 {
                     cdc.extend(value_cdc);

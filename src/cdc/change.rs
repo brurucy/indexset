@@ -1,6 +1,6 @@
 #[cfg(feature = "multimap")]
 use crate::core::multipair::MultiPair;
-
+#[cfg(feature = "multimap")]
 use crate::core::pair::Pair;
 
 /// Event unique identifier. 
@@ -9,6 +9,12 @@ use crate::core::pair::Pair;
 /// `event2`, `event1.id()` should be less than `event2.id()`.
 #[derive(Copy, Clone, Debug, Default, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Id(u64);
+
+impl Id {
+    pub fn inner(&self) -> u64 {
+        self.0
+    }
+}
 
 impl From<u64> for Id {
     fn from(value: u64) -> Self {
