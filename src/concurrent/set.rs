@@ -246,19 +246,41 @@ where T: Debug + Ord + Clone + Send,
             drop(_global_guard);
             
             let _global_guard = self.index_lock.write();
-
-            return if let Ok((value, value_cdc)) = 
-                operation.unwrap().commit(
-                    &self.index, 
-                    #[cfg(feature = "cdc")]
-                    operation_id
-                )
-            {
-                cdc.extend(value_cdc);
-                (value, cdc)
-            } else {
-                (None, cdc)
+            
+            let op = operation.unwrap();
+            match &op {
+                Operation::Split(_, _, _) => {
+                    if let Ok((value, value_cdc)) =
+                        op.commit(
+                            &self.index,
+                            #[cfg(feature = "cdc")]
+                            operation_id
+                        )
+                    {
+                        cdc.extend(value_cdc);
+                        return (value, cdc)
+                    } else {
+                        continue
+                    }
+                }
+                Operation::UpdateMax(_, _) => {
+                    return if let Ok((value, value_cdc)) =
+                        op.commit(
+                            &self.index,
+                            #[cfg(feature = "cdc")]
+                            operation_id
+                        )
+                    {
+                        cdc.extend(value_cdc);
+                        (value, cdc)
+                    } else {
+                        (None, cdc)
+                    }
+                }
+                Operation::MakeUnreachable(_, _) => unreachable!()
             }
+
+            
         }
     }
 
