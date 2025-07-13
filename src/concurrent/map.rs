@@ -704,6 +704,7 @@ mod tests {
             final_events.extend(thread_events)
         }
         final_events.sort_by(|ev1, ev2| ev1.id().cmp(&ev2.id()));
+        
 
         let mut mock_state = PersistedBTreeMap::default();
         for ev in final_events {

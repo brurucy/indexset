@@ -14,6 +14,10 @@ impl Id {
     pub fn inner(&self) -> u64 {
         self.0
     }
+    
+    pub fn is_next_for(&self, other: Id) -> bool {
+        self.0 == other.0 + 1
+    }
 }
 
 impl From<u64> for Id {
