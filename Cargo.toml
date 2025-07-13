@@ -2,13 +2,9 @@
 name = "wt-indexset"
 version = "0.12.4"
 edition = "2021"
-documentation = "https://docs.rs/indexset/"
 repository = "https://github.com/Handy-caT/indexset"
 license = "Apache-2.0 OR MIT"
-description = "A two-level BTree with fast iteration and indexing operations"
-keywords = ["btreemap", "btreeset", "set", "map", "order-statistic"]
-categories = ["data-structures"]
-readme = "README.md"
+description = "Fork of original indexset which is used for worktable"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
