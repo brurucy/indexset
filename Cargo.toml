@@ -1,5 +1,5 @@
 [package]
-name = "indexset"
+name = "wt-indexset"
 version = "0.12.4"
 edition = "2021"
 documentation = "https://docs.rs/indexset/"
