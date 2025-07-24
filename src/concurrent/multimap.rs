@@ -1,4 +1,5 @@
 use std::{borrow::Borrow, iter::FusedIterator, ops::RangeBounds};
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -10,16 +11,16 @@ use super::set::BTreeSet;
 
 #[derive(Debug)]
 pub struct BTreeMultiMap<K, V, Node = Vec<MultiPair<K, V>>>
-where K: Send + Ord + Clone + 'static,
-    V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+    V:  Debug + Send + Clone + PartialEq + 'static,
     Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     pub(crate) set: BTreeSet<MultiPair<K, V>, Node>,
 }
 
 impl<K, V, Node> Default for BTreeMultiMap<K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     fn default() -> Self {
@@ -30,16 +31,16 @@ where K: Send + Ord + Clone + 'static,
 }
 
 pub struct Iter<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     inner: super::set::Iter<'a, MultiPair<K, V>, Node>,
 }
 
 impl<'a, K, V, Node> Iterator for Iter<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
 
@@ -55,8 +56,8 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> DoubleEndedIterator for Iter<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -69,14 +70,14 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> FusedIterator for Iter<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {}
 
 pub struct RawRange<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V: Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V: Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 
 {
@@ -84,8 +85,8 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> Iterator for RawRange<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     type Item = (&'a K, &'a u64, &'a V);
@@ -100,8 +101,8 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> DoubleEndedIterator for RawRange<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -114,23 +115,23 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> FusedIterator for RawRange<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {}
 
 
 pub struct Range<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     inner: RawRange<'a, K, V, Node>,
 }
 
 impl<'a, K, V, Node> Iterator for Range<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     type Item = (&'a K, &'a V);
@@ -145,8 +146,8 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> DoubleEndedIterator for Range<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -159,15 +160,15 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> FusedIterator for Range<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
 }
 
 impl<K, V, Node> BTreeMultiMap<K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     /// Makes a new, empty, persistent `BTreeMultiMap`.
