@@ -3,8 +3,7 @@ use std::iter::FusedIterator;
 use std::ops::RangeBounds;
 use std::{borrow::Borrow, sync::Arc};
 use std::marker::PhantomData;
-#[cfg(feature = "cdc")]
-use std::sync::atomic::{AtomicU64, Ordering};
+
 use crossbeam_skiplist::SkipMap;
 use crossbeam_utils::sync::ShardedLock;
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
@@ -80,8 +79,6 @@ where
     pub(crate) index: SkipMap<T, Arc<Mutex<Node>>>,
     index_lock: ShardedLock<()>,
     node_capacity: usize,
-    #[cfg(feature = "cdc")]
-    event_id: AtomicU64,
 }
 impl<T: Ord + Clone + 'static, Node: NodeLike<T>> Default for BTreeSet<T, Node> {
     fn default() -> Self {
@@ -91,14 +88,12 @@ impl<T: Ord + Clone + 'static, Node: NodeLike<T>> Default for BTreeSet<T, Node> 
             index,
             index_lock: ShardedLock::new(()),
             node_capacity: DEFAULT_INNER_SIZE,
-            #[cfg(feature = "cdc")]
-            event_id: AtomicU64::new(0),
         }
     }
 }
 
 impl<T, Node> BTreeSet<T, Node>
-where T: Debug + Ord + Clone + Send,
+where T: Ord + Clone + Send,
         Node: NodeLike<T> + Send + 'static
 {
     pub fn new() -> Self {
@@ -118,8 +113,6 @@ where T: Debug + Ord + Clone + Send,
             index: SkipMap::new(),
             index_lock: ShardedLock::new(()),
             node_capacity,
-            #[cfg(feature = "cdc")]
-            event_id: AtomicU64::new(0),
         }
     }
     pub fn attach_node(&self, node: Node) {
@@ -149,9 +142,6 @@ where T: Debug + Ord + Clone + Send,
                             #[cfg(feature = "cdc")]
                             {
                                 let node_insertion = ChangeEvent::CreateNode {
-                                    // is correct as index is locked and current thread is the only that can 
-                                    // fetch event_id.
-                                    event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
                                     max_value: value.clone(),
                                 };
                                 cdc.push(node_insertion);
@@ -166,32 +156,26 @@ where T: Debug + Ord + Clone + Send,
                     }
                 }
             };
-            
+
             let mut node_guard = target_node_entry.value().lock_arc();
-            
             let mut operation = None;
-            #[cfg(feature = "cdc")]
-            let mut operation_id = 0.into();
             if !node_guard.need_to_split(self.node_capacity) {
                 let old_max = node_guard.max().cloned();
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {
-                    #[cfg(feature = "cdc")]
-                    {
-                        let node_element_insertion = ChangeEvent::InsertAt {
-                            // is correct as node is locked and current thread is the only that can 
-                            // fetch event_id, so events for this node will have monotonic id's.
-                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                            max_value: old_max
-                                .clone()
-                                .expect("Max value should exist as Node is not empty"),
-                            value: value.clone(),
-                            index: idx,
-                        };
-                        cdc.push(node_element_insertion);
-                    }
-                    
                     if node_guard.max().cloned() == old_max {
+                        #[cfg(feature = "cdc")]
+                        {
+                            let node_element_insertion = ChangeEvent::InsertAt {
+                                max_value: old_max
+                                    .clone()
+                                    .expect("Max value should exist as Node is not empty"),
+                                value: value.clone(),
+                                index: idx,
+                            };
+                            cdc.push(node_element_insertion);
+                        }
+
                         return (None, cdc);
                     }
 
@@ -205,9 +189,6 @@ where T: Debug + Ord + Clone + Send,
                     #[cfg(feature = "cdc")]
                     {
                         let node_element_removal = ChangeEvent::RemoveAt {
-                            // is correct as node is locked and current thread is the only that can 
-                            // fetch event_id, so events for this node will have monotonic id's.
-                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
                             max_value: old_max
                                 .clone()
                                 .expect("Max value should exist as Node is not empty"),
@@ -215,8 +196,6 @@ where T: Debug + Ord + Clone + Send,
                             index: idx,
                         };
                         let node_element_insertion = ChangeEvent::InsertAt {
-                            // same as for previos.
-                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
                             max_value: old_max
                                 .clone()
                                 .expect("Max value should exist as Node is not empty"),
@@ -234,19 +213,13 @@ where T: Debug + Ord + Clone + Send,
                     target_node_entry.value().clone(),
                     target_node_entry.key().clone(),
                     value.clone(),
-                ));
-                #[cfg(feature = "cdc")]
-                {
-                    operation_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
-                }
+                ))
             }
-            
 
-            drop(node_guard);
             drop(_global_guard);
-            
+            drop(node_guard);
             let _global_guard = self.index_lock.write();
-            
+
             let op = operation.unwrap();
             match &op {
                 Operation::Split(_, _, _) => {
@@ -279,8 +252,6 @@ where T: Debug + Ord + Clone + Send,
                 }
                 Operation::MakeUnreachable(_, _) => unreachable!()
             }
-
-            
         }
     }
 
@@ -318,7 +289,7 @@ where T: Debug + Ord + Clone + Send,
     {
         loop {
             let mut cdc = vec![];
-            let _global_guard = self.index_lock.read();
+            let mut _global_guard = self.index_lock.read();
             if let Some(target_node_entry) =
                 self.index.lower_bound(std::ops::Bound::Included(&value))
             {
@@ -331,22 +302,18 @@ where T: Debug + Ord + Clone + Send,
                 let (deleted, idx) = deleted.expect("should be ok as checked before");
 
                 let operation = if node_guard.len() > 0 {
-                    #[cfg(feature = "cdc")]
-                    {
-                        let node_element_removal = ChangeEvent::RemoveAt {
-                            // is correct as node is locked and current thread is the only that can 
-                            // fetch event_id, so events for this node will have monotonic id's.
-                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                            max_value: old_max
-                                .clone()
-                                .expect("Max value should exist as Node is not empty"),
-                            value: deleted.clone(),
-                            index: idx,
-                        };
-                        cdc.push(node_element_removal);
-                    }
-                    
                     if old_max.as_ref() == node_guard.max() {
+                        #[cfg(feature = "cdc")]
+                        {
+                            let node_element_removal = ChangeEvent::RemoveAt {
+                                max_value: old_max
+                                    .expect("Max value should exist as Node is not empty"),
+                                value: deleted.clone(),
+                                index: idx,
+                            };
+                            cdc.push(node_element_removal);
+                        }
+
                         return (Some(deleted), cdc);
                     }
 
@@ -361,26 +328,17 @@ where T: Debug + Ord + Clone + Send,
                     ))
                 };
 
-                #[cfg(feature = "cdc")]
-                let operation_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
-                
-                drop(node_guard);
                 drop(_global_guard);
-                
+                drop(node_guard);
                 let _global_guard = self.index_lock.write();
 
-                return if let Ok((_, value_cdc)) =
-                    operation.unwrap().commit(
-                        &self.index,
-                        #[cfg(feature = "cdc")]
-                        operation_id
-                    )
-                {
-                    cdc.extend(value_cdc);
-                    (Some(deleted), cdc)
-                } else {
-                    (Some(deleted), cdc)
+                if let Ok((_, cdc)) = operation.unwrap().commit(&self.index) {
+                    return (Some(deleted), cdc);
                 }
+
+                drop(_global_guard);
+
+                continue;
             }
 
             break;
@@ -495,7 +453,7 @@ where T: Debug + Ord + Clone + Send,
 
 impl<T> FromIterator<T> for BTreeSet<T>
 where
-    T: Debug + Ord + Clone + Send,
+    T: Ord + Clone + Send,
 {
     fn from_iter<K: IntoIterator<Item = T>>(iter: K) -> Self {
         let btree = BTreeSet::new();
@@ -509,7 +467,7 @@ where
 
 impl<T, const N: usize> From<[T; N]> for BTreeSet<T>
 where
-    T: Debug + Ord + Clone + Send,
+    T: Ord + Clone + Send,
 {
     fn from(value: [T; N]) -> Self {
         let btree: BTreeSet<T> = Default::default();
@@ -524,7 +482,7 @@ where
 
 pub struct Iter<'a, T, Node>
 where
-    T: Debug + Ord + Clone + Send + 'static,
+    T: Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     _btree: &'a BTreeSet<T, Node>,
@@ -540,7 +498,7 @@ where
 
 impl<'a, T, Node> Iter<'a, T, Node>
 where
-    T: Debug + Ord + Clone + Send + 'static,
+    T: Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     pub fn new(btree: &'a BTreeSet<T, Node>) -> Self {
@@ -590,7 +548,7 @@ where
 
 impl<'a, T, Node> Iterator for Iter<'a, T, Node>
 where
-    T: Debug + Ord + Clone + Send + 'static,
+    T: Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     type Item = &'a T;
@@ -668,7 +626,7 @@ where
 
 impl<'a, T, Node> DoubleEndedIterator for Iter<'a, T, Node>
 where
-    T: Debug + Ord + Clone + Send + 'static,
+    T: Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -739,11 +697,11 @@ where
     }
 }
 
-impl<'a, T: Debug + Ord + Clone + Send, Node: NodeLike<T> + Send + 'static> FusedIterator for Iter<'a, T, Node> {}
+impl<'a, T: Ord + Clone + Send, Node: NodeLike<T> + Send + 'static> FusedIterator for Iter<'a, T, Node> {}
 
 impl<'a, T, Node> IntoIterator for &'a BTreeSet<T, Node>
 where
-    T: Debug + Ord + Send + Clone,
+    T: Ord + Send + Clone,
     Node: NodeLike<T> + Send + 'static
 {
     type Item = &'a T;
@@ -757,7 +715,7 @@ where
 
 pub struct Range<'a, T, Node>
 where
-    T: Debug + Ord + Clone + Send + 'static,
+    T: Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     iter: Iter<'a, T, Node>,
@@ -765,7 +723,7 @@ where
 
 impl<'a, T, Node> Range<'a, T, Node>
 where
-    T: Debug + Ord + Clone + Send + 'static,
+    T: Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     pub fn new<Q, R>(btree: &'a BTreeSet<T, Node>, range: R) -> Self
@@ -868,7 +826,7 @@ where
 
 impl<'a, T, Node> Iterator for Range<'a, T, Node>
 where
-    T: Debug + Ord + Clone + Send + 'static,
+    T: Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     type Item = &'a T;
@@ -880,7 +838,7 @@ where
 
 impl<'a, T, Node> DoubleEndedIterator for Range<'a, T, Node>
 where
-    T: Debug + Ord + Clone + Send + 'static,
+    T: Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -888,11 +846,11 @@ where
     }
 }
 
-impl<'a, T, Node> FusedIterator for Range<'a, T, Node> where T: Debug + Ord + Clone + Send + 'static, Node: NodeLike<T> + Send + 'static {}
+impl<'a, T, Node> FusedIterator for Range<'a, T, Node> where T: Ord + Clone + Send + 'static, Node: NodeLike<T> + Send + 'static {}
 
 impl<'a, T, Node> BTreeSet<T, Node>
 where
-    T: Debug + Ord + Clone + Send + 'static,
+    T: Ord + Clone + Send + 'static,
     Node: NodeLike<T> + Send + 'static
 {
     /// Gets an iterator that visits the elements in the `BTreeSet` in ascending
@@ -965,7 +923,7 @@ where
 
 impl<T> BTreeSet<T>
 where
-    T: Debug + Ord + Clone + Send + 'static,
+    T: Ord + Clone + Send + 'static,
 {
     pub fn remove_range<R, Q>(&self, range: R)
     where
