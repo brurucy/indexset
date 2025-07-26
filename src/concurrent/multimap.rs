@@ -1,4 +1,5 @@
 use std::{borrow::Borrow, iter::FusedIterator, ops::RangeBounds};
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -10,16 +11,16 @@ use super::set::BTreeSet;
 
 #[derive(Debug)]
 pub struct BTreeMultiMap<K, V, Node = Vec<MultiPair<K, V>>>
-where K: Send + Ord + Clone + 'static,
-    V:  Send + Clone + PartialEq + 'static,
-    Node: NodeLike<MultiPair<K, V>> + Send + 'static
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
+      Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     pub(crate) set: BTreeSet<MultiPair<K, V>, Node>,
 }
 
 impl<K, V, Node> Default for BTreeMultiMap<K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     fn default() -> Self {
@@ -30,16 +31,16 @@ where K: Send + Ord + Clone + 'static,
 }
 
 pub struct Iter<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     inner: super::set::Iter<'a, MultiPair<K, V>, Node>,
 }
 
 impl<'a, K, V, Node> Iterator for Iter<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
 
@@ -55,8 +56,8 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> DoubleEndedIterator for Iter<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -69,14 +70,14 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> FusedIterator for Iter<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {}
 
 pub struct RawRange<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V: Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V: Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 
 {
@@ -84,8 +85,8 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> Iterator for RawRange<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     type Item = (&'a K, &'a u64, &'a V);
@@ -100,8 +101,8 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> DoubleEndedIterator for RawRange<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -114,23 +115,23 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> FusedIterator for RawRange<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {}
 
 
 pub struct Range<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     inner: RawRange<'a, K, V, Node>,
 }
 
 impl<'a, K, V, Node> Iterator for Range<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     type Item = (&'a K, &'a V);
@@ -145,8 +146,8 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> DoubleEndedIterator for Range<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -159,15 +160,15 @@ where K: Send + Ord + Clone + 'static,
 }
 
 impl<'a, K, V, Node> FusedIterator for Range<'a, K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
 }
 
 impl<K, V, Node> BTreeMultiMap<K, V, Node>
-where K: Send + Ord + Clone + 'static,
-      V:  Send + Clone + PartialEq + 'static,
+where K: Debug + Send + Ord + Clone + 'static,
+      V:  Debug + Send + Clone + PartialEq + 'static,
       Node: NodeLike<MultiPair<K, V>> + Send + 'static
 {
     /// Makes a new, empty, persistent `BTreeMultiMap`.
@@ -177,7 +178,7 @@ where K: Send + Ord + Clone + 'static,
     /// Basic usage:
     ///
     /// ```
-    /// use indexset::concurrent::multimap::BTreeMultiMap;
+    /// use wt_indexset::concurrent::multimap::BTreeMultiMap;
     ///
     /// let mut map = BTreeMultiMap::<usize, &str>::new();
     ///
@@ -195,7 +196,7 @@ where K: Send + Ord + Clone + 'static,
     /// # Examples
     ///
     /// ```
-    /// use indexset::concurrent::multimap::BTreeMultiMap;
+    /// use wt_indexset::concurrent::multimap::BTreeMultiMap;
     ///
     /// let map = BTreeMultiMap::<i32, i32>::with_maximum_node_size(128);
     pub fn with_maximum_node_size(node_capacity: usize) -> Self {
@@ -224,7 +225,7 @@ where K: Send + Ord + Clone + 'static,
     /// Basic usage:
     ///
     /// ```
-    /// use indexset::concurrent::multimap::BTreeMultiMap;
+    /// use wt_indexset::concurrent::multimap::BTreeMultiMap;
     ///
     /// let mut map = BTreeMultiMap::<usize, &str>::new();
     /// map.insert(1, "a");
@@ -262,15 +263,15 @@ where K: Send + Ord + Clone + 'static,
     /// Constructs a double-ended iterator over all key value pairs with the given key in the map.
     ///
     /// ```
-    /// use indexset::concurrent::multimap::BTreeMultiMap;
-    /// use indexset::BTreeSet;
+    /// use wt_indexset::concurrent::multimap::BTreeMultiMap;
+    /// use wt_indexset::BTreeSet;
     ///
     /// let mut map = BTreeMultiMap::<usize, &str>::new();
-    /// 
+    ///
     /// map.insert(1, "b");
     /// map.insert(1, "a");
     /// map.insert(2, "c");
-    /// 
+    ///
     /// let all_with_key = map.get(&1).collect::<BTreeSet<_>>();
     /// assert_eq!(all_with_key.len(), 2);
     /// assert_eq!(all_with_key, vec![(&1, &"a"), (&1, &"b")].into_iter().collect::<BTreeSet<_>>());
@@ -287,13 +288,13 @@ where K: Send + Ord + Clone + 'static,
         }
     }
     /// Inserts a key-value pair into the multi map.
-    /// 
+    ///
     /// # Examples
     ///
     /// Basic usage:
     ///
     /// ```
-    /// use indexset::concurrent::multimap::BTreeMultiMap;
+    /// use wt_indexset::concurrent::multimap::BTreeMultiMap;
     ///
     /// let mut map = BTreeMultiMap::<usize, &str>::new();
     /// assert_eq!(map.insert(37, "a"), None);
@@ -332,16 +333,16 @@ where K: Send + Ord + Clone + 'static,
     /// Basic usage:
     ///
     /// ```
-    /// use indexset::concurrent::multimap::BTreeMultiMap;
+    /// use wt_indexset::concurrent::multimap::BTreeMultiMap;
     ///
     /// let map = BTreeMultiMap::<usize, &str>::new();
     /// map.insert(1, "b");
     /// map.insert(1, "a");
-    /// 
+    ///
     /// let first_removed = map.remove_some(&1).unwrap();
     /// let second_removed = map.remove_some(&1).unwrap();
     /// let removals = vec![first_removed, second_removed];
-    /// 
+    ///
     /// assert!(removals.contains(&(1, "a")));
     /// assert!(removals.contains(&(1, "b")));
     /// ```
@@ -376,12 +377,12 @@ where K: Send + Ord + Clone + 'static,
     /// Basic usage:
     ///
     /// ```
-    /// use indexset::concurrent::multimap::BTreeMultiMap;
+    /// use wt_indexset::concurrent::multimap::BTreeMultiMap;
     ///
     /// let map = BTreeMultiMap::<usize, &str>::new();
     /// map.insert(1, "b");
     /// map.insert(1, "a");
-    /// 
+    ///
     /// assert_eq!(map.remove(&1, &"a"), Some((1, "a")));
     /// assert_eq!(map.remove(&1, &"b"), Some((1, "b")));
     /// ```
@@ -389,7 +390,7 @@ where K: Send + Ord + Clone + 'static,
     {
         let discriminant_to_remove = self.raw_get(&key).find(|pair| pair.2 == value);
         if let Some(discriminant_to_remove) = discriminant_to_remove {
-            let pair_to_remove = MultiPair { key: discriminant_to_remove.0.clone(), value: discriminant_to_remove.2.clone(), discriminator: *discriminant_to_remove.1 }; 
+            let pair_to_remove = MultiPair { key: discriminant_to_remove.0.clone(), value: discriminant_to_remove.2.clone(), discriminator: *discriminant_to_remove.1 };
 
             return self.set.remove(&pair_to_remove).and_then(|pair| Some((pair.key, pair.value)));
         }
@@ -419,7 +420,7 @@ where K: Send + Ord + Clone + 'static,
     /// Basic usage:
     ///
     /// ```
-    /// use indexset::concurrent::multimap::BTreeMultiMap;
+    /// use wt_indexset::concurrent::multimap::BTreeMultiMap;
     ///
     /// let mut a = BTreeMultiMap::<usize, &str>::new();
     /// assert_eq!(a.len(), 0);
@@ -439,7 +440,7 @@ where K: Send + Ord + Clone + 'static,
     /// Basic usage:
     ///
     /// ```
-    /// use indexset::concurrent::multimap::BTreeMultiMap;
+    /// use wt_indexset::concurrent::multimap::BTreeMultiMap;
     ///
     /// let mut a = BTreeMultiMap::<usize, &str>::with_maximum_node_size(8);
     ///
@@ -460,7 +461,7 @@ where K: Send + Ord + Clone + 'static,
     /// Basic usage:
     ///
     /// ```
-    /// use indexset::concurrent::map::BTreeMap;
+    /// use wt_indexset::concurrent::map::BTreeMap;
     ///
     /// let mut a = BTreeMap::<usize, &str>::with_maximum_node_size(16);
     ///
@@ -479,7 +480,7 @@ where K: Send + Ord + Clone + 'static,
     /// Basic usage:
     ///
     /// ```
-    /// use indexset::concurrent::multimap::BTreeMultiMap;
+    /// use wt_indexset::concurrent::multimap::BTreeMultiMap;
     ///
     /// let mut map = BTreeMultiMap::<usize, &str>::new();
     /// map.insert(3, "c");
@@ -515,7 +516,7 @@ where K: Send + Ord + Clone + 'static,
     /// Basic usage:
     ///
     /// ```
-    /// use indexset::concurrent::multimap::BTreeMultiMap;
+    /// use wt_indexset::concurrent::multimap::BTreeMultiMap;
     /// use std::ops::Bound::Included;
     ///
     /// let mut map = BTreeMultiMap::<usize, &str>::new();
@@ -575,8 +576,8 @@ mod tests {
             (&4, &"f"),
             (&4, &"g"),
         ]
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+            .into_iter()
+            .collect::<BTreeSet<_>>();
 
         let all_pairs = multi_map.iter().collect::<BTreeSet<_>>();
         assert_eq!(all_pairs, expected_pairs);
@@ -605,7 +606,7 @@ mod tests {
     fn test_range_edge_cast() {
         let maximum_node_size = 3;
         let map = BTreeMultiMap::<usize, &str>::with_maximum_node_size(maximum_node_size);
-        
+
         map.insert(1usize, "a");
         map.insert(1usize, "b");
         map.insert(2usize, "c");
@@ -626,7 +627,7 @@ mod tests {
     fn test_range_works_as_expected() {
         let maximum_node_size = 3;
         let map = BTreeMultiMap::<usize, &str>::with_maximum_node_size(maximum_node_size);
-        
+
         map.insert(1usize, "a");
         map.insert(1usize, "b");
         map.insert(2usize, "c");
@@ -662,7 +663,7 @@ mod tests {
     fn test_get_works_as_expected() {
         let maximum_node_size = 10;
         let map = BTreeMultiMap::<usize, &str>::with_maximum_node_size(maximum_node_size);
-        
+
         map.insert(1usize, "a");
         map.insert(1usize, "b");
         map.insert(2usize, "c");

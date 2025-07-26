@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use crossbeam_skiplist::SkipMap;
@@ -5,6 +6,8 @@ use parking_lot::Mutex;
 
 use crate::cdc::change::ChangeEvent;
 use crate::core::node::NodeLike;
+#[cfg(feature = "cdc")]
+use crate::cdc::change::Id;
 
 type OldVersion<Node> = Arc<Mutex<Node>>;
 type CurrentVersion<Node> = Arc<Mutex<Node>>;
@@ -16,23 +19,29 @@ pub enum Operation<T: Send + Ord, Node: NodeLike<T>> {
 }
 
 impl<T, Node> Operation<T, Node>
-where T: Ord + Send + Clone + 'static,
+where T: Debug + Ord + Send + Clone + 'static,
       Node: NodeLike<T> + Send + 'static,
 {
-    pub fn commit(self, index: &SkipMap<T, Arc<Mutex<Node>>>) -> Result<(Option<T>, Vec<ChangeEvent<T>>), ()> {
+    pub fn commit(self,
+                  index: &SkipMap<T, Arc<Mutex<Node>>>,
+                  #[cfg(feature = "cdc")] event_id: Id,
+    ) -> Result<(Option<T>, Vec<ChangeEvent<T>>), ()> {
         match self {
-            Operation::Split(old_node, old_max, value) => {
+            Operation::Split(old_node,  old_max, value) => {
                 let mut guard = old_node.lock_arc();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &old_node) {
                         let mut cdc = vec![];
+                        #[cfg(feature = "cdc")]
+                        let max_value = guard.max().expect("node should be non empty if split").clone();
                         entry.remove();
                         let mut new_vec = guard.halve();
 
                         #[cfg(feature = "cdc")]
                         {
                             let node_split = ChangeEvent::SplitNode {
-                                max_value: old_max.clone(),
+                                event_id,
+                                max_value,
                                 split_index: guard.len(),
                             };
                             cdc.push(node_split);
@@ -49,6 +58,7 @@ where T: Ord + Send + Clone + 'static,
                                     #[cfg(feature = "cdc")]
                                     {
                                         let value_insertion = ChangeEvent::RemoveAt {
+                                            event_id,
                                             max_value: max.clone(),
                                             index: idx,
                                             value: old_value.clone().unwrap(),
@@ -59,6 +69,7 @@ where T: Ord + Send + Clone + 'static,
                                 #[cfg(feature = "cdc")]
                                 {
                                     let value_insertion = ChangeEvent::InsertAt {
+                                        event_id,
                                         max_value: max.clone(),
                                         index: idx,
                                         value: value.clone(),
@@ -83,6 +94,7 @@ where T: Ord + Send + Clone + 'static,
                                     #[cfg(feature = "cdc")]
                                     {
                                         let value_insertion = ChangeEvent::RemoveAt {
+                                            event_id,
                                             max_value: old_max.clone(),
                                             index: idx,
                                             value: old_value.clone().unwrap(),
@@ -93,6 +105,7 @@ where T: Ord + Send + Clone + 'static,
                                 #[cfg(feature = "cdc")]
                                 {
                                     let value_insertion = ChangeEvent::InsertAt {
+                                        event_id,
                                         max_value: old_max.clone(),
                                         index: idx,
                                         value: value.clone(),
@@ -116,38 +129,18 @@ where T: Ord + Send + Clone + 'static,
                 let new_max = guard.max().unwrap();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &node) {
-                        let mut cdc = vec![];
+                        let cdc = vec![];
                         return Ok(match new_max.cmp(&old_max) {
                             std::cmp::Ordering::Equal => (None, cdc),
                             std::cmp::Ordering::Greater => {
                                 index.remove(&old_max);
                                 index.insert(new_max.clone(), node.clone());
 
-                                #[cfg(feature = "cdc")]
-                                {
-                                    let update_max = ChangeEvent::InsertAt {
-                                        max_value: old_max,
-                                        value: new_max.clone(),
-                                        index: guard.len() - 1,
-                                    };
-                                    cdc.push(update_max);
-                                }
-
                                 (None, cdc)
                             }
                             std::cmp::Ordering::Less => {
                                 index.remove(&old_max);
                                 index.insert(new_max.clone(), node.clone());
-
-                                #[cfg(feature = "cdc")]
-                                {
-                                    let update_max = ChangeEvent::RemoveAt {
-                                        max_value: old_max.clone(),
-                                        value: old_max,
-                                        index: guard.len(),
-                                    };
-                                    cdc.push(update_max);
-                                }
 
                                 (None, cdc)
                             }
@@ -169,6 +162,7 @@ where T: Ord + Send + Clone + 'static,
                                 #[cfg(feature = "cdc")]
                                 {
                                     let node_removal = ChangeEvent::RemoveNode {
+                                        event_id,
                                         max_value: old_max.clone(),
                                     };
                                     cdc.push(node_removal);
