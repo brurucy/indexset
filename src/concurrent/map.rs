@@ -256,6 +256,10 @@ where K: Debug + Send + Ord + Clone + 'static,
             .0
             .and_then(|pair| Some(pair.value))
     }
+    pub fn checked_insert(&self, key: K, value: V) -> Option<()> {
+        let new_entry = Pair { key, value };
+        self.set.put_cdc_checked(new_entry).ok().map(|_| ())
+    }
     /// Inserts a key-value pair into the map and returns old value (if it was
     /// already in set) with [`ChangeEvent`]'s that describes this insert
     /// action.
@@ -265,6 +269,10 @@ where K: Debug + Send + Ord + Clone + 'static,
         let (old_value, cdc) = self.set.put_cdc(new_entry);
 
         (old_value.and_then(|pair| Some(pair.value)), cdc)
+    }
+    pub fn checked_insert_cdc(&self, key: K, value: V) -> Option<Vec<ChangeEvent<Pair<K, V>>>> {
+        let new_entry = Pair { key, value };
+        self.set.put_cdc_checked(new_entry).ok().map(|(_, evs)| evs)
     }
     /// Removes a key from the map, returning the key and the value if the key
     /// was previously in the map.
