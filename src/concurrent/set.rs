@@ -424,6 +424,7 @@ where T: Debug + Ord + Clone + Send,
         T: Borrow<Q>,
         Q: Ord + ?Sized,
     {
+        let _global_guard = self.index_lock.read();
         match self.index.lower_bound(std::ops::Bound::Included(&value)) {
             Some(entry) => Some(entry.value().clone()),
             None => self
