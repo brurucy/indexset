@@ -395,7 +395,7 @@ where K: Debug + Send + Ord + Clone + 'static,
     /// let (first_key, first_value) = map.iter().next().unwrap();
     /// assert_eq!((*first_key, *first_value), (1, "a"));
     /// ```
-    pub fn iter(&self) -> Iter<K, V, Node> {
+    pub fn iter(&self) -> Iter<'_, K, V, Node> {
         Iter {
             inner: self.set.iter(),
         }
@@ -429,7 +429,7 @@ where K: Debug + Send + Ord + Clone + 'static,
     /// }
     /// assert_eq!(Some((&5, &"b")), map.range(4..).next());
     /// ```
-    pub fn range<Q, R>(&self, range: R) -> Range<K, V, Node>
+    pub fn range<Q, R>(&self, range: R) -> Range<'_, K, V, Node>
     where
         Pair<K, V>: Borrow<Q>,
         Q: Ord + ?Sized,

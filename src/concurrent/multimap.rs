@@ -240,7 +240,7 @@ where K: Debug + Send + Ord + Clone + 'static,
     {
         self.set.contains(key)
     }
-    fn _range<Q, R>(&self, range: R) -> Range<K, V,Node>
+    fn _range<Q, R>(&self, range: R) -> Range<'_, K, V,Node>
     where
         MultiPair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
@@ -252,7 +252,7 @@ where K: Debug + Send + Ord + Clone + 'static,
             },
         }
     }
-    fn raw_get(&self, key: &K) -> RawRange<K, V, Node> {
+    fn raw_get(&self, key: &K) -> RawRange<'_, K, V, Node> {
         let infimum = MultiPair::with_infimum(key.clone());
         let supremum = MultiPair::with_supremum(key.clone());
 
@@ -276,7 +276,7 @@ where K: Debug + Send + Ord + Clone + 'static,
     /// assert_eq!(all_with_key.len(), 2);
     /// assert_eq!(all_with_key, vec![(&1, &"a"), (&1, &"b")].into_iter().collect::<BTreeSet<_>>());
     /// ```
-    pub fn get(&self, key: &K) -> Range<K, V, Node>
+    pub fn get(&self, key: &K) -> Range<'_, K, V, Node>
     {
         let infimum = MultiPair::with_infimum(key.clone());
         let supremum = MultiPair::with_supremum(key.clone());
@@ -494,7 +494,7 @@ where K: Debug + Send + Ord + Clone + 'static,
     /// let (first_key, first_value) = map.iter().next().unwrap();
     /// assert_eq!((*first_key, *first_value), (1, "a"));
     /// ```
-    pub fn iter(&self) -> Iter<K, V, Node> {
+    pub fn iter(&self) -> Iter<'_, K, V, Node> {
         Iter {
             inner: self.set.iter(),
         }
@@ -528,7 +528,7 @@ where K: Debug + Send + Ord + Clone + 'static,
     /// }
     /// assert_eq!(Some((&5, &"b")), map.range(4..).next());
     /// ```
-    pub fn range<R>(&self, range: R) -> Range<K, V, Node>
+    pub fn range<R>(&self, range: R) -> Range<'_, K, V, Node>
     where
         R: RangeBounds<K>,
     {
