@@ -808,7 +808,7 @@ impl<T: Ord> BTreeSet<T> {
     /// assert_eq!(set_iter.next(), Some(&3));
     /// assert_eq!(set_iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter<T> {
+    pub fn iter(&self) -> Iter<'_, T> {
         Iter::new(self)
     }
     /// Visits the elements representing the union,
@@ -2340,7 +2340,7 @@ where
     /// let (first_key, first_value) = map.iter().next().unwrap();
     /// assert_eq!((*first_key, *first_value), (1, "a"));
     /// ```
-    pub fn iter(&self) -> IterMap<K, V> {
+    pub fn iter(&self) -> IterMap<'_,K, V> {
         IterMap {
             inner: self.set.iter(),
         }
@@ -2367,7 +2367,7 @@ where
     ///     }
     /// }
     /// ```
-    pub fn iter_mut(&mut self) -> IterMut<K, V> {
+    pub fn iter_mut(&mut self) -> IterMut<'_,K, V> {
         let last_node_idx = self.set.inner.len() - 1;
         let len = self.set.len();
         let mut inner = self.set.inner.iter_mut();
@@ -2412,7 +2412,7 @@ where
     /// let keys: Vec<_> = a.keys().cloned().collect();
     /// assert_eq!(keys, [1, 2]);
     /// ```
-    pub fn keys(&self) -> Keys<K, V> {
+    pub fn keys(&self) -> Keys<'_, K, V> {
         Keys {
             inner: self.set.iter(),
         }
@@ -2594,7 +2594,7 @@ where
     /// }
     /// assert_eq!(Some((&5, &"b")), map.range(4..).next());
     /// ```
-    pub fn range<Q, R>(&self, range: R) -> RangeMap<K, V>
+    pub fn range<Q, R>(&self, range: R) -> RangeMap<'_, K, V>
     where
         Q: Ord + ?Sized,
         K: Borrow<Q>,
@@ -2606,7 +2606,7 @@ where
             inner: self.set.range_idx(start_idx..=end_idx),
         }
     }
-    pub fn range_idx<R>(&self, range: R) -> RangeMap<K, V>
+    pub fn range_idx<R>(&self, range: R) -> RangeMap<'_, K, V>
     where
         R: RangeBounds<usize>,
     {
@@ -2673,7 +2673,7 @@ where
     ///     println!("{name} => {balance}");
     /// }
     /// ```
-    pub fn range_mut<Q, R>(&mut self, range: R) -> RangeMut<K, V>
+    pub fn range_mut<Q, R>(&mut self, range: R) -> RangeMut<'_, K, V>
     where
         Q: Ord + ?Sized,
         K: Borrow<Q>,
@@ -2683,7 +2683,7 @@ where
 
         self.range_mut_idx(start_idx..=end_idx)
     }
-    pub fn range_mut_idx<R>(&mut self, range: R) -> RangeMut<K, V>
+    pub fn range_mut_idx<R>(&mut self, range: R) -> RangeMut<'_, K, V>
     where
         R: RangeBounds<usize>,
     {
@@ -2900,7 +2900,7 @@ where
     /// let values: Vec<&str> = a.values().cloned().collect();
     /// assert_eq!(values, ["hello", "goodbye"]);
     /// ```
-    pub fn values(&self) -> Values<K, V> {
+    pub fn values(&self) -> Values<'_, K, V> {
         Values {
             inner: self.set.iter(),
         }
@@ -2926,7 +2926,7 @@ where
     /// assert_eq!(values, [String::from("hello!"),
     ///                     String::from("goodbye!")]);
     /// ```
-    pub fn values_mut(&mut self) -> ValuesMut<K, V> {
+    pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
         ValuesMut {
             inner: self.iter_mut(),
         }
