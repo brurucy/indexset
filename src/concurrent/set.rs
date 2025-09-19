@@ -260,30 +260,70 @@ where T: Debug + Ord + Clone + Send,
     pub(crate) fn put_cdc(&self, value: T) -> (Option<T>, Vec<ChangeEvent<T>>) { 
         match self.put_cdc_checked(value.clone()) { 
             Ok(res) => res,
-            Err((mut node_guard, idx, old_max)) => {
+            Err((mut node_guard, idx, max)) => {
                 let mut cdc = vec![];
                 #[cfg(feature = "cdc")]
                 {
-                    let node_element_removal = ChangeEvent::RemoveAt {
-                        // is correct as node is locked and current thread is the only that can 
-                        // fetch event_id, so events for this node will have monotonic id's.
-                        event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                        max_value: old_max
-                            .clone(),
-                        value: value.clone(),
-                        index: idx,
-                    };
-                    let node_element_insertion = ChangeEvent::InsertAt {
-                        // same as for previos.
-                        event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                        max_value: old_max
-                            .clone(),
-                        value: value.clone(),
-                        index: idx,
-                    };
-                    cdc.push(node_element_removal);
-                    cdc.push(node_element_insertion);
+                    if node_guard.len() == 1 {
+                        let node_removal = ChangeEvent::RemoveNode {
+                            // is correct as node is locked and current thread is the only that can
+                            // fetch event_id, so events for this node will have monotonic id's.
+                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            max_value: max
+                                .clone(),
+                        };
+                        let node_insertion = ChangeEvent::CreateNode {
+                            // same as for previous.
+                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            max_value: value
+                                .clone(),
+                        };
+                        cdc.push(node_removal);
+                        cdc.push(node_insertion);
+                    } else if idx == node_guard.len() - 1 {
+                        let new_max = node_guard.pre_max();
+                        let node_element_removal = ChangeEvent::RemoveAt {
+                            // is correct as node is locked and current thread is the only that can
+                            // fetch event_id, so events for this node will have monotonic id's.
+                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            max_value: max
+                                .clone(),
+                            value: value.clone(),
+                            index: idx,
+                        };
+                        let node_element_insertion = ChangeEvent::InsertAt {
+                            // same as for previous.
+                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            max_value: new_max.expect("length was checked so should be ok")
+                                .clone(),
+                            value: value.clone(),
+                            index: idx,
+                        };
+                        cdc.push(node_element_removal);
+                        cdc.push(node_element_insertion);
+                    } else {
+                        let node_element_removal = ChangeEvent::RemoveAt {
+                            // is correct as node is locked and current thread is the only that can
+                            // fetch event_id, so events for this node will have monotonic id's.
+                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            max_value: max
+                                .clone(),
+                            value: value.clone(),
+                            index: idx,
+                        };
+                        let node_element_insertion = ChangeEvent::InsertAt {
+                            // same as for previous.
+                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            max_value: max
+                                .clone(),
+                            value: value.clone(),
+                            index: idx,
+                        };
+                        cdc.push(node_element_removal);
+                        cdc.push(node_element_insertion);
+                    }
                 }
+
 
                 (NodeLike::replace(&mut *node_guard, idx, value.clone()), cdc)
             }

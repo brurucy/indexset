@@ -38,6 +38,8 @@ pub trait NodeLike<T: Ord> {
     #[allow(dead_code)]
     fn max(&self) -> Option<&T>;
     #[allow(dead_code)]
+    fn pre_max(&self) -> Option<&T>;
+    #[allow(dead_code)]
     fn min(&self) -> Option<&T>;
     #[allow(dead_code)]
     fn iter<'a>(&'a self) -> std::slice::Iter<'a, T> where T: 'a;
@@ -221,6 +223,15 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     fn max(&self) -> Option<&T> {
         self.last()
     }
+
+    fn pre_max(&self) -> Option<&T> {
+        if self.len() <= 1 {
+            None
+        } else {
+            self.get(self.len() - 2)
+        }
+    }
+
     #[inline]
     fn min(&self) -> Option<&T> {
         self.first()
