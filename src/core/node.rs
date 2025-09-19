@@ -228,7 +228,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         if self.len() <= 1 {
             None
         } else {
-            self.get(self.len() - 1)
+            self.get(self.len() - 2)
         }
     }
 

@@ -280,7 +280,7 @@ where T: Debug + Ord + Clone + Send,
                         };
                         cdc.push(node_removal);
                         cdc.push(node_insertion);
-                    } else if value == max {
+                    } else if idx == node_guard.len() - 1 {
                         let new_max = node_guard.pre_max();
                         let node_element_removal = ChangeEvent::RemoveAt {
                             // is correct as node is locked and current thread is the only that can
