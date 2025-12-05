@@ -185,7 +185,7 @@ where T: Debug + Ord + Clone + Send,
                             event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
                             max_value: old_max
                                 .clone()
-                                .expect("Max value should exist as Node is not empty"),
+                                .unwrap_or(value.clone()),
                             value: value.clone(),
                             index: idx,
                         };
