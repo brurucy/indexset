@@ -196,12 +196,10 @@ where T: Debug + Ord + Clone + Send,
                         return Ok((None, cdc));
                     }
 
-                    if old_max.is_some() {
-                        operation = Some(Operation::UpdateMax(
-                            target_node_entry.value().clone(),
-                            old_max.unwrap(),
-                        ))
-                    }
+                    operation = Some(Operation::UpdateMax(
+                        target_node_entry.value().clone(),
+                        old_max.unwrap(),
+                    ))
                 } else {
                     return Err((node_guard, idx, old_max.unwrap()));
                 }
