@@ -126,6 +126,9 @@ where T: Debug + Ord + Send + Clone + 'static,
             }
             Operation::UpdateMax(node, old_max) => {
                 let guard = node.lock_arc();
+                if guard.max().is_none() {
+                    return Ok((None, vec![]));
+                }
                 let new_max = guard.max().unwrap();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &node) {
