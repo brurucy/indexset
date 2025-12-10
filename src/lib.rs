@@ -2340,7 +2340,7 @@ where
     /// let (first_key, first_value) = map.iter().next().unwrap();
     /// assert_eq!((*first_key, *first_value), (1, "a"));
     /// ```
-    pub fn iter(&self) -> IterMap<'_,K, V> {
+    pub fn iter(&self) -> IterMap<'_, K, V> {
         IterMap {
             inner: self.set.iter(),
         }
@@ -2367,7 +2367,7 @@ where
     ///     }
     /// }
     /// ```
-    pub fn iter_mut(&mut self) -> IterMut<'_,K, V> {
+    pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
         let last_node_idx = self.set.inner.len() - 1;
         let len = self.set.len();
         let mut inner = self.set.inner.iter_mut();

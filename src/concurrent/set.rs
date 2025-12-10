@@ -1,18 +1,18 @@
-use std::fmt::Debug;
-use std::iter::FusedIterator;
-use std::ops::RangeBounds;
-use std::{borrow::Borrow, sync::Arc};
-use std::marker::PhantomData;
-#[cfg(feature = "cdc")]
-use std::sync::atomic::{AtomicU64, Ordering};
 use crossbeam_skiplist::SkipMap;
 use crossbeam_utils::sync::ShardedLock;
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
+use std::fmt::Debug;
+use std::iter::FusedIterator;
+use std::marker::PhantomData;
+use std::ops::{Bound, RangeBounds};
+#[cfg(feature = "cdc")]
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::{borrow::Borrow, sync::Arc};
 
 use crate::cdc::change::ChangeEvent;
+use crate::concurrent::operation::*;
 use crate::core::constants::DEFAULT_INNER_SIZE;
 use crate::core::node::*;
-use crate::concurrent::operation::*;
 
 use super::r#ref::Ref;
 
@@ -75,7 +75,7 @@ use super::r#ref::Ref;
 pub struct BTreeSet<T, Node = Vec<T>>
 where
     T: Ord + Clone + 'static,
-    Node: NodeLike<T>
+    Node: NodeLike<T>,
 {
     pub(crate) index: SkipMap<T, Arc<Mutex<Node>>>,
     index_lock: ShardedLock<()>,
@@ -98,8 +98,9 @@ impl<T: Ord + Clone + 'static, Node: NodeLike<T>> Default for BTreeSet<T, Node> 
 }
 
 impl<T, Node> BTreeSet<T, Node>
-where T: Debug + Ord + Clone + Send,
-      Node: NodeLike<T> + Send + 'static
+where
+    T: Debug + Ord + Clone + Send,
+    Node: NodeLike<T> + Send + 'static,
 {
     pub fn new() -> Self {
         Self::default()
@@ -123,12 +124,18 @@ where T: Debug + Ord + Clone + Send,
         }
     }
     pub fn attach_node(&self, node: Node) {
-        let node_id = node.max().cloned().expect("node should contain at least one value to be correct node");
+        let node_id = node
+            .max()
+            .cloned()
+            .expect("node should contain at least one value to be correct node");
         let _global_guard = self.index_lock.write();
         self.index.insert(node_id, Arc::new(Mutex::new(node)));
     }
-    
-    pub(crate) fn put_cdc_checked(&self, value: T) -> Result<(Option<T>, Vec<ChangeEvent<T>>), (ArcMutexGuard<RawMutex, Node>, usize, T)> {
+
+    pub(crate) fn put_cdc_checked(
+        &self,
+        value: T,
+    ) -> Result<(Option<T>, Vec<ChangeEvent<T>>), (ArcMutexGuard<RawMutex, Node>, usize, T)> {
         loop {
             let mut cdc = vec![];
             let _global_guard = self.index_lock.read();
@@ -150,7 +157,7 @@ where T: Debug + Ord + Clone + Send,
                             #[cfg(feature = "cdc")]
                             {
                                 let node_insertion = ChangeEvent::CreateNode {
-                                    // is correct as index is locked and current thread is the only that can 
+                                    // is correct as index is locked and current thread is the only that can
                                     // fetch event_id.
                                     event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
                                     max_value: value.clone(),
@@ -170,6 +177,7 @@ where T: Debug + Ord + Clone + Send,
 
             let mut node_guard = target_node_entry.value().lock_arc();
 
+            #[allow(unused_assignments)]
             let mut operation = None;
             #[cfg(feature = "cdc")]
             let mut operation_id = 0.into();
@@ -180,12 +188,10 @@ where T: Debug + Ord + Clone + Send,
                     #[cfg(feature = "cdc")]
                     {
                         let node_element_insertion = ChangeEvent::InsertAt {
-                            // is correct as node is locked and current thread is the only that can 
+                            // is correct as node is locked and current thread is the only that can
                             // fetch event_id, so events for this node will have monotonic id's.
                             event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                            max_value: old_max
-                                .clone()
-                                .unwrap_or(value.clone()),
+                            max_value: old_max.clone().unwrap_or(value.clone()),
                             value: value.clone(),
                             index: idx,
                         };
@@ -219,7 +225,6 @@ where T: Debug + Ord + Clone + Send,
                 }
             }
 
-
             drop(node_guard);
             drop(_global_guard);
 
@@ -228,39 +233,35 @@ where T: Debug + Ord + Clone + Send,
             let op = operation.unwrap();
             match &op {
                 Operation::Split(_, _, _) => {
-                    if let Ok((value, value_cdc)) =
-                        op.commit(
-                            &self.index,
-                            #[cfg(feature = "cdc")]
-                            operation_id
-                        )
-                    {
+                    if let Ok((value, value_cdc)) = op.commit(
+                        &self.index,
+                        #[cfg(feature = "cdc")]
+                        operation_id,
+                    ) {
                         cdc.extend(value_cdc);
-                        return Ok((value, cdc))
+                        return Ok((value, cdc));
                     } else {
-                        continue
+                        continue;
                     }
                 }
                 Operation::UpdateMax(_, _) => {
-                    return if let Ok((value, value_cdc)) =
-                        op.commit(
-                            &self.index,
-                            #[cfg(feature = "cdc")]
-                            operation_id
-                        )
-                    {
+                    return if let Ok((value, value_cdc)) = op.commit(
+                        &self.index,
+                        #[cfg(feature = "cdc")]
+                        operation_id,
+                    ) {
                         cdc.extend(value_cdc);
                         Ok((value, cdc))
                     } else {
                         Ok((None, cdc))
                     }
                 }
-                Operation::MakeUnreachable(_, _) => unreachable!()
+                Operation::MakeUnreachable(_, _) => unreachable!(),
             }
         }
     }
-    pub(crate) fn put_cdc(&self, value: T) -> (Option<T>, Vec<ChangeEvent<T>>) { 
-        match self.put_cdc_checked(value.clone()) { 
+    pub(crate) fn put_cdc(&self, value: T) -> (Option<T>, Vec<ChangeEvent<T>>) {
+        match self.put_cdc_checked(value.clone()) {
             Ok(res) => res,
             Err((mut node_guard, idx, max)) => {
                 let mut cdc = vec![];
@@ -271,14 +272,12 @@ where T: Debug + Ord + Clone + Send,
                             // is correct as node is locked and current thread is the only that can
                             // fetch event_id, so events for this node will have monotonic id's.
                             event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                            max_value: max
-                                .clone(),
+                            max_value: max.clone(),
                         };
                         let node_insertion = ChangeEvent::CreateNode {
                             // same as for previous.
                             event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                            max_value: value
-                                .clone(),
+                            max_value: value.clone(),
                         };
                         cdc.push(node_removal);
                         cdc.push(node_insertion);
@@ -288,16 +287,14 @@ where T: Debug + Ord + Clone + Send,
                             // is correct as node is locked and current thread is the only that can
                             // fetch event_id, so events for this node will have monotonic id's.
                             event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                            max_value: max
-                                .clone(),
+                            max_value: max.clone(),
                             value: value.clone(),
                             index: idx,
                         };
                         let node_element_insertion = ChangeEvent::InsertAt {
                             // same as for previous.
                             event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                            max_value: new_max.expect("length was checked so should be ok")
-                                .clone(),
+                            max_value: new_max.expect("length was checked so should be ok").clone(),
                             value: value.clone(),
                             index: idx,
                         };
@@ -308,16 +305,14 @@ where T: Debug + Ord + Clone + Send,
                             // is correct as node is locked and current thread is the only that can
                             // fetch event_id, so events for this node will have monotonic id's.
                             event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                            max_value: max
-                                .clone(),
+                            max_value: max.clone(),
                             value: value.clone(),
                             index: idx,
                         };
                         let node_element_insertion = ChangeEvent::InsertAt {
                             // same as for previous.
                             event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                            max_value: max
-                                .clone(),
+                            max_value: max.clone(),
                             value: value.clone(),
                             index: idx,
                         };
@@ -325,7 +320,6 @@ where T: Debug + Ord + Clone + Send,
                         cdc.push(node_element_insertion);
                     }
                 }
-
 
                 (NodeLike::replace(&mut *node_guard, idx, value.clone()), cdc)
             }
@@ -382,7 +376,7 @@ where T: Debug + Ord + Clone + Send,
                     #[cfg(feature = "cdc")]
                     {
                         let node_element_removal = ChangeEvent::RemoveAt {
-                            // is correct as node is locked and current thread is the only that can 
+                            // is correct as node is locked and current thread is the only that can
                             // fetch event_id, so events for this node will have monotonic id's.
                             event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
                             max_value: old_max
@@ -417,18 +411,16 @@ where T: Debug + Ord + Clone + Send,
 
                 let _global_guard = self.index_lock.write();
 
-                return if let Ok((_, value_cdc)) =
-                    operation.unwrap().commit(
-                        &self.index,
-                        #[cfg(feature = "cdc")]
-                        operation_id
-                    )
-                {
+                return if let Ok((_, value_cdc)) = operation.unwrap().commit(
+                    &self.index,
+                    #[cfg(feature = "cdc")]
+                    operation_id,
+                ) {
                     cdc.extend(value_cdc);
                     (Some(deleted), cdc)
                 } else {
                     (Some(deleted), cdc)
-                }
+                };
             }
 
             break;
@@ -515,7 +507,7 @@ where T: Debug + Ord + Clone + Send,
                 return Some(Ref {
                     node_guard,
                     position,
-                    phantom_data: PhantomData
+                    phantom_data: PhantomData,
                 });
             }
         }
@@ -574,65 +566,39 @@ where
 pub struct Iter<'a, T, Node>
 where
     T: Debug + Ord + Clone + Send + 'static,
-    Node: NodeLike<T> + Send + 'static
+    Node: NodeLike<T> + Send + 'static,
 {
-    _btree: &'a BTreeSet<T, Node>,
-    current_front_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Node>>>>,
-    current_front_entry_guard: Option<ArcMutexGuard<RawMutex, Node>>,
-    current_front_entry_iter: Option<std::slice::Iter<'a, T>>,
-    current_back_entry: Option<crossbeam_skiplist::map::Entry<'a, T, Arc<Mutex<Node>>>>,
-    current_back_entry_guard: Option<ArcMutexGuard<RawMutex, Node>>,
-    current_back_entry_iter: Option<std::slice::Iter<'a, T>>,
-    last_front: Option<T>,
-    last_back: Option<T>,
+    tree: &'a BTreeSet<T, Node>,
+    current_front_node: Option<Arc<Mutex<Node>>>,
+    current_front_node_guard: Option<ArcMutexGuard<RawMutex, Node>>,
+    current_front_node_iter: Option<std::slice::Iter<'a, T>>,
+    current_back_node: Option<Arc<Mutex<Node>>>,
+    current_back_node_guard: Option<ArcMutexGuard<RawMutex, Node>>,
+    current_back_node_iter: Option<std::slice::Iter<'a, T>>,
+    current_front_value: Option<T>,
+    current_back_value: Option<T>,
+    met: bool,
 }
 
 impl<'a, T, Node> Iter<'a, T, Node>
 where
     T: Debug + Ord + Clone + Send + 'static,
-    Node: NodeLike<T> + Send + 'static
+    Node: NodeLike<T> + Send + 'static,
 {
     pub fn new(btree: &'a BTreeSet<T, Node>) -> Self {
-        let current_front_entry = btree.index.front();
-        let (current_front_entry_guard, current_front_entry_iter) =
-            if let Some(current_entry) = current_front_entry.clone() {
-                let guard = current_entry.value().lock_arc();
-                let iter = unsafe { std::mem::transmute(guard.iter()) };
-
-                (Some(guard), Some(iter))
-            } else {
-                (None, None)
-            };
-
-        let current_back_entry = btree.index.back();
-        let (current_back_entry_guard, current_back_entry_iter) =
-            if let Some(current_entry) = current_back_entry.clone() {
-                let mut guard = None;
-                let mut iter = None;
-
-                if let Some(front_entry) = current_front_entry.as_ref() {
-                    if !Arc::ptr_eq(current_entry.value(), front_entry.value()) {
-                        let new_guard = current_entry.value().lock_arc();
-                        iter = Some(unsafe { std::mem::transmute(new_guard.iter()) });
-                        guard = Some(new_guard);
-                    }
-                }
-
-                (guard, iter)
-            } else {
-                (None, None)
-            };
-
+        let current_front_node = btree.index.front().map(|e| e.value().clone());
+        let current_back_node = btree.index.back().map(|e| e.value().clone());
         Self {
-            _btree: btree,
-            current_front_entry,
-            current_front_entry_guard,
-            current_front_entry_iter,
-            current_back_entry,
-            current_back_entry_guard,
-            current_back_entry_iter,
-            last_front: None,
-            last_back: None,
+            tree: btree,
+            current_front_node,
+            current_front_node_guard: None,
+            current_front_node_iter: None,
+            current_back_node,
+            current_back_node_guard: None,
+            current_back_node_iter: None,
+            current_front_value: None,
+            current_back_value: None,
+            met: false,
         }
     }
 }
@@ -640,76 +606,158 @@ where
 impl<'a, T, Node> Iterator for Iter<'a, T, Node>
 where
     T: Debug + Ord + Clone + Send + 'static,
-    Node: NodeLike<T> + Send + 'static
+    Node: NodeLike<T> + Send + 'static,
 {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.last_front.is_some() || self.last_back.is_some()
-        {
-            if self.last_front.eq(&self.last_back) {
+        loop {
+            if self.met {
                 return None;
             }
-        }
 
-        loop {
-            if self.current_front_entry_iter.is_none() {
-                if let Some(next_entry) = self.current_front_entry.take().and_then(|e| e.next()) {
-                    let next_entry_key = next_entry.key();
+            if self.current_front_node.is_none() {
+                match self.tree.index.front() {
+                    Some(e) => {
+                        self.current_front_node = Some(e.value().clone());
 
-                    if let Some(next_entry_equals_to_next_back_entry) = self
-                        .current_back_entry
-                        .as_ref()
-                        .and_then(|next_back_entry| {
-                            let next_back_entry_key = next_back_entry.key();
-
-                            Some(next_entry_key.eq(next_back_entry_key))
-                        })
-                    {
-                        if !next_entry_equals_to_next_back_entry {
-                            let guard = next_entry.value().lock_arc();
-                            let iter = unsafe { std::mem::transmute(guard.iter()) };
-                            self.current_front_entry = Some(next_entry);
-                            self.current_front_entry_guard = Some(guard);
-                            self.current_front_entry_iter = Some(iter);
-
+                        if let Some(back_entry) = self.current_back_node.as_ref() {
+                            if Arc::ptr_eq(e.value(), back_entry) {
+                                self.current_front_node_guard = self.current_back_node_guard.take();
+                                self.current_front_node_iter = self.current_back_node_iter.take();
+                            }
                             continue;
                         }
+
+                        self.current_front_node_guard = Some(
+                            self.current_front_node
+                                .as_ref()
+                                .expect("was just set before")
+                                .lock_arc(),
+                        );
+                        self.current_front_node_iter = Some(unsafe {
+                            std::mem::transmute(
+                                self.current_front_node_guard
+                                    .as_ref()
+                                    .expect("was just set before")
+                                    .iter(),
+                            )
+                        });
+                    }
+                    None => {
+                        return None;
                     }
                 }
-
-                if let Some(next_value) =
-                    self.current_back_entry_iter.as_mut().and_then(|i| i.next())
-                {
-                    self.last_front = Some(next_value.clone());
-
-                    return Some(next_value);
-                }
-
-                return None;
             }
 
-            if let Some(next_value) = self
-                .current_front_entry_iter
-                .as_mut()
-                .and_then(|i| i.next())
-            {
-                self.last_front = Some(next_value.clone());
+            if self.current_back_node_guard.is_some() {
+                self.current_back_node_guard = None;
+                self.current_back_node_iter = None;
+            }
 
-                return Some(next_value);
-            } else {
-                self.current_front_entry_iter.take();
-                if let Some(old_guard) = self.current_front_entry_guard.take() {
-                    if let Some(last_value) = old_guard.max() {
-                        if let Some(last_back) = self.last_back.as_ref() {
-                            if last_back.le(last_value) {
-                                return None;
-                            }
+            if let Some(iter) = self.current_front_node_iter.as_mut() {
+                if let Some(value) = iter.next() {
+                    if let Some(current_back_value) = self.current_back_value.as_ref() {
+                        if value.ge(current_back_value) {
+                            self.met = true;
+                            return None;
                         }
                     }
-                }
+                    self.current_front_value = Some(value.clone());
+                    return Some(value);
+                } else {
+                    self.current_front_node_iter = None;
+                    self.current_front_node_guard = None;
 
-                continue;
+                    if let Some(current_node_entry) = self.tree.index.iter().find(|e| {
+                        Arc::ptr_eq(
+                            e.value(),
+                            self.current_front_node
+                                .as_ref()
+                                .expect("was just set before"),
+                        )
+                    }) {
+                        if let Some(next_node_entry) = current_node_entry.next() {
+                            self.current_front_node = Some(next_node_entry.value().clone());
+
+                            if let Some(back_entry) = self.current_back_node.as_ref() {
+                                if Arc::ptr_eq(next_node_entry.value(), back_entry) {
+                                    self.current_front_node_guard =
+                                        self.current_back_node_guard.take();
+                                    self.current_front_node_iter =
+                                        self.current_back_node_iter.take();
+                                }
+                                continue;
+                            }
+
+                            self.current_front_node_guard = Some(
+                                self.current_front_node
+                                    .as_ref()
+                                    .expect("was just set before")
+                                    .lock_arc(),
+                            );
+                            self.current_front_node_iter = Some(unsafe {
+                                std::mem::transmute(
+                                    self.current_front_node_guard
+                                        .as_ref()
+                                        .expect("was just set before")
+                                        .iter(),
+                                )
+                            });
+                            continue;
+                        } else {
+                            self.current_front_node = None;
+                            self.current_front_node_guard = None;
+                            self.current_front_node_iter = None;
+                            return None;
+                        }
+                    } else {
+                        self.current_front_node = None;
+                        self.current_front_node_guard = None;
+                        self.current_front_node_iter = None;
+                        return None;
+                    }
+                }
+            } else {
+                self.current_front_node_guard = Some(
+                    self.current_front_node
+                        .as_ref()
+                        .expect("was just set before")
+                        .lock_arc(),
+                );
+                self.current_front_node_iter = Some(unsafe {
+                    std::mem::transmute(
+                        self.current_front_node_guard
+                            .as_ref()
+                            .expect("was just set before")
+                            .iter(),
+                    )
+                });
+
+                if let Some(current_front_value) = self.current_front_value.as_ref() {
+                    let g = self
+                        .current_front_node_guard
+                        .as_mut()
+                        .expect("was just set before");
+                    if let Some(rank) = g.rank(Bound::Excluded(current_front_value), true) {
+                        let i = self
+                            .current_front_node_iter
+                            .as_mut()
+                            .expect("was just set before");
+                        if let Some(v) = i.nth(rank + 1) {
+                            if let Some(current_back_value) = self.current_back_value.as_ref() {
+                                if v.ge(current_back_value) {
+                                    self.met = true;
+                                    return None;
+                                }
+                            }
+                            self.current_front_value = Some(v.clone());
+                            return Some(v);
+                        }
+                    }
+                    // else iter is exhausted, will continue in next loop iteration.
+                    continue;
+                }
             }
         }
     }
@@ -718,82 +766,170 @@ where
 impl<'a, T, Node> DoubleEndedIterator for Iter<'a, T, Node>
 where
     T: Debug + Ord + Clone + Send + 'static,
-    Node: NodeLike<T> + Send + 'static
+    Node: NodeLike<T> + Send + 'static,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if (self.last_front.is_some() || self.last_back.is_some())
-            && self.last_front.eq(&self.last_back)
-        {
-            return None;
-        }
-
         loop {
-            if self.current_back_entry_iter.is_none() {
-                if let Some(next_back_entry) = self.current_back_entry.take().and_then(|e| e.prev())
-                {
-                    if let Some(front_entry_greater_than_next_back_entry) = self
-                        .current_front_entry
-                        .as_ref()
-                        .and_then(|front_entry| Some(front_entry.key().ge(next_back_entry.key())))
-                    {
-                        if !front_entry_greater_than_next_back_entry {
-                            let guard = next_back_entry.value().lock_arc();
-                            let iter = unsafe { std::mem::transmute(guard.iter()) };
-
-                            self.current_back_entry = Some(next_back_entry);
-                            self.current_back_entry_guard = Some(guard);
-                            self.current_back_entry_iter = Some(iter);
-
-                            continue;
-                        }
-                    }
-                }
-
-                if let Some(next_value) = self
-                    .current_front_entry_iter
-                    .as_mut()
-                    .and_then(|i| i.next_back())
-                {
-                    self.last_back = Some(next_value.clone());
-
-                    return Some(next_value);
-                }
-
+            if self.met {
                 return None;
             }
 
-            if let Some(next_value) = self
-                .current_back_entry_iter
-                .as_mut()
-                .and_then(|i| i.next_back())
-            {
-                self.last_back = Some(next_value.clone());
+            if self.current_back_node.is_none() {
+                match self.tree.index.back() {
+                    Some(e) => {
+                        self.current_back_node = Some(e.value().clone());
 
-                return Some(next_value);
-            } else {
-                self.current_back_entry_iter.take();
-                if let Some(old_guard) = self.current_back_entry_guard.take() {
-                    if let Some(first_value) = old_guard.min() {
-                        if let Some(last_front) = self.last_front.as_ref() {
-                            if last_front.ge(first_value) {
-                                return None;
+                        if let Some(front_entry) = self.current_front_node.as_ref() {
+                            if Arc::ptr_eq(e.value(), front_entry) {
+                                self.current_back_node_guard = self.current_front_node_guard.take();
+                                self.current_back_node_iter = self.current_front_node_iter.take();
                             }
+                            continue;
                         }
+
+                        self.current_back_node_guard = Some(
+                            self.current_back_node
+                                .as_ref()
+                                .expect("was just set before")
+                                .lock_arc(),
+                        );
+                        self.current_back_node_iter = Some(unsafe {
+                            std::mem::transmute(
+                                self.current_back_node_guard
+                                    .as_ref()
+                                    .expect("was just set before")
+                                    .iter(),
+                            )
+                        });
+                    }
+                    None => {
+                        return None;
                     }
                 }
+            }
 
-                continue;
+            if self.current_front_node_guard.is_some() {
+                self.current_front_node_guard = None;
+                self.current_front_node_iter = None;
+            }
+
+            if let Some(iter) = self.current_back_node_iter.as_mut() {
+                if let Some(value) = iter.next_back() {
+                    if let Some(current_front_value) = self.current_front_value.as_ref() {
+                        if value.le(current_front_value) {
+                            self.met = true;
+                            return None;
+                        }
+                    }
+                    self.current_back_value = Some(value.clone());
+                    return Some(value);
+                } else {
+                    self.current_back_node_iter = None;
+                    self.current_back_node_guard = None;
+
+                    if let Some(current_node_entry) = self.tree.index.iter().find(|e| {
+                        Arc::ptr_eq(
+                            e.value(),
+                            self.current_back_node
+                                .as_ref()
+                                .expect("was just set before"),
+                        )
+                    }) {
+                        if let Some(prev_node_entry) = current_node_entry.prev() {
+                            self.current_back_node = Some(prev_node_entry.value().clone());
+
+                            if let Some(front_entry) = self.current_front_node.as_ref() {
+                                if Arc::ptr_eq(prev_node_entry.value(), front_entry) {
+                                    self.current_back_node_guard =
+                                        self.current_front_node_guard.take();
+                                    self.current_back_node_iter =
+                                        self.current_front_node_iter.take();
+                                }
+                                continue;
+                            }
+
+                            self.current_back_node_guard = Some(
+                                self.current_back_node
+                                    .as_ref()
+                                    .expect("was just set before")
+                                    .lock_arc(),
+                            );
+                            self.current_back_node_iter = Some(unsafe {
+                                std::mem::transmute(
+                                    self.current_back_node_guard
+                                        .as_ref()
+                                        .expect("was just set before")
+                                        .iter(),
+                                )
+                            });
+                            continue;
+                        } else {
+                            self.current_back_node = None;
+                            self.current_back_node_guard = None;
+                            self.current_back_node_iter = None;
+                            return None;
+                        }
+                    } else {
+                        self.current_back_node = None;
+                        self.current_back_node_guard = None;
+                        self.current_back_node_iter = None;
+                        return None;
+                    }
+                }
+            } else {
+                self.current_back_node_guard = Some(
+                    self.current_back_node
+                        .as_ref()
+                        .expect("was just set before")
+                        .lock_arc(),
+                );
+                self.current_back_node_iter = Some(unsafe {
+                    std::mem::transmute(
+                        self.current_back_node_guard
+                            .as_ref()
+                            .expect("was just set before")
+                            .iter(),
+                    )
+                });
+
+                if let Some(current_back_value) = self.current_back_value.as_ref() {
+                    let g = self
+                        .current_back_node_guard
+                        .as_mut()
+                        .expect("was just set before");
+                    if let Some(rank) = g.rank(Bound::Excluded(current_back_value), false) {
+                        let i = self
+                            .current_back_node_iter
+                            .as_mut()
+                            .expect("was just set before");
+                        if let Some(v) = i.nth_back(rank + 1) {
+                            if let Some(current_front_value) = self.current_front_value.as_ref() {
+                                if v.le(current_front_value) {
+                                    self.met = true;
+                                    return None;
+                                }
+                            }
+                            self.current_back_value = Some(v.clone());
+                            return Some(v);
+                        }
+                    }
+                    // else iter is exhausted, will continue in next loop iteration.
+                    continue;
+                }
             }
         }
     }
 }
 
-impl<'a, T: Debug + Ord + Clone + Send, Node: NodeLike<T> + Send + 'static> FusedIterator for Iter<'a, T, Node> {}
+impl<'a, T: Debug + Ord + Clone + Send, Node: NodeLike<T> + Send + 'static> FusedIterator
+    for Iter<'a, T, Node>
+{
+}
 
 impl<'a, T, Node> IntoIterator for &'a BTreeSet<T, Node>
 where
     T: Debug + Ord + Send + Clone,
-    Node: NodeLike<T> + Send + 'static
+    Node: NodeLike<T> + Send + 'static,
 {
     type Item = &'a T;
 
@@ -807,7 +943,7 @@ where
 pub struct Range<'a, T, Node>
 where
     T: Debug + Ord + Clone + Send + 'static,
-    Node: NodeLike<T> + Send + 'static
+    Node: NodeLike<T> + Send + 'static,
 {
     iter: Iter<'a, T, Node>,
 }
@@ -815,7 +951,7 @@ where
 impl<'a, T, Node> Range<'a, T, Node>
 where
     T: Debug + Ord + Clone + Send + 'static,
-    Node: NodeLike<T> + Send + 'static
+    Node: NodeLike<T> + Send + 'static,
 {
     pub fn new<Q, R>(btree: &'a BTreeSet<T, Node>, range: R) -> Self
     where
@@ -825,91 +961,121 @@ where
     {
         let _global_guard = btree.index_lock.read();
 
+        let mut met = false;
+
         let start_bound = range.start_bound();
-        let current_front_entry = btree
-            .index
-            .lower_bound(start_bound);
+        let current_front_entry = btree.index.lower_bound(start_bound);
 
-        let mut last_front = None;
-        let (current_front_entry_guard, mut current_front_entry_iter) = if let Some(current_entry) =
-            current_front_entry.clone()
-        {
-            let guard = current_entry.value().lock_arc();
-            let mut iter: std::slice::Iter<'_, T> = unsafe { std::mem::transmute(guard.iter()) };
-            let forward_nth = guard.rank(start_bound, true);
-            if let Some(forward_nth) = forward_nth {
-                last_front = iter.nth(forward_nth).cloned();
+        let front_value = if let Some(front_entry) = current_front_entry.as_ref() {
+            let front_guard = front_entry.value().lock_arc();
+            if let Some(rank) = match start_bound {
+                Bound::Included(v) => front_guard.rank(Bound::Included(v), true),
+                Bound::Excluded(v) => front_guard.rank(Bound::Excluded(v), true),
+                Bound::Unbounded => None,
+            } {
+                let mut front_iter = front_guard.iter();
+                let front_value = front_iter.nth(rank).cloned();
+                drop(front_guard);
+
+                front_value
+            } else {
+                if let Some(pre_front_entry) = front_entry.prev() {
+                    let pre_front_guard = pre_front_entry.value().lock_arc();
+                    let front_value = pre_front_guard.iter().last().cloned();
+                    drop(pre_front_guard);
+
+                    front_value
+                } else {
+                    None
+                }
             }
-
-            (Some(guard), Some(iter))
         } else {
-            (None, None)
+            None
         };
 
         let end_bound = range.end_bound();
-        let mut current_back_entry = btree
+        let current_back_entry = btree
             .index
             .upper_bound(end_bound)
             .and_then(|e| e.next().or_else(|| btree.index.back()))
             .or_else(|| btree.index.front());
 
-        if current_back_entry.is_none() {
-            match end_bound {
-                std::ops::Bound::Unbounded => {
-                    current_back_entry = btree.index.back();
-                },
-                _ => {}
+        let back_value = if let Some(back_entry) = current_back_entry.as_ref() {
+            let back_guard = back_entry.value().lock_arc();
+            if let Some(rank) = match end_bound {
+                Bound::Included(v) => back_guard.rank(Bound::Included(v), false),
+                Bound::Excluded(v) => back_guard.rank(Bound::Excluded(v), false),
+                Bound::Unbounded => None,
+            } {
+                let mut back_iter = back_guard.iter();
+                let back_value = back_iter.nth_back(rank).cloned();
+                drop(back_guard);
+
+                back_value
+            } else {
+                if let Some(prev_back_entry) = back_entry.next() {
+                    let prev_back_guard = prev_back_entry.value().lock_arc();
+                    let back_value = prev_back_guard.iter().next().cloned();
+                    drop(prev_back_guard);
+
+                    back_value
+                } else {
+                    None
+                }
             }
-        }
+        } else {
+            None
+        };
 
-        let mut last_back = None;
-        let (current_back_entry_guard, current_back_entry_iter) =
-            if let Some(current_entry) = current_back_entry.clone() {
-                let mut guard = None;
-                let mut iter = None;
-
-                if let Some(front_entry) = current_front_entry.as_ref() {
-                    if !Arc::ptr_eq(current_entry.value(), front_entry.value()) {
-                        let new_guard = current_entry.value().lock_arc();
-                        let mut iter_local: std::slice::Iter<'_, T> = unsafe { std::mem::transmute(new_guard.iter()) };
-                        let backward_nth = new_guard.rank(end_bound, false);
-                        if let Some(backward_nth) = backward_nth {
-                            last_back = iter_local.nth_back(backward_nth).cloned();
+        if front_value.is_none() && back_value.is_none() {
+            // in this case we iter full or no iter at all
+            if start_bound != Bound::Unbounded || end_bound != Bound::Unbounded {
+                if let Some(max) = btree
+                    .index
+                    .back()
+                    .and_then(|e| e.value().lock_arc().max().cloned())
+                {
+                    if let Bound::Included(v) = start_bound {
+                        if v > max.borrow() {
+                            met = true;
                         }
-
-                        iter = Some(iter_local);
-                        guard = Some(new_guard);
-                    } else {
-                        if let Some(backward_nth) = current_front_entry_guard
-                            .as_ref()
-                            .and_then(|g| Some(g.rank(end_bound, false)))
-                        {
-                            if let Some(backward_nth) = backward_nth {
-                                last_back = current_front_entry_iter.as_mut().and_then(|i| {
-                                    i.nth_back(backward_nth).cloned()
-                                });
-                            }
+                    } else if let Bound::Excluded(v) = start_bound {
+                        if v >= max.borrow() {
+                            met = true;
                         }
                     }
                 }
 
-                (guard, iter)
-            } else {
-                (None, None)
-            };
-
+                if let Some(min) = btree
+                    .index
+                    .front()
+                    .and_then(|e| e.value().lock_arc().min().cloned())
+                {
+                    if let Bound::Included(v) = end_bound {
+                        if v < min.borrow() {
+                            met = true;
+                        }
+                    } else if let Bound::Excluded(v) = end_bound {
+                        if v <= min.borrow() {
+                            met = true;
+                        }
+                    }
+                }
+            }
+        }
 
         Self {
             iter: Iter {
-                _btree: btree,
-                current_front_entry,
-                current_front_entry_guard,
-                current_front_entry_iter,
-                current_back_entry,
-                current_back_entry_guard,
-                current_back_entry_iter,
-                last_front,
-                last_back,
+                tree: btree,
+                current_front_node: current_front_entry.map(|e| e.value().clone()),
+                current_front_node_guard: None,
+                current_front_node_iter: None,
+                current_back_node: current_back_entry.map(|e| e.value().clone()),
+                current_back_node_guard: None,
+                current_back_node_iter: None,
+                current_front_value: front_value,
+                current_back_value: back_value,
+                met,
             },
         }
     }
@@ -918,7 +1084,7 @@ where
 impl<'a, T, Node> Iterator for Range<'a, T, Node>
 where
     T: Debug + Ord + Clone + Send + 'static,
-    Node: NodeLike<T> + Send + 'static
+    Node: NodeLike<T> + Send + 'static,
 {
     type Item = &'a T;
 
@@ -930,19 +1096,24 @@ where
 impl<'a, T, Node> DoubleEndedIterator for Range<'a, T, Node>
 where
     T: Debug + Ord + Clone + Send + 'static,
-    Node: NodeLike<T> + Send + 'static
+    Node: NodeLike<T> + Send + 'static,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.iter.next_back()
     }
 }
 
-impl<'a, T, Node> FusedIterator for Range<'a, T, Node> where T: Debug + Ord + Clone + Send + 'static, Node: NodeLike<T> + Send + 'static {}
+impl<'a, T, Node> FusedIterator for Range<'a, T, Node>
+where
+    T: Debug + Ord + Clone + Send + 'static,
+    Node: NodeLike<T> + Send + 'static,
+{
+}
 
 impl<'a, T, Node> BTreeSet<T, Node>
 where
     T: Debug + Ord + Clone + Send + 'static,
-    Node: NodeLike<T> + Send + 'static
+    Node: NodeLike<T> + Send + 'static,
 {
     /// Gets an iterator that visits the elements in the `BTreeSet` in ascending
     /// order.
@@ -1284,12 +1455,7 @@ mod tests {
 
             let expected_next = i + 1;
             let actual_next = iter.next();
-            assert_eq!(
-                actual_next,
-                Some(&expected_next),
-                "Tree: {:?}",
-                tree
-            );
+            assert_eq!(actual_next, Some(&expected_next), "Tree: {:?}", tree);
 
             let expected_next_back = 20 - i;
             let actual_next_back = iter.next_back();
@@ -1312,6 +1478,16 @@ mod tests {
         assert_eq!(iter.next(), Some(&1));
         assert_eq!(iter.next(), None);
         assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_fused_iterator_back() {
+        let set = BTreeSet::<i32>::new();
+        set.insert(1);
+        let mut iter = set.into_iter();
+        assert_eq!(iter.next_back(), Some(&1));
+        assert_eq!(iter.next_back(), None);
+        assert_eq!(iter.next_back(), None);
     }
 
     #[test]
@@ -1496,6 +1672,7 @@ mod tests {
         assert!(!set.remove(&10).is_some());
         assert!(set.contains(&5));
     }
+
     #[test]
     fn test_remove_stress() {
         let set = Arc::new(BTreeSet::<i32>::new());
@@ -1596,7 +1773,10 @@ mod tests {
         assert_eq!(set.range(5..=8).collect::<Vec<_>>(), vec![&5, &6, &7, &8]);
         assert_eq!(set.range(5..8).collect::<Vec<_>>(), vec![&5, &6, &7]);
 
-        assert_eq!(set.range(10..=13).collect::<Vec<_>>(), vec![&10, &11, &12, &13]);
+        assert_eq!(
+            set.range(10..=13).collect::<Vec<_>>(),
+            vec![&10, &11, &12, &13]
+        );
         assert_eq!(set.range(10..13).collect::<Vec<_>>(), vec![&10, &11, &12]);
 
         // Last value of the node
@@ -1620,20 +1800,41 @@ mod tests {
         assert_eq!(set.range(2..5).collect::<Vec<_>>(), vec![&2, &3, &4]);
 
         // Full node
-        assert_eq!(set.range(0..=4).collect::<Vec<_>>(), vec![&0, &1, &2, &3, &4]);
-        assert_eq!(set.range(0..5).collect::<Vec<_>>(), vec![&0, &1, &2, &3, &4]);
+        assert_eq!(
+            set.range(0..=4).collect::<Vec<_>>(),
+            vec![&0, &1, &2, &3, &4]
+        );
+        assert_eq!(
+            set.range(0..5).collect::<Vec<_>>(),
+            vec![&0, &1, &2, &3, &4]
+        );
 
-        assert_eq!(set.range(5..=9).collect::<Vec<_>>(), vec![&5, &6, &7, &8, &9]);
-        assert_eq!(set.range(5..10).collect::<Vec<_>>(), vec![&5, &6, &7, &8, &9]);
+        assert_eq!(
+            set.range(5..=9).collect::<Vec<_>>(),
+            vec![&5, &6, &7, &8, &9]
+        );
+        assert_eq!(
+            set.range(5..10).collect::<Vec<_>>(),
+            vec![&5, &6, &7, &8, &9]
+        );
 
-        assert_eq!(set.range(10..=19).collect::<Vec<_>>(), vec![&10, &11, &12, &13, &14, &15, &16, &17, &18, &19]);
-        assert_eq!(set.range(10..20).collect::<Vec<_>>(), vec![&10, &11, &12, &13, &14, &15, &16, &17, &18, &19]);
+        assert_eq!(
+            set.range(10..=19).collect::<Vec<_>>(),
+            vec![&10, &11, &12, &13, &14, &15, &16, &17, &18, &19]
+        );
+        assert_eq!(
+            set.range(10..20).collect::<Vec<_>>(),
+            vec![&10, &11, &12, &13, &14, &15, &16, &17, &18, &19]
+        );
 
         // Node intersection
         assert_eq!(set.range(3..=6).collect::<Vec<_>>(), vec![&3, &4, &5, &6]);
         assert_eq!(set.range(3..7).collect::<Vec<_>>(), vec![&3, &4, &5, &6]);
 
-        assert_eq!(set.range(8..=11).collect::<Vec<_>>(), vec![&8, &9, &10, &11]);
+        assert_eq!(
+            set.range(8..=11).collect::<Vec<_>>(),
+            vec![&8, &9, &10, &11]
+        );
         assert_eq!(set.range(8..12).collect::<Vec<_>>(), vec![&8, &9, &10, &11]);
 
         // REVERSED
@@ -1649,14 +1850,26 @@ mod tests {
         assert_eq!(set.range(10..11).rev().collect::<Vec<_>>(), vec![&10]);
 
         // From first value to middle
-        assert_eq!(set.range(0..=3).rev().collect::<Vec<_>>(), vec![&3, &2, &1, &0]);
+        assert_eq!(
+            set.range(0..=3).rev().collect::<Vec<_>>(),
+            vec![&3, &2, &1, &0]
+        );
         assert_eq!(set.range(0..3).rev().collect::<Vec<_>>(), vec![&2, &1, &0]);
 
-        assert_eq!(set.range(5..=8).rev().collect::<Vec<_>>(), vec![&8, &7, &6, &5]);
+        assert_eq!(
+            set.range(5..=8).rev().collect::<Vec<_>>(),
+            vec![&8, &7, &6, &5]
+        );
         assert_eq!(set.range(5..8).rev().collect::<Vec<_>>(), vec![&7, &6, &5]);
 
-        assert_eq!(set.range(10..=13).rev().collect::<Vec<_>>(), vec![&13, &12, &11, &10]);
-        assert_eq!(set.range(10..13).rev().collect::<Vec<_>>(), vec![&12, &11, &10]);
+        assert_eq!(
+            set.range(10..=13).rev().collect::<Vec<_>>(),
+            vec![&13, &12, &11, &10]
+        );
+        assert_eq!(
+            set.range(10..13).rev().collect::<Vec<_>>(),
+            vec![&12, &11, &10]
+        );
 
         // Last value of the node
         assert_eq!(set.range(4..=4).rev().collect::<Vec<_>>(), vec![&4]);
@@ -1669,8 +1882,14 @@ mod tests {
         assert_eq!(set.range(19..20).rev().collect::<Vec<_>>(), vec![&19]);
 
         // From middle to last value of the node
-        assert_eq!(set.range(17..=19).rev().collect::<Vec<_>>(), vec![&19, &18, &17]);
-        assert_eq!(set.range(17..20).rev().collect::<Vec<_>>(), vec![&19, &18, &17]);
+        assert_eq!(
+            set.range(17..=19).rev().collect::<Vec<_>>(),
+            vec![&19, &18, &17]
+        );
+        assert_eq!(
+            set.range(17..20).rev().collect::<Vec<_>>(),
+            vec![&19, &18, &17]
+        );
 
         assert_eq!(set.range(7..=9).rev().collect::<Vec<_>>(), vec![&9, &8, &7]);
         assert_eq!(set.range(7..10).rev().collect::<Vec<_>>(), vec![&9, &8, &7]);
@@ -1679,20 +1898,78 @@ mod tests {
         assert_eq!(set.range(2..5).rev().collect::<Vec<_>>(), vec![&4, &3, &2]);
 
         // Full node
-        assert_eq!(set.range(0..=4).rev().collect::<Vec<_>>(), vec![&4, &3, &2, &1, &0]);
-        assert_eq!(set.range(0..5).rev().collect::<Vec<_>>(), vec![&4, &3, &2, &1, &0]);
+        assert_eq!(
+            set.range(0..=4).rev().collect::<Vec<_>>(),
+            vec![&4, &3, &2, &1, &0]
+        );
+        assert_eq!(
+            set.range(0..5).rev().collect::<Vec<_>>(),
+            vec![&4, &3, &2, &1, &0]
+        );
 
-        assert_eq!(set.range(5..=9).rev().collect::<Vec<_>>(), vec![&9, &8, &7, &6, &5]);
-        assert_eq!(set.range(5..10).rev().collect::<Vec<_>>(), vec![&9, &8, &7, &6, &5]);
+        assert_eq!(
+            set.range(5..=9).rev().collect::<Vec<_>>(),
+            vec![&9, &8, &7, &6, &5]
+        );
+        assert_eq!(
+            set.range(5..10).rev().collect::<Vec<_>>(),
+            vec![&9, &8, &7, &6, &5]
+        );
 
-        assert_eq!(set.range(10..=19).rev().collect::<Vec<_>>(), vec![&19, &18, &17, &16, &15, &14, &13, &12, &11, &10]);
-        assert_eq!(set.range(10..20).rev().collect::<Vec<_>>(), vec![&19, &18, &17, &16, &15, &14, &13, &12, &11, &10]);
+        assert_eq!(
+            set.range(10..=19).rev().collect::<Vec<_>>(),
+            vec![&19, &18, &17, &16, &15, &14, &13, &12, &11, &10]
+        );
+        assert_eq!(
+            set.range(10..20).rev().collect::<Vec<_>>(),
+            vec![&19, &18, &17, &16, &15, &14, &13, &12, &11, &10]
+        );
 
         // Node intersection
-        assert_eq!(set.range(3..=6).rev().collect::<Vec<_>>(), vec![&6, &5, &4, &3]);
-        assert_eq!(set.range(3..7).rev().collect::<Vec<_>>(), vec![&6, &5, &4, &3]);
+        assert_eq!(
+            set.range(3..=6).rev().collect::<Vec<_>>(),
+            vec![&6, &5, &4, &3]
+        );
+        assert_eq!(
+            set.range(3..7).rev().collect::<Vec<_>>(),
+            vec![&6, &5, &4, &3]
+        );
 
-        assert_eq!(set.range(8..=11).rev().collect::<Vec<_>>(), vec![&11, &10, &9, &8]);
-        assert_eq!(set.range(8..12).rev().collect::<Vec<_>>(), vec![&11, &10, &9, &8]);
+        assert_eq!(
+            set.range(8..=11).rev().collect::<Vec<_>>(),
+            vec![&11, &10, &9, &8]
+        );
+        assert_eq!(
+            set.range(8..12).rev().collect::<Vec<_>>(),
+            vec![&11, &10, &9, &8]
+        );
+
+        // Non-existent range
+        assert!(set.range(20..).collect::<Vec<_>>().is_empty());
+        assert!(set.range(..0).collect::<Vec<_>>().is_empty());
+        assert!(set.range(20..).rev().collect::<Vec<_>>().is_empty());
+        assert!(set.range(..0).rev().collect::<Vec<_>>().is_empty());
+    }
+
+    #[test]
+    fn parallel_iter_and_mut() {
+        let set = Arc::new(BTreeSet::<i32>::new());
+        for i in 0..10_000 {
+            set.insert(i);
+        }
+
+        let set_clone = Arc::clone(&set);
+        let _ = thread::spawn(move || {
+            for _ in 0..1000 {
+                let mut _sum = 0;
+                for &value in set_clone.iter() {
+                    _sum += value;
+                }
+            }
+        });
+
+        for i in 10_000..20_000 {
+            set.insert(i);
+        }
     }
 }

@@ -1,27 +1,28 @@
-use std::{borrow::Borrow, iter::FusedIterator, ops::RangeBounds};
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::{borrow::Borrow, iter::FusedIterator, ops::RangeBounds};
 
 use parking_lot::Mutex;
 
-use crate::{cdc::change::ChangeEvent, core::pair::Pair};
-use crate::core::node::NodeLike;
 use super::set::BTreeSet;
+use crate::core::node::NodeLike;
+use crate::{cdc::change::ChangeEvent, core::pair::Pair};
 
 #[derive(Debug)]
 pub struct BTreeMap<K, V, Node = Vec<Pair<K, V>>>
 where
     K: Send + Ord + Clone + 'static,
     V: Send + Clone + 'static,
-    Node: NodeLike<Pair<K, V>>
+    Node: NodeLike<Pair<K, V>>,
 {
     pub(crate) set: BTreeSet<Pair<K, V>, Node>,
 }
 
 impl<K, V, Node> Default for BTreeMap<K, V, Node>
-where K: Send + Ord + Clone,
-      V: Send + Clone + 'static,
-      Node: NodeLike<Pair<K, V>> + Send + 'static
+where
+    K: Send + Ord + Clone,
+    V: Send + Clone + 'static,
+    Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
     fn default() -> Self {
         Self {
@@ -34,7 +35,7 @@ pub struct Iter<'a, K, V, Node>
 where
     K: Debug + Send + Ord + Clone + 'static,
     V: Debug + Send + Clone + 'static,
-    Node: NodeLike<Pair<K, V>> + Send + 'static
+    Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
     inner: super::set::Iter<'a, Pair<K, V>, Node>,
 }
@@ -43,7 +44,7 @@ impl<'a, K, V, Node> Iterator for Iter<'a, K, V, Node>
 where
     K: Debug + Send + Ord + Clone + 'static,
     V: Debug + Send + Clone + 'static,
-    Node: NodeLike<Pair<K, V>> + Send + 'static
+    Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
     type Item = (&'a K, &'a V);
 
@@ -60,7 +61,7 @@ impl<'a, K, V, Node> DoubleEndedIterator for Iter<'a, K, V, Node>
 where
     K: Debug + Send + Ord + Clone + 'static,
     V: Debug + Send + Clone + 'static,
-    Node: NodeLike<Pair<K, V>> + Send + 'static
+    Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -75,7 +76,7 @@ impl<'a, K, V, Node> FusedIterator for Iter<'a, K, V, Node>
 where
     K: Debug + Send + Ord + Clone + 'static,
     V: Debug + Send + Clone + 'static,
-    Node: NodeLike<Pair<K, V>> + Send + 'static
+    Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
 }
 
@@ -83,7 +84,7 @@ pub struct Range<'a, K, V, Node>
 where
     K: Debug + Send + Ord + Clone + 'static,
     V: Debug + Send + Clone + 'static,
-    Node: NodeLike<Pair<K, V>> + Send + 'static
+    Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
     inner: super::set::Range<'a, Pair<K, V>, Node>,
 }
@@ -92,7 +93,7 @@ impl<'a, K, V, Node> Iterator for Range<'a, K, V, Node>
 where
     K: Debug + Send + Ord + Clone + 'static,
     V: Debug + Send + Clone + 'static,
-    Node: NodeLike<Pair<K, V>> + Send + 'static
+    Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
     type Item = (&'a K, &'a V);
 
@@ -109,7 +110,7 @@ impl<'a, K, V, Node> DoubleEndedIterator for Range<'a, K, V, Node>
 where
     K: Debug + Send + Ord + Clone + 'static,
     V: Debug + Send + Clone + 'static,
-    Node: NodeLike<Pair<K, V>> + Send + 'static
+    Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         if let Some(entry) = self.inner.next_back() {
@@ -124,14 +125,15 @@ impl<'a, K, V, Node> FusedIterator for Range<'a, K, V, Node>
 where
     K: Debug + Send + Ord + Clone + 'static,
     V: Debug + Send + Clone + 'static,
-    Node: NodeLike<Pair<K, V>> + Send + 'static
+    Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
 }
 
 impl<K, V, Node> BTreeMap<K, V, Node>
-where K: Debug + Send + Ord + Clone + 'static,
-      V: Debug + Send + Clone + 'static,
-      Node: NodeLike<Pair<K, V>> + Send + 'static
+where
+    K: Debug + Send + Ord + Clone + 'static,
+    V: Debug + Send + Clone + 'static,
+    Node: NodeLike<Pair<K, V>> + Send + 'static,
 {
     /// Makes a new, empty, persistent `BTreeMap`.
     ///
@@ -174,7 +176,7 @@ where K: Debug + Send + Ord + Clone + 'static,
     }
     /// Returns iterator over this set's [`Node`]'s.
     #[cfg(feature = "cdc")]
-    pub fn iter_nodes(&self) -> impl Iterator<Item=Arc<Mutex<Node>>> + '_ {
+    pub fn iter_nodes(&self) -> impl Iterator<Item = Arc<Mutex<Node>>> + '_ {
         self.set.index.iter().map(|e| e.value().clone())
     }
     /// Returns `true` if the map contains a value for the specified key.
@@ -297,8 +299,7 @@ where K: Debug + Send + Ord + Clone + 'static,
         Pair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        self
-            .set
+        self.set
             .remove(key)
             .and_then(|pair| Some((pair.key, pair.value)))
     }
@@ -443,15 +444,15 @@ where K: Debug + Send + Ord + Clone + 'static,
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::Debug;
-    use std::sync::{Arc, Mutex};
-    use std::thread;
-    use rand::Rng;
-    use scc::HashMap;
-    use crate::BTreeSet;
     use super::BTreeMap;
     use super::ChangeEvent;
     use super::Pair;
+    use crate::BTreeSet;
+    use rand::Rng;
+    use scc::HashMap;
+    use std::fmt::Debug;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
 
     #[test]
     fn test_range_edge_cast() {
@@ -470,10 +471,12 @@ mod tests {
         map.insert(7usize, "g");
 
         let mid_range = map.range::<usize, _>(3..5).collect::<BTreeSet<_>>();
-        assert_eq!(mid_range, vec![
-            (&3usize, &"c"),
-            (&4usize, &"d"),
-        ].into_iter().collect::<BTreeSet<_>>());
+        assert_eq!(
+            mid_range,
+            vec![(&3usize, &"c"), (&4usize, &"d"),]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
     }
 
     #[derive(Debug, Default)]
@@ -488,11 +491,17 @@ mod tests {
     impl<K: Debug + Ord + Clone, V: Debug + Clone + PartialEq> PersistedBTreeMap<K, V> {
         fn persist(&mut self, event: &ChangeEvent<Pair<K, V>>) {
             match event {
-                ChangeEvent::CreateNode { max_value, event_id: _ } => {
+                ChangeEvent::CreateNode {
+                    max_value,
+                    event_id: _,
+                } => {
                     let node = vec![max_value.clone()];
                     self.nodes.insert(max_value.key.clone(), node);
                 }
-                ChangeEvent::RemoveNode { max_value, event_id: _   } => {
+                ChangeEvent::RemoveNode {
+                    max_value,
+                    event_id: _,
+                } => {
                     self.nodes.remove(&max_value.key);
                 }
                 ChangeEvent::InsertAt {
@@ -512,7 +521,8 @@ mod tests {
                 ChangeEvent::RemoveAt {
                     max_value,
                     index,
-                    value: _, event_id: _
+                    value: _,
+                    event_id: _,
                 } => {
                     if let Some(node) = self.nodes.get_mut(&max_value.key) {
                         node.remove(*index);
@@ -520,7 +530,8 @@ mod tests {
                 }
                 ChangeEvent::SplitNode {
                     max_value,
-                    split_index, event_id: _
+                    split_index,
+                    event_id: _,
                 } => {
                     if let Some(mut old_node) = self.nodes.remove(&max_value.key) {
                         let new_node = old_node.split_off(*split_index);
@@ -712,7 +723,6 @@ mod tests {
             final_events.extend(thread_events)
         }
         final_events.sort_by(|ev1, ev2| ev1.id().cmp(&ev2.id()));
-
 
         let mut mock_state = PersistedBTreeMap::default();
         for ev in final_events {
