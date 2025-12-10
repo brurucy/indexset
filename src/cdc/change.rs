@@ -3,9 +3,9 @@ use crate::core::multipair::MultiPair;
 #[cfg(feature = "multimap")]
 use crate::core::pair::Pair;
 
-/// Event unique identifier. 
+/// Event unique identifier.
 ///
-/// For two events `event1` and `event2` if `event1` should be applied before 
+/// For two events `event1` and `event2` if `event1` should be applied before
 /// `event2`, `event1.id()` should be less than `event2.id()`.
 #[derive(Copy, Clone, Debug, Default, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Id(u64);
@@ -84,11 +84,11 @@ pub enum ChangeEvent<T> {
 impl<T> ChangeEvent<T> {
     pub fn id(&self) -> Id {
         match self {
-            ChangeEvent::InsertAt {event_id, ..} => *event_id,
-            ChangeEvent::RemoveAt {event_id, ..} => *event_id,
-            ChangeEvent::CreateNode {event_id, ..} => *event_id,
-            ChangeEvent::RemoveNode {event_id, ..} => *event_id,
-            ChangeEvent::SplitNode {event_id, ..} => *event_id
+            ChangeEvent::InsertAt { event_id, .. } => *event_id,
+            ChangeEvent::RemoveAt { event_id, .. } => *event_id,
+            ChangeEvent::CreateNode { event_id, .. } => *event_id,
+            ChangeEvent::RemoveNode { event_id, .. } => *event_id,
+            ChangeEvent::SplitNode { event_id, .. } => *event_id,
         }
     }
 }
@@ -119,11 +119,17 @@ impl<K: Ord, V: PartialEq> From<ChangeEvent<MultiPair<K, V>>> for ChangeEvent<Pa
                 value: value.into(),
                 index,
             },
-            ChangeEvent::CreateNode {  event_id,max_value} => ChangeEvent::CreateNode {
+            ChangeEvent::CreateNode {
+                event_id,
+                max_value,
+            } => ChangeEvent::CreateNode {
                 event_id,
                 max_value: max_value.into(),
             },
-            ChangeEvent::RemoveNode {  event_id,max_value } => ChangeEvent::RemoveNode {
+            ChangeEvent::RemoveNode {
+                event_id,
+                max_value,
+            } => ChangeEvent::RemoveNode {
                 event_id,
                 max_value: max_value.into(),
             },

@@ -5,9 +5,9 @@ use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
 
 use crate::cdc::change::ChangeEvent;
-use crate::core::node::NodeLike;
 #[cfg(feature = "cdc")]
 use crate::cdc::change::Id;
+use crate::core::node::NodeLike;
 
 type OldVersion<Node> = Arc<Mutex<Node>>;
 type CurrentVersion<Node> = Arc<Mutex<Node>>;
@@ -19,21 +19,26 @@ pub enum Operation<T: Send + Ord, Node: NodeLike<T>> {
 }
 
 impl<T, Node> Operation<T, Node>
-where T: Debug + Ord + Send + Clone + 'static,
-      Node: NodeLike<T> + Send + 'static,
+where
+    T: Debug + Ord + Send + Clone + 'static,
+    Node: NodeLike<T> + Send + 'static,
 {
-    pub fn commit(self,
-                  index: &SkipMap<T, Arc<Mutex<Node>>>,
-                  #[cfg(feature = "cdc")] event_id: Id,
+    pub fn commit(
+        self,
+        index: &SkipMap<T, Arc<Mutex<Node>>>,
+        #[cfg(feature = "cdc")] event_id: Id,
     ) -> Result<(Option<T>, Vec<ChangeEvent<T>>), ()> {
         match self {
-            Operation::Split(old_node,  old_max, value) => {
+            Operation::Split(old_node, old_max, value) => {
                 let mut guard = old_node.lock_arc();
                 if let Some(entry) = index.get(&old_max) {
                     if Arc::ptr_eq(entry.value(), &old_node) {
                         let mut cdc = vec![];
                         #[cfg(feature = "cdc")]
-                        let max_value = guard.max().expect("node should be non empty if split").clone();
+                        let max_value = guard
+                            .max()
+                            .expect("node should be non empty if split")
+                            .clone();
                         entry.remove();
                         let mut new_vec = guard.halve();
 
