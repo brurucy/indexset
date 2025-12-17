@@ -2391,7 +2391,7 @@ where
             current_front_node_idx: 0,
             current_front_idx: 0,
             current_back_node_idx: last_node_idx,
-            current_back_idx: len - 1,
+            current_back_idx: len.wrapping_sub(1),
             current_front_iterator: front_iter,
             current_back_iterator: back_iter,
         }
@@ -3472,7 +3472,7 @@ where
     type Item = (&'a K, &'a mut V);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_front_idx == self.current_back_idx + 1 {
+        if self.current_front_idx == self.current_back_idx.wrapping_add(1) {
             return None;
         }
         if let Some(entry) = self.current_front_iterator.next() {
@@ -3510,7 +3510,7 @@ where
     K: Ord,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.current_front_idx == self.current_back_idx + 1 {
+        if self.current_front_idx == self.current_back_idx.wrapping_add(1) {
             return None;
         }
         if let Some(entry) = self.current_back_iterator.next_back() {
@@ -4297,6 +4297,21 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn test_map() {
+        let mut btree: BTreeMap<usize, usize> = BTreeMap::new();
+        assert_eq!(btree.iter().count(), 0);
+        assert_eq!(btree.iter_mut().count(), 0);
+
+        btree.insert(123, 456);
+        assert_eq!(btree.iter().count(), 1);
+        assert_eq!(btree.iter_mut().count(), 1);
+
+        btree.insert(7, 8);
+        assert_eq!(btree.iter().count(), 2);
+        assert_eq!(btree.iter_mut().count(), 2);
     }
 
     #[test]
