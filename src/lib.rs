@@ -2370,20 +2370,40 @@ where
     pub fn iter_mut(&mut self) -> IterMut<K, V> {
         let last_node_idx = self.set.inner.len() - 1;
         let len = self.set.len();
+
+        // Special handling for single node case
+        if self.set.inner.len() == 1 {
+            // Don't consume the node from inner iterator
+            // Both front and back should start from the same node
+            let mut inner = self.set.inner.iter_mut();
+            let node = inner.next().unwrap();
+            let front_iter = node.iter_mut();
+            // For single node, back_iter should be empty initially
+            // The iterator logic will handle switching to it when needed
+            let back_iter = [].iter_mut();
+
+            return IterMut {
+                inner,
+                current_front_node_idx: 0,
+                current_front_idx: 0,
+                current_back_node_idx: 0,  // Same as front for single node
+                current_back_idx: len.wrapping_sub(1),
+                current_front_iterator: front_iter,
+                current_back_iterator: back_iter,
+            };
+        }
+
+        // For multiple nodes, handle normally
         let mut inner = self.set.inner.iter_mut();
-        let front_iter = {
-            if let Some(node) = inner.next() {
-                node.iter_mut()
-            } else {
-                [].iter_mut()
-            }
+        let front_iter = if let Some(node) = inner.next() {
+            node.iter_mut()
+        } else {
+            [].iter_mut()
         };
-        let back_iter = {
-            if let Some(node) = inner.next_back() {
-                node.iter_mut()
-            } else {
-                [].iter_mut()
-            }
+        let back_iter = if let Some(node) = inner.next_back() {
+            node.iter_mut()
+        } else {
+            [].iter_mut()
         };
 
         IterMut {
@@ -3519,10 +3539,12 @@ where
         } else {
             // If the current iterator has been exhausted, we have to check whether there are any
             // iterators left
-            if self.current_back_node_idx == 0 {
+            if self.current_back_node_idx == 0 && self.current_front_node_idx != 0 {
                 return None;
             }
-            if self.current_front_node_idx == self.current_back_node_idx - 1 {
+            // Handle single node case or adjacent nodes
+            if self.current_front_node_idx == self.current_back_node_idx ||
+               self.current_front_node_idx == self.current_back_node_idx - 1 {
                 // take from the current front iter
                 if let Some(entry) = self.current_front_iterator.next_back() {
                     if self.current_back_idx > 0 {
@@ -4339,6 +4361,26 @@ mod tests {
             } else {
                 panic!("missing index {i}")
             }
+        }
+    }
+
+    #[test]
+    fn test_iter_mut_rev() {
+        let mut map = BTreeMap::<i64, i64>::new();
+        map.insert(1, 10);
+        map.insert(2, 20);
+        map.insert(3, 30);
+
+        let expected_forward = vec![(1, 10), (2, 20), (3, 30)];
+        for (i, (k, v)) in map.iter_mut().enumerate() {
+            assert_eq!(*k, expected_forward[i].0);
+            assert_eq!(*v, expected_forward[i].1);
+        }
+
+        let expected_backward = vec![(3, 30), (2, 20), (1, 10)];
+        for (i, (k, v)) in map.iter_mut().rev().enumerate() {
+            assert_eq!(*k, expected_backward[i].0);
+            assert_eq!(*v, expected_backward[i].1); 
         }
     }
 }
