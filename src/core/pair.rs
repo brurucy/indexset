@@ -45,3 +45,9 @@ impl<K: Ord, V> Borrow<K> for Pair<K, V> {
         &self.key
     }
 }
+
+impl<V> Borrow<str> for Pair<String, V> {
+    fn borrow(&self) -> &str {
+        self.key.as_str()
+    }
+}
