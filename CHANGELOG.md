@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-01-04
+
+### Changed
+- Bumped `ftree`'s version
+
+### Fixed
+- Overflow/underflow with empty maps
+
 ## [0.12.3] - 2025-06-28
 
 ### Fixed
@@ -222,7 +230,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.12.3...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.12.4...HEAD
+
+[0.12.4]: https://github.com/brurucy/indexset/releases/tag/v0.12.4
 
 [0.12.3]: https://github.com/brurucy/indexset/releases/tag/v0.12.3
 
