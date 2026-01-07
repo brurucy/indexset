@@ -2656,11 +2656,22 @@ where
                 .set
                 .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound),
             Bound::Excluded(bound) => {
-                self.set
-                    .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound)
-                    - 1
+                let rank = self
+                    .set
+                    .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound);
+                if rank == 0 {
+                    // No elements before this bound, return empty range
+                    return (1, 0);
+                }
+                rank - 1
             }
-            Bound::Unbounded => self.len() - 1,
+            Bound::Unbounded => {
+                if self.len() == 0 {
+                    // Empty map, return empty range
+                    return (1, 0);
+                }
+                self.len() - 1
+            }
         };
 
         (start_idx, end_idx)
@@ -4382,5 +4393,27 @@ mod tests {
             assert_eq!(*k, expected_backward[i].0);
             assert_eq!(*v, expected_backward[i].1); 
         }
+    }
+
+    #[test] // this test pass with std::collection::BTreeMap
+    fn test_indexset_btreemap_overflow_bug() {
+        // This test reproduces the "attempt to subtract with overflow" panic
+        // that occurs in indexset::BTreeMap::range_to_idx at line 2639
+        
+        let mut map = BTreeMap::new();
+        
+        // Insert the same keys as in the failing test
+        map.insert(vec![1, 2, 3, 4], 1);
+        map.insert(vec![1, 2, 3, 7], 2);
+        map.insert(vec![1, 2, 4, 5], 3);
+        let end_key = vec![1, 2, 3, 4];
+        
+        let mut range_iter = map.range(..end_key).rev();
+        
+        let result = range_iter.next();
+        
+        // In a working implementation, this should return None
+        // since there are no keys before [1,2,3,4]
+        assert!(result.is_none(), "Expected None when ranging before first key");
     }
 }
