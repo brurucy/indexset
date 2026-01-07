@@ -2644,11 +2644,9 @@ where
             Bound::Included(bound) => self
                 .set
                 .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound),
-            Bound::Excluded(bound) => {
-                self.set
-                    .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound)
-                    + 1
-            }
+            Bound::Excluded(bound) => self
+                .set
+                .rank_cmp(|item: &Pair<K, V>| item.key.borrow() <= bound),
             Bound::Unbounded => 0,
         };
         let end_idx = match range.end_bound() {
@@ -4415,5 +4413,39 @@ mod tests {
         // In a working implementation, this should return None
         // since there are no keys before [1,2,3,4]
         assert!(result.is_none(), "Expected None when ranging before first key");
+    }
+
+    use std::collections::Bound;
+    use std::ops::RangeBounds;
+
+    pub struct RangeFromExcluding<'a, T> {
+        pub(crate) from: &'a T,
+    }
+
+    impl<T> RangeBounds<T> for RangeFromExcluding<'_, T> {
+        fn start_bound(&self) -> Bound<&T> {
+            Bound::Excluded(self.from)
+        }
+
+        fn end_bound(&self) -> Bound<&T> {
+            Bound::Unbounded
+        }
+    }
+
+    #[test]
+    fn test_range_from_excluding_bug() {
+        let mut map = BTreeMap::new();
+        map.insert(vec![1, 2, 3, 4], 1);
+        map.insert(vec![1, 2, 3, 7], 2);
+        map.insert(vec![1, 2, 4, 5], 3);
+
+        // RangeFromExcluding with non-existing key [1,2,3,6]
+        // Should return [1,2,3,7] but returns [1,2,4,5]
+        let non_existing_key = vec![1, 2, 3, 6];
+        let range = RangeFromExcluding { from: &non_existing_key };
+        let result = map.range(range).next().unwrap();
+        
+        assert_eq!(result.0, &vec![1, 2, 3, 7], "RangeFromExcluding skips entries incorrectly");
+        assert_eq!(*result.1, 2);
     }
 }

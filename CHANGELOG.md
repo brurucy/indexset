@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.7] - 2026-01-07
+
+### Fixed
+- Range with excluding start is not handled correctly: https://github.com/brurucy/indexset/issues/42
+
 ## [0.12.6] - 2026-01-07
 
 ### Fixed
@@ -240,7 +245,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.12.6...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.12.7...HEAD
+
+[0.12.7]: https://github.com/brurucy/indexset/releases/tag/v0.12.7
 
 [0.12.6]: https://github.com/brurucy/indexset/releases/tag/v0.12.6
 
