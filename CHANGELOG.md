@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-01-12
+
+### Changed
+- CDC Now relies on monotonic ids. Change done by @Handy-caT
+
 ## [0.12.7] - 2026-01-07
 
 ### Fixed
@@ -245,7 +250,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.12.7...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.13.0...HEAD
+
+[0.13.0]: https://github.com/brurucy/indexset/releases/tag/v0.13.0
 
 [0.12.7]: https://github.com/brurucy/indexset/releases/tag/v0.12.7
 

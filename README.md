@@ -132,3 +132,7 @@ a `Pair<K, V>` item type, and `BTreeMultiMap` is one with a `MultiPair<K, V>` it
 ## Changelog
 
 See [CHANGELOG.md](https://github.com/brurucy/indexset/blob/master/CHANGELOG.md).
+
+## Mentions
+
+Special thanks to Christopher Bergstrom from Pathscale for funding the development of this library.
