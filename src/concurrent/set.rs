@@ -181,7 +181,7 @@ where
             let mut operation = None;
             #[cfg(feature = "cdc")]
             let mut operation_id = 0.into();
-            if !node_guard.need_to_split(self.node_capacity) {
+            if !node_guard.need_to_split(self.node_capacity, &value) {
                 let old_max = node_guard.max().cloned();
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
                 if inserted {
