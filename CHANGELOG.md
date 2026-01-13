@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-01-13
+
+### Changed
+- Added the option to provide a `value` when deciding if it is necessary to split. This is useful for cases with custom `Node` implementations where length is either not taken into account, or something else might be necessary such as e.g in-memory size. Change done by @Handy-caT
+
 ## [0.13.0] - 2026-01-12
 
 ### Changed
@@ -250,7 +255,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BTreeSet`
 - `BTreeMap`
 
-[Unreleased]: https://github.com/brurucy/indexset/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/brurucy/indexset/compare/v0.14.0...HEAD
+
+[0.14.0]: https://github.com/brurucy/indexset/releases/tag/v0.14.0
 
 [0.13.0]: https://github.com/brurucy/indexset/releases/tag/v0.13.0
 
