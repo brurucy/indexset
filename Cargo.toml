@@ -14,6 +14,7 @@ readme = "README.md"
 criterion = { version = "0.5.1", features = ["html_reports"] }
 rand = "0.9.0"
 scc = { version = "2.2.5" }
+uuid = { version = "1.17.0", features = ["v7"]}
 
 [dependencies]
 serde = { version = "1.0.151", optional = true, features = ["derive"] }
