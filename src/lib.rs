@@ -2189,8 +2189,9 @@ where
             && self.set.inner[node_idx].get(position_within_node).is_some()
         {
             let entry = self.set.inner[node_idx].get_mut(position_within_node)?;
-
-            return Some(&mut entry.value);
+            if key == entry.key.borrow() {
+                return Some(&mut entry.value);
+            }
         }
 
         None
@@ -4447,5 +4448,15 @@ mod tests {
         
         assert_eq!(result.0, &vec![1, 2, 3, 7], "RangeFromExcluding skips entries incorrectly");
         assert_eq!(*result.1, 2);
+    }
+
+    #[test]
+    fn uuid_key_test() {
+        let mut map = BTreeMap::new();
+
+        map.insert(uuid::uuid!("019c34bf-47c0-7df1-9d46-522cec0dd95f"), 1);
+
+        let out = map.get_mut(&uuid::uuid!("019c34bf-47c0-7df1-9d46-52013234139b"));
+        assert!(out.is_none());
     }
 }
