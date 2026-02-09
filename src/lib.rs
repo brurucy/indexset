@@ -89,6 +89,16 @@ where
     len: usize,
 }
 
+enum NodeEntry {
+    Exist {
+        node_idx: usize,
+        position_within_node: usize,
+    },
+    Empty {
+        node_idx: usize,
+    }
+}
+
 impl<T: Ord> BTreeSet<T> {
     /// Makes a new, empty `BTreeSet` with maximum node size 1024. Allocates one vec of capacity 1024.
     ///
@@ -330,32 +340,7 @@ impl<T: Ord> BTreeSet<T> {
     pub fn len(&self) -> usize {
         self.len
     }
-    /// Adds a value to the set.
-    ///
-    /// Returns whether the value was newly inserted. That is:
-    ///
-    /// - If the set did not previously contain an equal value, `true` is
-    ///   returned.
-    /// - If the set already contained an equal value, `false` is returned, and
-    ///   the entry is not updated.
-    ///
-    /// See the [module-level documentation] for more.
-    ///
-    /// [module-level documentation]: index.html#insert-and-complex-keys
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use indexset::BTreeSet;
-    ///
-    /// let mut set = BTreeSet::new();
-    ///
-    /// assert_eq!(set.insert(2), true);
-    /// assert_eq!(set.insert(2), false);
-    /// assert_eq!(set.len(), 1);
-    /// ```
-    pub fn insert(&mut self, value: T) -> bool {
-        let node_idx = self.locate_node(&value);
+    fn insert_at(&mut self, node_idx: usize, value: T) -> bool {
         if self.inner[node_idx].len() == self.node_capacity {
             let new_node = self.inner[node_idx].halve();
             let mut insert_node_idx = node_idx;
@@ -383,6 +368,34 @@ impl<T: Ord> BTreeSet<T> {
         } else {
             false
         }
+    }
+    /// Adds a value to the set.
+    ///
+    /// Returns whether the value was newly inserted. That is:
+    ///
+    /// - If the set did not previously contain an equal value, `true` is
+    ///   returned.
+    /// - If the set already contained an equal value, `false` is returned, and
+    ///   the entry is not updated.
+    ///
+    /// See the [module-level documentation] for more.
+    ///
+    /// [module-level documentation]: index.html#insert-and-complex-keys
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use indexset::BTreeSet;
+    ///
+    /// let mut set = BTreeSet::new();
+    ///
+    /// assert_eq!(set.insert(2), true);
+    /// assert_eq!(set.insert(2), false);
+    /// assert_eq!(set.len(), 1);
+    /// ```
+    pub fn insert(&mut self, value: T) -> bool {
+        let node_idx = self.locate_node(&value);
+        self.insert_at(node_idx, value)
     }
 
     /// Adds a value to the set, replacing the existing element, if any, that is
@@ -496,24 +509,38 @@ impl<T: Ord> BTreeSet<T> {
 
         (removal, removed)
     }
-    fn delete_cmp<P, Q, R>(&mut self, cmp: P, mut cmp2: R) -> (Option<T>, bool)
+
+    fn find_cmp<P, Q, R>(&mut self, cmp: P, mut cmp2: R) -> NodeEntry
     where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
         P: FnMut(&Q) -> bool,
         R: FnMut(&Q) -> bool,
     {
-        let mut removed = false;
-        let mut removal = None;
         let (node_idx, position_within_node) = self.locate_value_cmp(cmp);
-        if let Some(candidate_node) = self.inner.get(node_idx) {
-            if let Some(candidate_value) = candidate_node.get(position_within_node) {
-                if cmp2(candidate_value.borrow()) {
-                    removal = Some(self.delete_at(node_idx, position_within_node));
-                    removed = true;
-                }
+        self.inner.get(node_idx)
+        .and_then(|candidate_node| candidate_node.get(position_within_node))
+        .filter(|&candidate_value| cmp2(candidate_value.borrow()))
+        .map(|_| NodeEntry::Exist { node_idx, position_within_node })
+        .unwrap_or(NodeEntry::Empty { node_idx })
+    }
+
+
+    fn delete_cmp<P, Q, R>(&mut self, cmp: P, cmp2: R) -> (Option<T>, bool)
+    where
+        T: Borrow<Q>,
+        Q: Ord + ?Sized,
+        P: FnMut(&Q) -> bool,
+        R: FnMut(&Q) -> bool,
+    {
+        let removal = match self.find_cmp(cmp, cmp2) {
+            NodeEntry::Exist { node_idx, position_within_node } => {
+                Some(self.delete_at(node_idx, position_within_node))
             }
-        }
+            NodeEntry::Empty { .. } => None,
+        };
+
+        let removed = removal.is_some();
 
         (removal, removed)
     }
@@ -2245,20 +2272,21 @@ where
     /// assert_eq!(map.insert(37, "c"), Some("b"));
     /// assert_eq!(map[&37], "c");
     /// ```
-    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        if self.contains_key(&key) {
-            let old_entry = self
-                .set
-                .delete_cmp(|item: &Pair<K, V>| item.key < key, |item| item.key == key)
-                .0?;
+    pub fn insert(&mut self, key: K, mut value: V) -> Option<V> {
+        let cmp = |item: &Pair<K, V>| item.key < key;
+        let cmp2 = |item: &Pair<K, V>| item.key == key;
 
-            self.set.insert(Pair { key, value });
-
-            Some(old_entry.value)
-        } else {
-            self.set.insert(Pair { key, value });
-
-            None
+        match self.set.find_cmp(cmp, cmp2) {
+            NodeEntry::Exist { node_idx, position_within_node } => {
+                std::mem::swap(
+                    &mut self.set.inner[node_idx][position_within_node].value,
+                    &mut value);
+                Some(value)
+            },
+            NodeEntry::Empty { node_idx } => {
+                self.set.insert_at(node_idx, Pair { key, value });
+                None
+            },
         }
     }
     /// Creates a consuming iterator visiting all the keys, in sorted order.
