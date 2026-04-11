@@ -131,11 +131,11 @@ impl<T: Ord> BTreeSet<T> {
     ///
     /// let mut set: BTreeSet<i32> = BTreeSet::with_maximum_node_size(128);
     pub fn with_maximum_node_size(maximum_node_size: usize) -> Self {
-        let mut new: Self = Default::default();
-        new.inner = vec![Node::with_capacity(maximum_node_size)];
-        new.node_capacity = maximum_node_size;
-
-        new
+        Self {
+            inner: vec![Node::with_capacity(maximum_node_size)],
+            node_capacity: maximum_node_size,
+            ..Default::default()
+        }
     }
     /// Clears the set, removing all elements.
     ///

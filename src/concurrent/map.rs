@@ -304,6 +304,7 @@ where
     /// Removes a key from the map, returning the key and the value if the key
     /// was previously in the map and [`ChangeEvent`]s describing changes caused
     /// by this action.
+    #[allow(clippy::type_complexity)]
     pub fn remove_cdc<Q>(&self, key: &Q) -> (Option<(K, V)>, Vec<ChangeEvent<Pair<K, V>>>)
     where
         Pair<K, V>: Borrow<Q> + Ord,
@@ -329,6 +330,23 @@ where
     /// ```
     pub fn len(&self) -> usize {
         self.set.len()
+    }
+    /// Returns `true` if the map contains no elements.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use indexset::concurrent::map::BTreeMap;
+    ///
+    /// let mut a = BTreeMap::<usize, &str>::new();
+    /// assert!(a.is_empty());
+    /// a.insert(1, "a");
+    /// assert!(!a.is_empty());
+    /// ```
+    pub fn is_empty(&self) -> bool {
+        self.set.is_empty()
     }
     /// Returns the total number of allocated slots across all internal nodes.
     ///

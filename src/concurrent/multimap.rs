@@ -370,6 +370,7 @@ where
     /// key and the value if the key was previously in the map with
     /// [`ChangeEvent`]'s describing this `remove_some` action.
     #[cfg(feature = "cdc")]
+    #[allow(clippy::type_complexity)]
     pub fn remove_some_cdc<Q>(&self, key: &Q) -> (Option<(K, V)>, Vec<ChangeEvent<MultiPair<K, V>>>)
     where
         MultiPair<K, V>: Borrow<Q> + Ord,
@@ -416,6 +417,7 @@ where
     /// value if the key was previously in the map with [`ChangeEvent`]'s
     /// describing this `remove_some` action.
     #[cfg(feature = "cdc")]
+    #[allow(clippy::type_complexity)]
     pub fn remove_cdc(
         &self,
         key: &K,
@@ -451,6 +453,23 @@ where
     /// ```
     pub fn len(&self) -> usize {
         self.set.len()
+    }
+    /// Returns `true` if the multimap contains no elements.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use indexset::concurrent::multimap::BTreeMultiMap;
+    ///
+    /// let mut a = BTreeMultiMap::<usize, &str>::new();
+    /// assert!(a.is_empty());
+    /// a.insert(1, "a");
+    /// assert!(!a.is_empty());
+    /// ```
+    pub fn is_empty(&self) -> bool {
+        self.set.is_empty()
     }
     /// Returns the total number of allocated slots across all internal nodes.
     ///

@@ -132,6 +132,7 @@ where
         self.index.insert(node_id, Arc::new(Mutex::new(node)));
     }
 
+    #[allow(clippy::type_complexity)]
     pub(crate) fn put_cdc_checked(
         &self,
         value: T,
@@ -153,7 +154,7 @@ where
                         let first_node = Arc::new(Mutex::new(first_node));
 
                         drop(_global_guard);
-                        if let Ok(_) = self.index_lock.try_write() {
+                        if self.index_lock.try_write().is_ok() {
                             #[cfg(feature = "cdc")]
                             {
                                 let node_insertion = ChangeEvent::CreateNode {
@@ -202,10 +203,10 @@ where
                         return Ok((None, cdc));
                     }
 
-                    if old_max.is_some() {
+                    if let Some(old_max) = old_max {
                         operation = Some(Operation::UpdateMax(
                             target_node_entry.value().clone(),
-                            old_max.unwrap(),
+                            old_max,
                         ))
                     } else {
                         return Ok((None, cdc));
@@ -362,72 +363,68 @@ where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        loop {
-            let mut cdc = vec![];
-            let _global_guard = self.index_lock.read();
-            if let Some(target_node_entry) =
-                self.index.lower_bound(std::ops::Bound::Included(value))
-            {
-                let mut node_guard = target_node_entry.value().lock_arc();
-                let old_max = node_guard.max().cloned();
-                let deleted = NodeLike::delete(&mut *node_guard, value);
-                if deleted.is_none() {
-                    return (None, cdc);
-                }
-                let (deleted, idx) = deleted.expect("should be ok as checked before");
-
-                let operation = if node_guard.len() > 0 {
-                    #[cfg(feature = "cdc")]
-                    {
-                        let node_element_removal = ChangeEvent::RemoveAt {
-                            // is correct as node is locked and current thread is the only that can
-                            // fetch event_id, so events for this node will have monotonic id's.
-                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
-                            max_value: old_max
-                                .clone()
-                                .expect("Max value should exist as Node is not empty"),
-                            value: deleted.clone(),
-                            index: idx,
-                        };
-                        cdc.push(node_element_removal);
-                    }
-
-                    if old_max.as_ref() == node_guard.max() {
-                        return (Some(deleted), cdc);
-                    }
-
-                    Some(Operation::UpdateMax(
-                        target_node_entry.value().clone(),
-                        old_max.unwrap(),
-                    ))
-                } else {
-                    Some(Operation::MakeUnreachable(
-                        target_node_entry.value().clone(),
-                        old_max.unwrap(),
-                    ))
-                };
-
-                #[cfg(feature = "cdc")]
-                let operation_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
-
-                drop(node_guard);
-                drop(_global_guard);
-
-                let _global_guard = self.index_lock.write();
-
-                return if let Ok((_, value_cdc)) = operation.unwrap().commit(
-                    &self.index,
-                    #[cfg(feature = "cdc")]
-                    operation_id,
-                ) {
-                    cdc.extend(value_cdc);
-                    (Some(deleted), cdc)
-                } else {
-                    (Some(deleted), cdc)
-                };
+        let mut cdc = vec![];
+        let _global_guard = self.index_lock.read();
+        if let Some(target_node_entry) =
+            self.index.lower_bound(std::ops::Bound::Included(value))
+        {
+            let mut node_guard = target_node_entry.value().lock_arc();
+            let old_max = node_guard.max().cloned();
+            let deleted = NodeLike::delete(&mut *node_guard, value);
+            if deleted.is_none() {
+                return (None, cdc);
             }
+            let (deleted, idx) = deleted.expect("should be ok as checked before");
 
-            break;
+            let operation = if node_guard.len() > 0 {
+                #[cfg(feature = "cdc")]
+                {
+                    let node_element_removal = ChangeEvent::RemoveAt {
+                        // is correct as node is locked and current thread is the only that can
+                        // fetch event_id, so events for this node will have monotonic id's.
+                        event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                        max_value: old_max
+                            .clone()
+                            .expect("Max value should exist as Node is not empty"),
+                        value: deleted.clone(),
+                        index: idx,
+                    };
+                    cdc.push(node_element_removal);
+                }
+
+                if old_max.as_ref() == node_guard.max() {
+                    return (Some(deleted), cdc);
+                }
+
+                Some(Operation::UpdateMax(
+                    target_node_entry.value().clone(),
+                    old_max.unwrap(),
+                ))
+            } else {
+                Some(Operation::MakeUnreachable(
+                    target_node_entry.value().clone(),
+                    old_max.unwrap(),
+                ))
+            };
+
+            #[cfg(feature = "cdc")]
+            let operation_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
+
+            drop(node_guard);
+            drop(_global_guard);
+
+            let _global_guard = self.index_lock.write();
+
+            return if let Ok((_, value_cdc)) = operation.unwrap().commit(
+                &self.index,
+                #[cfg(feature = "cdc")]
+                operation_id,
+            ) {
+                cdc.extend(value_cdc);
+                (Some(deleted), cdc)
+            } else {
+                (Some(deleted), cdc)
+            };
         }
 
         (None, vec![])
@@ -523,6 +520,9 @@ where
             .iter()
             .map(|node| node.value().lock().len())
             .sum()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
     pub fn capacity(&self) -> usize {
         self.index
@@ -640,7 +640,7 @@ where
                                 .lock_arc(),
                         );
                         self.current_front_node_iter = Some(unsafe {
-                            std::mem::transmute(
+                            std::mem::transmute::<std::slice::Iter<'_, T>, std::slice::Iter<'a, T>>(
                                 self.current_front_node_guard
                                     .as_ref()
                                     .expect("was just set before")
@@ -701,7 +701,7 @@ where
                                     .lock_arc(),
                             );
                             self.current_front_node_iter = Some(unsafe {
-                                std::mem::transmute(
+                                std::mem::transmute::<std::slice::Iter<'_, T>, std::slice::Iter<'a, T>>(
                                     self.current_front_node_guard
                                         .as_ref()
                                         .expect("was just set before")
@@ -730,7 +730,7 @@ where
                         .lock_arc(),
                 );
                 self.current_front_node_iter = Some(unsafe {
-                    std::mem::transmute(
+                    std::mem::transmute::<std::slice::Iter<'_, T>, std::slice::Iter<'a, T>>(
                         self.current_front_node_guard
                             .as_ref()
                             .expect("was just set before")
@@ -798,7 +798,7 @@ where
                                 .lock_arc(),
                         );
                         self.current_back_node_iter = Some(unsafe {
-                            std::mem::transmute(
+                            std::mem::transmute::<std::slice::Iter<'_, T>, std::slice::Iter<'a, T>>(
                                 self.current_back_node_guard
                                     .as_ref()
                                     .expect("was just set before")
@@ -859,7 +859,7 @@ where
                                     .lock_arc(),
                             );
                             self.current_back_node_iter = Some(unsafe {
-                                std::mem::transmute(
+                                std::mem::transmute::<std::slice::Iter<'_, T>, std::slice::Iter<'a, T>>(
                                     self.current_back_node_guard
                                         .as_ref()
                                         .expect("was just set before")
@@ -888,7 +888,7 @@ where
                         .lock_arc(),
                 );
                 self.current_back_node_iter = Some(unsafe {
-                    std::mem::transmute(
+                    std::mem::transmute::<std::slice::Iter<'_, T>, std::slice::Iter<'a, T>>(
                         self.current_back_node_guard
                             .as_ref()
                             .expect("was just set before")
@@ -1250,7 +1250,7 @@ where
         if let Some(mut front_entry_guard) = potential_front_entry_guard {
             let front_entry = potential_front_entry.unwrap();
             // But no back entry
-            if let None = potential_back_entry_guard {
+            if potential_back_entry_guard.is_none() {
                 // Then we drain the front entry
                 let adjusted_back_position = {
                     if potential_front_position > potential_back_position {
@@ -1274,16 +1274,12 @@ where
             } else if let Some(mut back_entry_guard) = potential_back_entry_guard {
                 let back_entry = potential_back_entry.unwrap();
                 // Otherwise we remove every single node between them
-                loop {
-                    if let Some(next_entry) = front_entry.next() {
-                        if next_entry.key().eq(back_entry.key()) {
-                            break;
-                        }
-
-                        next_entry.remove();
-                    } else {
+                while let Some(next_entry) = front_entry.next() {
+                    if next_entry.key().eq(back_entry.key()) {
                         break;
                     }
+
+                    next_entry.remove();
                 }
 
                 // And then trim the front from the left

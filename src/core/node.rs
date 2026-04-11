@@ -14,6 +14,8 @@ pub trait NodeLike<T: Ord> {
     #[allow(dead_code)]
     fn len(&self) -> usize;
     #[allow(dead_code)]
+    fn is_empty(&self) -> bool { self.len() == 0 }
+    #[allow(dead_code)]
     fn capacity(&self) -> usize;
     #[allow(dead_code)]
     fn insert(&mut self, value: T) -> (bool, usize);
@@ -44,7 +46,7 @@ pub trait NodeLike<T: Ord> {
 }
 
 #[inline]
-fn search<Q, T: Ord>(haystack: &[T], needle: &Q) -> Result<usize, usize>
+fn search<Q, T>(haystack: &[T], needle: &Q) -> Result<usize, usize>
 where
     T: Borrow<Q> + Ord,
     Q: Ord + ?Sized,
@@ -78,7 +80,7 @@ enum Direction<'a, T> {
 }
 
 #[inline]
-fn compute_positions_to_skip<Q, T: Ord>(haystack: &[T], bound: std::ops::Bound<&Q>, forward: bool) -> Option<usize>
+fn compute_positions_to_skip<Q, T>(haystack: &[T], bound: std::ops::Bound<&Q>, forward: bool) -> Option<usize>
 where
     T: Borrow<Q> + Ord,
     Q: Ord + ?Sized,
