@@ -366,7 +366,7 @@ where
             let mut cdc = vec![];
             let _global_guard = self.index_lock.read();
             if let Some(target_node_entry) =
-                self.index.lower_bound(std::ops::Bound::Included(&value))
+                self.index.lower_bound(std::ops::Bound::Included(value))
             {
                 let mut node_guard = target_node_entry.value().lock_arc();
                 let old_max = node_guard.max().cloned();
@@ -463,7 +463,7 @@ where
         Q: Ord + ?Sized,
     {
         let _global_guard = self.index_lock.read();
-        match self.index.lower_bound(std::ops::Bound::Included(&value)) {
+        match self.index.lower_bound(std::ops::Bound::Included(value)) {
             Some(entry) => Some(entry.value().clone()),
             None => self
                 .index
@@ -982,16 +982,14 @@ where
                 drop(front_guard);
 
                 front_value
-            } else {
-                if let Some(pre_front_entry) = front_entry.prev() {
-                    let pre_front_guard = pre_front_entry.value().lock_arc();
-                    let front_value = pre_front_guard.iter().last().cloned();
-                    drop(pre_front_guard);
+            } else if let Some(pre_front_entry) = front_entry.prev() {
+                let pre_front_guard = pre_front_entry.value().lock_arc();
+                let front_value = pre_front_guard.iter().last().cloned();
+                drop(pre_front_guard);
 
-                    front_value
-                } else {
-                    None
-                }
+                front_value
+            } else {
+                None
             }
         } else {
             None
@@ -1016,16 +1014,14 @@ where
                 drop(back_guard);
 
                 back_value
-            } else {
-                if let Some(prev_back_entry) = back_entry.next() {
-                    let prev_back_guard = prev_back_entry.value().lock_arc();
-                    let back_value = prev_back_guard.iter().next().cloned();
-                    drop(prev_back_guard);
+            } else if let Some(prev_back_entry) = back_entry.next() {
+                let prev_back_guard = prev_back_entry.value().lock_arc();
+                let back_value = prev_back_guard.iter().next().cloned();
+                drop(prev_back_guard);
 
-                    back_value
-                } else {
-                    None
-                }
+                back_value
+            } else {
+                None
             }
         } else {
             None
@@ -1234,16 +1230,13 @@ where
                         }
 
                         guard = Some(new_guard);
-                    } else {
-                        if let Some((len, position)) = potential_front_entry_guard
-                            .as_ref()
-                            .and_then(|g| Some((g.len(), g.rank(end_bound, true))))
-                        {
-                            if let Some(position) = position {
-                                back_position = position;
-                            } else {
-                                back_position = len;
-                            }
+                    } else if let Some((len, position)) = potential_front_entry_guard
+                        .as_ref().map(|g| (g.len(), g.rank(end_bound, true)))
+                    {
+                        if let Some(position) = position {
+                            back_position = position;
+                        } else {
+                            back_position = len;
                         }
                     }
                 }
@@ -1278,8 +1271,6 @@ where
                 // Otherwise we insert it again with a new max
                 let new_max = front_entry_guard.last().unwrap().clone();
                 self.index.insert(new_max, old_entry_value);
-
-                return;
             } else if let Some(mut back_entry_guard) = potential_back_entry_guard {
                 let back_entry = potential_back_entry.unwrap();
                 // Otherwise we remove every single node between them
@@ -1313,7 +1304,6 @@ where
                 }
 
                 // And that's it
-                return;
             }
         }
     }

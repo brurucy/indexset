@@ -263,7 +263,7 @@ impl<T: Ord> BTreeSet<T> {
     }
     fn get_mut_index(&mut self, index: usize) -> Option<&mut T> {
         let (node_idx, position_within_node) = self.locate_ith(index);
-        if let Some(_) = self.inner.get(node_idx) {
+        if self.inner.get(node_idx).is_some() {
             return self.inner[node_idx].get_mut(position_within_node);
         }
 
@@ -470,7 +470,7 @@ impl<T: Ord> BTreeSet<T> {
 
         let mut decrease_length = false;
         // check whether the node has to be deleted
-        if self.inner[node_idx].len() == 0 {
+        if self.inner[node_idx].is_empty() {
             // delete it as long as it is not the last remaining node
             if self.inner.len() > 1 {
                 self.inner.remove(node_idx);
@@ -610,8 +610,8 @@ impl<T: Ord> BTreeSet<T> {
     /// assert_eq!(set.first(), Some(&1));
     /// ```
     pub fn first(&self) -> Option<&T> {
-        if let Some(candidate_node) = self.inner.get(0) {
-            return candidate_node.get(0);
+        if let Some(candidate_node) = self.inner.first() {
+            return candidate_node.first();
         }
 
         None
@@ -634,9 +634,9 @@ impl<T: Ord> BTreeSet<T> {
     /// assert_eq!(set.last(), Some(&2));
     /// ```
     pub fn last(&self) -> Option<&T> {
-        if let Some(candidate_node) = self.inner.get(self.inner.len() - 1) {
-            if candidate_node.len() > 0 {
-                return candidate_node.get(candidate_node.len() - 1);
+        if let Some(candidate_node) = self.inner.last() {
+            if !candidate_node.is_empty() {
+                return candidate_node.last();
             }
         }
 
@@ -835,7 +835,7 @@ impl<T: Ord> BTreeSet<T> {
     /// assert_eq!(set_iter.next(), Some(&3));
     /// assert_eq!(set_iter.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter<T> {
+    pub fn iter(&self) -> Iter<'_, T> {
         Iter::new(self)
     }
     /// Visits the elements representing the union,
@@ -1016,7 +1016,7 @@ impl<T: Ord> BTreeSet<T> {
         latter_half.inner = remaining_nodes;
         latter_half.index = FenwickTree::from_iter(latter_half.inner.iter().map(|node| node.len()));
 
-        if self.inner[node_idx].len() == 0 && self.inner.len() > 1 {
+        if self.inner[node_idx].is_empty() && self.inner.len() > 1 {
             self.inner.remove(node_idx);
         }
 
@@ -1072,7 +1072,7 @@ impl<T: Ord> BTreeSet<T> {
         latter_half.inner = remaining_nodes;
         latter_half.index = FenwickTree::from_iter(latter_half.inner.iter().map(|node| node.len()));
 
-        if self.inner[node_idx].len() == 0 && self.inner.len() > 1 {
+        if self.inner[node_idx].is_empty() && self.inner.len() > 1 {
             self.inner.remove(node_idx);
         }
 
@@ -1508,7 +1508,7 @@ where
                 } else {
                     self.current_left = self.left_iter.next();
                 }
-            } else if let Some(_) = self.current_right {
+            } else if self.current_right.is_some() {
                 self.current_right = self.right_iter.next();
             } else {
                 return None;
@@ -1869,7 +1869,7 @@ where
         let rank = self
             .map
             .set
-            .rank_cmp(|item: &Pair<K, V>| &item.key < &self.key);
+            .rank_cmp(|item: &Pair<K, V>| item.key < self.key);
         self.map.insert(self.key, value);
 
         self.map.get_mut_index(rank).unwrap()
@@ -2369,7 +2369,7 @@ where
     /// let (first_key, first_value) = map.iter().next().unwrap();
     /// assert_eq!((*first_key, *first_value), (1, "a"));
     /// ```
-    pub fn iter(&self) -> IterMap<K, V> {
+    pub fn iter(&self) -> IterMap<'_, K, V> {
         IterMap {
             inner: self.set.iter(),
         }
@@ -2396,7 +2396,7 @@ where
     ///     }
     /// }
     /// ```
-    pub fn iter_mut(&mut self) -> IterMut<K, V> {
+    pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
         let last_node_idx = self.set.inner.len() - 1;
         let len = self.set.len();
 
@@ -2461,7 +2461,7 @@ where
     /// let keys: Vec<_> = a.keys().cloned().collect();
     /// assert_eq!(keys, [1, 2]);
     /// ```
-    pub fn keys(&self) -> Keys<K, V> {
+    pub fn keys(&self) -> Keys<'_, K, V> {
         Keys {
             inner: self.set.iter(),
         }
@@ -2643,7 +2643,7 @@ where
     /// }
     /// assert_eq!(Some((&5, &"b")), map.range(4..).next());
     /// ```
-    pub fn range<Q, R>(&self, range: R) -> RangeMap<K, V>
+    pub fn range<Q, R>(&self, range: R) -> RangeMap<'_, K, V>
     where
         Q: Ord + ?Sized,
         K: Borrow<Q>,
@@ -2655,7 +2655,7 @@ where
             inner: self.set.range_idx(start_idx..=end_idx),
         }
     }
-    pub fn range_idx<R>(&self, range: R) -> RangeMap<K, V>
+    pub fn range_idx<R>(&self, range: R) -> RangeMap<'_, K, V>
     where
         R: RangeBounds<usize>,
     {
@@ -2693,7 +2693,7 @@ where
                 rank - 1
             }
             Bound::Unbounded => {
-                if self.len() == 0 {
+                if self.is_empty() {
                     // Empty map, return empty range
                     return (1, 0);
                 }
@@ -2731,7 +2731,7 @@ where
     ///     println!("{name} => {balance}");
     /// }
     /// ```
-    pub fn range_mut<Q, R>(&mut self, range: R) -> RangeMut<K, V>
+    pub fn range_mut<Q, R>(&mut self, range: R) -> RangeMut<'_, K, V>
     where
         Q: Ord + ?Sized,
         K: Borrow<Q>,
@@ -2741,7 +2741,7 @@ where
 
         self.range_mut_idx(start_idx..=end_idx)
     }
-    pub fn range_mut_idx<R>(&mut self, range: R) -> RangeMut<K, V>
+    pub fn range_mut_idx<R>(&mut self, range: R) -> RangeMut<'_, K, V>
     where
         R: RangeBounds<usize>,
     {
@@ -2958,7 +2958,7 @@ where
     /// let values: Vec<&str> = a.values().cloned().collect();
     /// assert_eq!(values, ["hello", "goodbye"]);
     /// ```
-    pub fn values(&self) -> Values<K, V> {
+    pub fn values(&self) -> Values<'_, K, V> {
         Values {
             inner: self.set.iter(),
         }
@@ -2984,7 +2984,7 @@ where
     /// assert_eq!(values, [String::from("hello!"),
     ///                     String::from("goodbye!")]);
     /// ```
-    pub fn values_mut(&mut self) -> ValuesMut<K, V> {
+    pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
         ValuesMut {
             inner: self.iter_mut(),
         }
