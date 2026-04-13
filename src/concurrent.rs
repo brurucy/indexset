@@ -1,7 +1,7 @@
 pub mod map;
-pub mod set;
-pub(crate) mod r#ref;
 pub(crate) mod operation;
+pub(crate) mod r#ref;
+pub mod set;
 
 #[cfg(feature = "multimap")]
 pub mod multimap;

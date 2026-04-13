@@ -253,10 +253,7 @@ where
     pub fn insert(&self, key: K, value: V) -> Option<V> {
         let new_entry = Pair { key, value };
 
-        self.set
-            .put_cdc(new_entry)
-            .0
-            .and_then(|pair| Some(pair.value))
+        self.set.put_cdc(new_entry).0.and_then(|pair| Some(pair.value))
     }
     pub fn checked_insert(&self, key: K, value: V) -> Option<()> {
         let new_entry = Pair { key, value };
@@ -299,9 +296,7 @@ where
         Pair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        self.set
-            .remove(key)
-            .and_then(|pair| Some((pair.key, pair.value)))
+        self.set.remove(key).and_then(|pair| Some((pair.key, pair.value)))
     }
     /// Removes a key from the map, returning the key and the value if the key
     /// was previously in the map and [`ChangeEvent`]s describing changes caused
@@ -397,9 +392,7 @@ where
     /// assert_eq!((*first_key, *first_value), (1, "a"));
     /// ```
     pub fn iter(&self) -> Iter<'_, K, V, Node> {
-        Iter {
-            inner: self.set.iter(),
-        }
+        Iter { inner: self.set.iter() }
     }
     /// Constructs a double-ended iterator over a sub-range of elements in the map.
     /// The simplest way is to use the range syntax `min..max`, thus `range(min..max)` will
@@ -491,17 +484,11 @@ mod tests {
     impl<K: Debug + Ord + Clone, V: Debug + Clone + PartialEq> PersistedBTreeMap<K, V> {
         fn persist(&mut self, event: &ChangeEvent<Pair<K, V>>) {
             match event {
-                ChangeEvent::CreateNode {
-                    max_value,
-                    event_id: _,
-                } => {
+                ChangeEvent::CreateNode { max_value, event_id: _ } => {
                     let node = vec![max_value.clone()];
                     self.nodes.insert(max_value.key.clone(), node);
                 }
-                ChangeEvent::RemoveNode {
-                    max_value,
-                    event_id: _,
-                } => {
+                ChangeEvent::RemoveNode { max_value, event_id: _ } => {
                     self.nodes.remove(&max_value.key);
                 }
                 ChangeEvent::InsertAt {

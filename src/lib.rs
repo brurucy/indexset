@@ -96,7 +96,7 @@ enum NodeEntry {
     },
     Empty {
         node_idx: usize,
-    }
+    },
 }
 
 impl<T: Ord> BTreeSet<T> {
@@ -116,9 +116,7 @@ impl<T: Ord> BTreeSet<T> {
     /// let mut set: BTreeSet<i32> = BTreeSet::new();
     /// ```
     pub fn new() -> Self {
-        Self {
-            ..Default::default()
-        }
+        Self { ..Default::default() }
     }
     /// Makes a new, empty `BTreeSet` with the given maximum node size. Allocates one vec with
     /// the capacity set to be the specified node size.
@@ -203,8 +201,7 @@ impl<T: Ord> BTreeSet<T> {
         Q: Ord + ?Sized,
     {
         let node_idx = self.locate_node(value);
-        let position_within_node =
-            self.inner[node_idx].partition_point(|item| item.borrow() < value);
+        let position_within_node = self.inner[node_idx].partition_point(|item| item.borrow() < value);
 
         (node_idx, position_within_node)
     }
@@ -518,13 +515,16 @@ impl<T: Ord> BTreeSet<T> {
         R: FnMut(&Q) -> bool,
     {
         let (node_idx, position_within_node) = self.locate_value_cmp(cmp);
-        self.inner.get(node_idx)
-        .and_then(|candidate_node| candidate_node.get(position_within_node))
-        .filter(|&candidate_value| cmp2(candidate_value.borrow()))
-        .map(|_| NodeEntry::Exist { node_idx, position_within_node })
-        .unwrap_or(NodeEntry::Empty { node_idx })
+        self.inner
+            .get(node_idx)
+            .and_then(|candidate_node| candidate_node.get(position_within_node))
+            .filter(|&candidate_value| cmp2(candidate_value.borrow()))
+            .map(|_| NodeEntry::Exist {
+                node_idx,
+                position_within_node,
+            })
+            .unwrap_or(NodeEntry::Empty { node_idx })
     }
-
 
     fn delete_cmp<P, Q, R>(&mut self, cmp: P, cmp2: R) -> (Option<T>, bool)
     where
@@ -534,9 +534,10 @@ impl<T: Ord> BTreeSet<T> {
         R: FnMut(&Q) -> bool,
     {
         let removal = match self.find_cmp(cmp, cmp2) {
-            NodeEntry::Exist { node_idx, position_within_node } => {
-                Some(self.delete_at(node_idx, position_within_node))
-            }
+            NodeEntry::Exist {
+                node_idx,
+                position_within_node,
+            } => Some(self.delete_at(node_idx, position_within_node)),
             NodeEntry::Empty { .. } => None,
         };
 
@@ -1119,8 +1120,7 @@ impl<T: Ord> BTreeSet<T> {
         R: RangeBounds<usize>,
     {
         let mut global_front_idx: usize = 0;
-        let mut global_back_idx: usize =
-            self.index.prefix_sum(self.inner.len(), 0).saturating_sub(1);
+        let mut global_back_idx: usize = self.index.prefix_sum(self.inner.len(), 0).saturating_sub(1);
 
         // Solving global indexes
         let start = range.start_bound();
@@ -1244,10 +1244,8 @@ impl<T: Ord> BTreeSet<T> {
     where
         R: RangeBounds<usize>,
     {
-        let (
-            (global_front_idx, front_node_idx, front_start_idx),
-            (global_back_idx, back_node_idx, back_start_idx),
-        ) = self.resolve_range(range);
+        let ((global_front_idx, front_node_idx, front_start_idx), (global_back_idx, back_node_idx, back_start_idx)) =
+            self.resolve_range(range);
 
         let front_iter = if front_node_idx < self.inner.len() {
             Some(self.inner[front_node_idx][front_start_idx..].iter())
@@ -1374,8 +1372,7 @@ where
             if self.current_front_node_idx >= self.btree.inner.len() {
                 return None;
             }
-            self.current_front_iterator =
-                Some(self.btree.inner[self.current_front_node_idx].iter());
+            self.current_front_iterator = Some(self.btree.inner[self.current_front_node_idx].iter());
 
             self.next()
         }
@@ -1390,11 +1387,7 @@ where
         if self.current_front_idx == self.current_back_idx {
             return None;
         }
-        if let Some(value) = self
-            .current_back_iterator
-            .as_mut()
-            .and_then(|i| i.next_back())
-        {
+        if let Some(value) = self.current_back_iterator.as_mut().and_then(|i| i.next_back()) {
             self.current_back_idx -= 1;
             Some(value)
         } else {
@@ -1866,10 +1859,7 @@ where
         self.key
     }
     pub fn insert(self, value: V) -> &'a mut V {
-        let rank = self
-            .map
-            .set
-            .rank_cmp(|item: &Pair<K, V>| &item.key < &self.key);
+        let rank = self.map.set.rank_cmp(|item: &Pair<K, V>| &item.key < &self.key);
         self.map.insert(self.key, value);
 
         self.map.get_mut_index(rank).unwrap()
@@ -2172,9 +2162,7 @@ where
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        let (node_idx, position_within_node) = self
-            .set
-            .locate_value_cmp(|item: &Pair<K, V>| item.key.borrow() < key);
+        let (node_idx, position_within_node) = self.set.locate_value_cmp(|item: &Pair<K, V>| item.key.borrow() < key);
         if let Some(candidate_node) = self.set.inner.get(node_idx) {
             if let Some(candidate_value) = candidate_node.get(position_within_node) {
                 if candidate_value.key.borrow() == key {
@@ -2209,12 +2197,8 @@ where
         K: Borrow<Q> + Ord,
         Q: Ord,
     {
-        let (node_idx, position_within_node) = self
-            .set
-            .locate_value_cmp(|item: &Pair<K, V>| item.key.borrow() < key);
-        if self.set.inner.get(node_idx).is_some()
-            && self.set.inner[node_idx].get(position_within_node).is_some()
-        {
+        let (node_idx, position_within_node) = self.set.locate_value_cmp(|item: &Pair<K, V>| item.key.borrow() < key);
+        if self.set.inner.get(node_idx).is_some() && self.set.inner[node_idx].get(position_within_node).is_some() {
             let entry = self.set.inner[node_idx].get_mut(position_within_node)?;
             if key == entry.key.borrow() {
                 return Some(&mut entry.value);
@@ -2277,16 +2261,17 @@ where
         let cmp2 = |item: &Pair<K, V>| item.key == key;
 
         match self.set.find_cmp(cmp, cmp2) {
-            NodeEntry::Exist { node_idx, position_within_node } => {
-                std::mem::swap(
-                    &mut self.set.inner[node_idx][position_within_node].value,
-                    &mut value);
+            NodeEntry::Exist {
+                node_idx,
+                position_within_node,
+            } => {
+                std::mem::swap(&mut self.set.inner[node_idx][position_within_node].value, &mut value);
                 Some(value)
-            },
+            }
             NodeEntry::Empty { node_idx } => {
                 self.set.insert_at(node_idx, Pair { key, value });
                 None
-            },
+            }
         }
     }
     /// Creates a consuming iterator visiting all the keys, in sorted order.
@@ -2370,9 +2355,7 @@ where
     /// assert_eq!((*first_key, *first_value), (1, "a"));
     /// ```
     pub fn iter(&self) -> IterMap<K, V> {
-        IterMap {
-            inner: self.set.iter(),
-        }
+        IterMap { inner: self.set.iter() }
     }
     /// Gets a mutable iterator over the entries of the map, sorted by key.
     ///
@@ -2415,7 +2398,7 @@ where
                 inner,
                 current_front_node_idx: 0,
                 current_front_idx: 0,
-                current_back_node_idx: 0,  // Same as front for single node
+                current_back_node_idx: 0, // Same as front for single node
                 current_back_idx: len.wrapping_sub(1),
                 current_front_iterator: front_iter,
                 current_back_iterator: back_iter,
@@ -2462,9 +2445,7 @@ where
     /// assert_eq!(keys, [1, 2]);
     /// ```
     pub fn keys(&self) -> Keys<K, V> {
-        Keys {
-            inner: self.set.iter(),
-        }
+        Keys { inner: self.set.iter() }
     }
     /// Returns the last key-value pair in the map.
     /// The key in this pair is the maximum key in the map.
@@ -2523,9 +2504,7 @@ where
     /// map.insert(1, "a");
     /// ```
     pub fn new() -> Self {
-        Self {
-            ..Default::default()
-        }
+        Self { ..Default::default() }
     }
     /// Makes a new, empty `BTreeSet` with the given maximum node size. Allocates one vec with
     /// the capacity set to be the specified node size.
@@ -2670,22 +2649,14 @@ where
         R: RangeBounds<Q>,
     {
         let start_idx = match range.start_bound() {
-            Bound::Included(bound) => self
-                .set
-                .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound),
-            Bound::Excluded(bound) => self
-                .set
-                .rank_cmp(|item: &Pair<K, V>| item.key.borrow() <= bound),
+            Bound::Included(bound) => self.set.rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound),
+            Bound::Excluded(bound) => self.set.rank_cmp(|item: &Pair<K, V>| item.key.borrow() <= bound),
             Bound::Unbounded => 0,
         };
         let end_idx = match range.end_bound() {
-            Bound::Included(bound) => self
-                .set
-                .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound),
+            Bound::Included(bound) => self.set.rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound),
             Bound::Excluded(bound) => {
-                let rank = self
-                    .set
-                    .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound);
+                let rank = self.set.rank_cmp(|item: &Pair<K, V>| item.key.borrow() < bound);
                 if rank == 0 {
                     // No elements before this bound, return empty range
                     return (1, 0);
@@ -2745,10 +2716,8 @@ where
     where
         R: RangeBounds<usize>,
     {
-        let (
-            (global_front_idx, front_node_idx, front_start_idx),
-            (global_back_idx, back_node_idx, back_start_idx),
-        ) = self.set.resolve_range(range);
+        let ((global_front_idx, front_node_idx, front_start_idx), (global_back_idx, back_node_idx, back_start_idx)) =
+            self.set.resolve_range(range);
         let end = self.set.inner[back_node_idx].len();
 
         let mut inner = self.set.inner.iter_mut();
@@ -2937,9 +2906,7 @@ where
         Q: Ord,
     {
         BTreeMap {
-            set: self
-                .set
-                .split_off_cmp(|item: &Pair<K, V>| item.key.borrow() < key),
+            set: self.set.split_off_cmp(|item: &Pair<K, V>| item.key.borrow() < key),
         }
     }
     /// Gets an iterator over the values of the map, in order by key.
@@ -2959,9 +2926,7 @@ where
     /// assert_eq!(values, ["hello", "goodbye"]);
     /// ```
     pub fn values(&self) -> Values<K, V> {
-        Values {
-            inner: self.set.iter(),
-        }
+        Values { inner: self.set.iter() }
     }
     /// Gets a mutable iterator over the values of the map, in order by key.
     ///
@@ -2985,9 +2950,7 @@ where
     ///                     String::from("goodbye!")]);
     /// ```
     pub fn values_mut(&mut self) -> ValuesMut<K, V> {
-        ValuesMut {
-            inner: self.iter_mut(),
-        }
+        ValuesMut { inner: self.iter_mut() }
     }
     /// Gets the given key's corresponding entry in the map for in-place manipulation.
     ///
@@ -3113,14 +3076,8 @@ where
         Q: Ord,
     {
         let start_idx = match bound {
-            Bound::Included(start) => self
-                .set
-                .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < start),
-            Bound::Excluded(start) => {
-                self.set
-                    .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < start)
-                    + 1
-            }
+            Bound::Included(start) => self.set.rank_cmp(|item: &Pair<K, V>| item.key.borrow() < start),
+            Bound::Excluded(start) => self.set.rank_cmp(|item: &Pair<K, V>| item.key.borrow() < start) + 1,
             Bound::Unbounded => 0,
         };
 
@@ -3154,8 +3111,7 @@ where
         Q: Ord + ?Sized,
         K: Borrow<Q>,
     {
-        self.set
-            .rank_cmp(|item: &Pair<K, V>| item.key.borrow() < value)
+        self.set.rank_cmp(|item: &Pair<K, V>| item.key.borrow() < value)
     }
 }
 
@@ -3197,9 +3153,7 @@ where
     type IntoIter = IterMap<'a, K, V>;
 
     fn into_iter(self) -> Self::IntoIter {
-        IterMap {
-            inner: self.set.iter(),
-        }
+        IterMap { inner: self.set.iter() }
     }
 }
 
@@ -3581,8 +3535,9 @@ where
                 return None;
             }
             // Handle single node case or adjacent nodes
-            if self.current_front_node_idx == self.current_back_node_idx ||
-               self.current_front_node_idx == self.current_back_node_idx - 1 {
+            if self.current_front_node_idx == self.current_back_node_idx
+                || self.current_front_node_idx == self.current_back_node_idx - 1
+            {
                 // take from the current front iter
                 if let Some(entry) = self.current_front_iterator.next_back() {
                     if self.current_back_idx > 0 {
@@ -3822,13 +3777,12 @@ mod tests {
 
         let expected_output: Vec<isize> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-        let actual_node =
-            input
-                .iter()
-                .fold(Node::with_capacity(DEFAULT_INNER_SIZE), |mut acc, curr| {
-                    NodeLike::insert(&mut acc, *curr);
-                    acc
-                });
+        let actual_node = input
+            .iter()
+            .fold(Node::with_capacity(DEFAULT_INNER_SIZE), |mut acc, curr| {
+                NodeLike::insert(&mut acc, *curr);
+                acc
+            });
 
         let actual_output: Vec<isize> = actual_node.iter().cloned().collect();
 
@@ -3950,10 +3904,7 @@ mod tests {
         btree.iter().for_each(|item| {
             if *item < DEFAULT_INNER_SIZE {
                 assert_eq!(front_spine.get_index(0), front_spine.first());
-                assert_eq!(
-                    front_spine.pop_first().unwrap() + 1,
-                    *front_spine.first().unwrap()
-                );
+                assert_eq!(front_spine.pop_first().unwrap() + 1, *front_spine.first().unwrap());
             } else {
                 assert_eq!(front_spine.pop_first().unwrap(), DEFAULT_INNER_SIZE);
                 assert_eq!(front_spine.first(), None);
@@ -3962,14 +3913,8 @@ mod tests {
 
         input.iter().rev().for_each(|item| {
             if *item > 0 {
-                assert_eq!(
-                    back_spine.get_index(back_spine.len() - 1),
-                    back_spine.last()
-                );
-                assert_eq!(
-                    back_spine.pop_last().unwrap() - 1,
-                    *back_spine.last().unwrap()
-                );
+                assert_eq!(back_spine.get_index(back_spine.len() - 1), back_spine.last());
+                assert_eq!(back_spine.pop_last().unwrap() - 1, *back_spine.last().unwrap());
             } else {
                 assert_eq!(back_spine.pop_last(), Some(0));
                 assert_eq!(back_spine.last(), None);
@@ -4000,10 +3945,7 @@ mod tests {
 
         expected_output.into_iter().for_each(|item| {
             assert_eq!(*btree.get_index(item).unwrap(), item);
-            assert_eq!(
-                *btree.get_index(item).unwrap(),
-                *btree.lower_bound(&item).unwrap()
-            );
+            assert_eq!(*btree.get_index(item).unwrap(), *btree.lower_bound(&item).unwrap());
             assert!(btree.contains(&item));
         });
     }
@@ -4025,14 +3967,10 @@ mod tests {
         let btree = BTreeMap::from_iter((0..(DEFAULT_INNER_SIZE * 10)).enumerate().rev());
         assert_eq!(btree.set.inner.len(), 19);
         let expected_forward = Vec::from_iter((0..(DEFAULT_INNER_SIZE * 10)).enumerate());
-        btree
-            .clone()
-            .iter_mut()
-            .zip(expected_forward)
-            .for_each(|(lhs, rhs)| {
-                assert_eq!(*lhs.0, rhs.0);
-                assert_eq!(*lhs.1, rhs.1);
-            });
+        btree.clone().iter_mut().zip(expected_forward).for_each(|(lhs, rhs)| {
+            assert_eq!(*lhs.0, rhs.0);
+            assert_eq!(*lhs.1, rhs.1);
+        });
 
         let expected_backward = Vec::from_iter((0..(DEFAULT_INNER_SIZE * 10)).enumerate().rev());
         btree
@@ -4083,26 +4021,11 @@ mod tests {
             Vec::from_iter(btree.range_idx(..10).cloned()),
             Vec::from_iter(btree.iter().cloned())
         );
-        assert_eq!(
-            Vec::from_iter(btree.range_idx(1..2).cloned()),
-            first_to_second
-        );
-        assert_eq!(
-            Vec::from_iter(btree.range_idx(3..10).cloned()),
-            three_til_end
-        );
-        assert_eq!(
-            Vec::from_iter(btree.range_idx(0..4).cloned()),
-            start_til_four
-        );
-        assert_eq!(
-            Vec::from_iter(btree.range_idx(0..10).cloned()),
-            start_til_end
-        );
-        assert_eq!(
-            Vec::from_iter(btree.range_idx(5..=6).cloned()),
-            five_til_six_included
-        );
+        assert_eq!(Vec::from_iter(btree.range_idx(1..2).cloned()), first_to_second);
+        assert_eq!(Vec::from_iter(btree.range_idx(3..10).cloned()), three_til_end);
+        assert_eq!(Vec::from_iter(btree.range_idx(0..4).cloned()), start_til_four);
+        assert_eq!(Vec::from_iter(btree.range_idx(0..10).cloned()), start_til_end);
+        assert_eq!(Vec::from_iter(btree.range_idx(5..=6).cloned()), five_til_six_included);
         assert_eq!(
             Vec::from_iter(btree.range_idx(0..=7).cloned()),
             start_til_seven_included
@@ -4195,9 +4118,7 @@ mod tests {
     #[test]
     fn test_non_boolean_set_operations() {
         let left_spine = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 1)).into_iter());
-        let right_spine = BTreeSet::from_iter(
-            ((DEFAULT_INNER_SIZE - 1)..((DEFAULT_INNER_SIZE + 1) * 2)).into_iter(),
-        );
+        let right_spine = BTreeSet::from_iter(((DEFAULT_INNER_SIZE - 1)..((DEFAULT_INNER_SIZE + 1) * 2)).into_iter());
 
         let mut union = left_spine.clone();
         let mut temp_right_spine = right_spine.clone();
@@ -4215,14 +4136,8 @@ mod tests {
         let left_diff = Vec::from_iter(0..(DEFAULT_INNER_SIZE - 1));
         let right_diff = Vec::from_iter((DEFAULT_INNER_SIZE + 1)..((DEFAULT_INNER_SIZE + 1) * 2));
 
-        assert_eq!(
-            left_diff,
-            Vec::from_iter(left_spine.difference(&right_spine).cloned())
-        );
-        assert_eq!(
-            right_diff,
-            Vec::from_iter(right_spine.difference(&left_spine).cloned())
-        );
+        assert_eq!(left_diff, Vec::from_iter(left_spine.difference(&right_spine).cloned()));
+        assert_eq!(right_diff, Vec::from_iter(right_spine.difference(&left_spine).cloned()));
 
         let intersection = vec![DEFAULT_INNER_SIZE - 1, DEFAULT_INNER_SIZE];
         assert_eq!(
@@ -4248,8 +4163,7 @@ mod tests {
         assert!(empty_set.is_empty());
         let a = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 1)).into_iter());
         let b = BTreeSet::from_iter((0..(DEFAULT_INNER_SIZE + 2)).into_iter());
-        let c =
-            BTreeSet::from_iter(((DEFAULT_INNER_SIZE + 2)..(DEFAULT_INNER_SIZE + 4)).into_iter());
+        let c = BTreeSet::from_iter(((DEFAULT_INNER_SIZE + 2)..(DEFAULT_INNER_SIZE + 4)).into_iter());
 
         assert!(a.is_subset(&a));
         assert!(a.is_superset(&a));
@@ -4290,12 +4204,7 @@ mod tests {
         let btree: BTreeSet<usize> = BTreeSet::from_iter(0..10);
         assert_eq!(btree.range((Included(5), Included(10))).count(), 5);
         assert_eq!(btree.range((Included(5), Included(11))).count(), 5);
-        assert_eq!(
-            btree
-                .range((Included(5), Included(10 + DEFAULT_INNER_SIZE)))
-                .count(),
-            5
-        );
+        assert_eq!(btree.range((Included(5), Included(10 + DEFAULT_INNER_SIZE))).count(), 5);
         assert_eq!(btree.range((Included(0), Included(11))).count(), 10);
     }
 
@@ -4316,10 +4225,7 @@ mod tests {
             (0..=DEFAULT_INNER_SIZE + 1).count()
         );
 
-        assert_eq!(
-            btree.iter().rev().count(),
-            (0..(DEFAULT_INNER_SIZE + 10)).count()
-        );
+        assert_eq!(btree.iter().rev().count(), (0..(DEFAULT_INNER_SIZE + 10)).count());
         assert_eq!(
             btree.range(0..DEFAULT_INNER_SIZE).rev().count(),
             (0..DEFAULT_INNER_SIZE).count()
@@ -4351,12 +4257,7 @@ mod tests {
         assert_eq!(btree.range(..1).rev().count(), 0);
 
         assert_eq!(btree.range(..DEFAULT_INNER_SIZE).count(), 0);
-        assert_eq!(
-            btree
-                .range(DEFAULT_INNER_SIZE..DEFAULT_INNER_SIZE * 2)
-                .count(),
-            0
-        );
+        assert_eq!(btree.range(DEFAULT_INNER_SIZE..DEFAULT_INNER_SIZE * 2).count(), 0);
     }
 
     #[test]
@@ -4418,7 +4319,7 @@ mod tests {
         let expected_backward = vec![(3, 30), (2, 20), (1, 10)];
         for (i, (k, v)) in map.iter_mut().rev().enumerate() {
             assert_eq!(*k, expected_backward[i].0);
-            assert_eq!(*v, expected_backward[i].1); 
+            assert_eq!(*v, expected_backward[i].1);
         }
     }
 
@@ -4426,19 +4327,19 @@ mod tests {
     fn test_indexset_btreemap_overflow_bug() {
         // This test reproduces the "attempt to subtract with overflow" panic
         // that occurs in indexset::BTreeMap::range_to_idx at line 2639
-        
+
         let mut map = BTreeMap::new();
-        
+
         // Insert the same keys as in the failing test
         map.insert(vec![1, 2, 3, 4], 1);
         map.insert(vec![1, 2, 3, 7], 2);
         map.insert(vec![1, 2, 4, 5], 3);
         let end_key = vec![1, 2, 3, 4];
-        
+
         let mut range_iter = map.range(..end_key).rev();
-        
+
         let result = range_iter.next();
-        
+
         // In a working implementation, this should return None
         // since there are no keys before [1,2,3,4]
         assert!(result.is_none(), "Expected None when ranging before first key");
@@ -4471,10 +4372,16 @@ mod tests {
         // RangeFromExcluding with non-existing key [1,2,3,6]
         // Should return [1,2,3,7] but returns [1,2,4,5]
         let non_existing_key = vec![1, 2, 3, 6];
-        let range = RangeFromExcluding { from: &non_existing_key };
+        let range = RangeFromExcluding {
+            from: &non_existing_key,
+        };
         let result = map.range(range).next().unwrap();
-        
-        assert_eq!(result.0, &vec![1, 2, 3, 7], "RangeFromExcluding skips entries incorrectly");
+
+        assert_eq!(
+            result.0,
+            &vec![1, 2, 3, 7],
+            "RangeFromExcluding skips entries incorrectly"
+        );
         assert_eq!(*result.1, 2);
     }
 

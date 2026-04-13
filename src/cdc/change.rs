@@ -88,7 +88,6 @@ impl<T> ChangeEvent<T> {
     }
 }
 
-
 #[cfg(feature = "multimap")]
 impl<K: Ord, V: PartialEq> From<ChangeEvent<MultiPair<K, V>>> for ChangeEvent<Pair<K, V>> {
     fn from(ev: ChangeEvent<MultiPair<K, V>>) -> Self {
