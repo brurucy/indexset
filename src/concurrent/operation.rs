@@ -4,9 +4,7 @@ use std::sync::Arc;
 use crossbeam_skiplist::SkipMap;
 use parking_lot::Mutex;
 
-use crate::cdc::change::ChangeEvent;
-#[cfg(feature = "cdc")]
-use crate::cdc::change::Id;
+use crate::cdc::change::ChangeEventUnassigned;
 use crate::core::node::NodeLike;
 
 type OldVersion<Node> = Arc<Mutex<Node>>;
@@ -26,8 +24,7 @@ where
     pub fn commit(
         self,
         index: &SkipMap<T, Arc<Mutex<Node>>>,
-        #[cfg(feature = "cdc")] event_id: Id,
-    ) -> Result<(Option<T>, Vec<ChangeEvent<T>>), ()> {
+    ) -> Result<(Option<T>, Vec<ChangeEventUnassigned<T>>), ()> {
         match self {
             Operation::Split(old_node, old_max, value) => {
                 let mut guard = old_node.lock_arc();
@@ -44,8 +41,7 @@ where
 
                         #[cfg(feature = "cdc")]
                         {
-                            let node_split = ChangeEvent::SplitNode {
-                                event_id,
+                            let node_split = ChangeEventUnassigned::SplitNode {
                                 max_value,
                                 split_index: guard.len(),
                             };
@@ -62,8 +58,7 @@ where
                                     old_value = NodeLike::replace(&mut *guard, idx, value.clone());
                                     #[cfg(feature = "cdc")]
                                     {
-                                        let value_insertion = ChangeEvent::RemoveAt {
-                                            event_id,
+                                        let value_insertion = ChangeEventUnassigned::RemoveAt {
                                             max_value: max.clone(),
                                             index: idx,
                                             value: old_value.clone().unwrap(),
@@ -73,8 +68,7 @@ where
                                 }
                                 #[cfg(feature = "cdc")]
                                 {
-                                    let value_insertion = ChangeEvent::InsertAt {
-                                        event_id,
+                                    let value_insertion = ChangeEventUnassigned::InsertAt {
                                         max_value: max.clone(),
                                         index: idx,
                                         value: value.clone(),
@@ -98,8 +92,7 @@ where
                                     old_value = NodeLike::replace(&mut new_vec, idx, value.clone());
                                     #[cfg(feature = "cdc")]
                                     {
-                                        let value_insertion = ChangeEvent::RemoveAt {
-                                            event_id,
+                                        let value_insertion = ChangeEventUnassigned::RemoveAt {
                                             max_value: old_max.clone(),
                                             index: idx,
                                             value: old_value.clone().unwrap(),
@@ -109,8 +102,7 @@ where
                                 }
                                 #[cfg(feature = "cdc")]
                                 {
-                                    let value_insertion = ChangeEvent::InsertAt {
-                                        event_id,
+                                    let value_insertion = ChangeEventUnassigned::InsertAt {
                                         max_value: old_max.clone(),
                                         index: idx,
                                         value: value.clone(),
@@ -169,8 +161,7 @@ where
 
                                 #[cfg(feature = "cdc")]
                                 {
-                                    let node_removal = ChangeEvent::RemoveNode {
-                                        event_id,
+                                    let node_removal = ChangeEventUnassigned::RemoveNode {
                                         max_value: old_max.clone(),
                                     };
                                     cdc.push(node_removal);
