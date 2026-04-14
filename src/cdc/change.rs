@@ -1,7 +1,5 @@
 #[cfg(feature = "multimap")]
-use crate::core::multipair::MultiPair;
-
-use crate::core::pair::Pair;
+use {crate::core::multipair::MultiPair, crate::core::pair::Pair};
 
 /// Unique event identifier.
 ///
@@ -84,6 +82,59 @@ impl<T> ChangeEvent<T> {
             ChangeEvent::CreateNode { event_id, .. } => *event_id,
             ChangeEvent::RemoveNode { event_id, .. } => *event_id,
             ChangeEvent::SplitNode { event_id, .. } => *event_id,
+        }
+    }
+}
+
+/// A [`ChangeEvent`] that has not yet been assigned an event [`Id`].
+///
+/// This type is used to defer event [`Id`] allocation until after an operation
+/// successfully commits, ensuring no gaps in event [`Id`]a.
+#[derive(Debug, Clone)]
+pub enum ChangeEventUnassigned<T> {
+    /// Unassigned [`ChangeEvent::InsertAt`].
+    InsertAt { max_value: T, value: T, index: usize },
+    /// Unassigned [`ChangeEvent::RemoveAt`].
+    RemoveAt { max_value: T, value: T, index: usize },
+    /// Unassigned [`ChangeEvent::CreateNode`].
+    CreateNode { max_value: T },
+    /// Unassigned [`ChangeEvent::RemoveNode`].
+    RemoveNode { max_value: T },
+    /// Unassigned [`ChangeEvent::SplitNode`].
+    SplitNode { max_value: T, split_index: usize },
+}
+
+impl<T> ChangeEventUnassigned<T> {
+    /// Assign an event [`Id`] to this unassigned event, converting it to a [`ChangeEvent`].
+    pub fn assign_id(self, event_id: Id) -> ChangeEvent<T> {
+        match self {
+            Self::InsertAt {
+                max_value,
+                value,
+                index,
+            } => ChangeEvent::InsertAt {
+                event_id,
+                max_value,
+                value,
+                index,
+            },
+            Self::RemoveAt {
+                max_value,
+                value,
+                index,
+            } => ChangeEvent::RemoveAt {
+                event_id,
+                max_value,
+                value,
+                index,
+            },
+            Self::CreateNode { max_value } => ChangeEvent::CreateNode { event_id, max_value },
+            Self::RemoveNode { max_value } => ChangeEvent::RemoveNode { event_id, max_value },
+            Self::SplitNode { max_value, split_index } => ChangeEvent::SplitNode {
+                event_id,
+                max_value,
+                split_index,
+            },
         }
     }
 }
