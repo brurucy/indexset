@@ -160,7 +160,7 @@ where
                                 let node_insertion = ChangeEvent::CreateNode {
                                     // is correct as index is locked and current thread is the only that can
                                     // fetch event_id.
-                                    event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                                    event_id: self.event_id.fetch_add(1, Ordering::AcqRel).into(),
                                     max_value: value.clone(),
                                 };
                                 cdc.push(node_insertion);
@@ -180,8 +180,6 @@ where
 
             #[allow(unused_assignments)]
             let mut operation = None;
-            #[cfg(feature = "cdc")]
-            let mut operation_id = 0.into();
             if !node_guard.need_to_split(self.node_capacity, &value) {
                 let old_max = node_guard.max().cloned();
                 let (inserted, idx) = NodeLike::insert(&mut *node_guard, value.clone());
@@ -191,7 +189,7 @@ where
                         let node_element_insertion = ChangeEvent::InsertAt {
                             // is correct as node is locked and current thread is the only that can
                             // fetch event_id, so events for this node will have monotonic id's.
-                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            event_id: self.event_id.fetch_add(1, Ordering::AcqRel).into(),
                             max_value: old_max.clone().unwrap_or(value.clone()),
                             value: value.clone(),
                             index: idx,
@@ -220,10 +218,6 @@ where
                     target_node_entry.key().clone(),
                     value.clone(),
                 ));
-                #[cfg(feature = "cdc")]
-                {
-                    operation_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
-                }
             }
 
             drop(node_guard);
@@ -234,24 +228,30 @@ where
             let op = operation.unwrap();
             match &op {
                 Operation::Split(_, _, _) => {
-                    if let Ok((value, value_cdc)) = op.commit(
-                        &self.index,
+                    if let Ok((value, value_cdc)) = op.commit(&self.index) {
                         #[cfg(feature = "cdc")]
-                        operation_id,
-                    ) {
-                        cdc.extend(value_cdc);
+                        {
+                            for unassigned_event in value_cdc {
+                                let event_id =
+                                    self.event_id.fetch_add(1, Ordering::AcqRel).into();
+                                cdc.push(unassigned_event.assign_id(event_id));
+                            }
+                        }
                         return Ok((value, cdc));
                     } else {
                         continue;
                     }
                 }
                 Operation::UpdateMax(_, _) => {
-                    return if let Ok((value, value_cdc)) = op.commit(
-                        &self.index,
+                    return if let Ok((value, value_cdc)) = op.commit(&self.index) {
                         #[cfg(feature = "cdc")]
-                        operation_id,
-                    ) {
-                        cdc.extend(value_cdc);
+                        {
+                            for unassigned_event in value_cdc {
+                                let event_id =
+                                    self.event_id.fetch_add(1, Ordering::AcqRel).into();
+                                cdc.push(unassigned_event.assign_id(event_id));
+                            }
+                        }
                         Ok((value, cdc))
                     } else {
                         Ok((None, cdc))
@@ -272,12 +272,12 @@ where
                         let node_removal = ChangeEvent::RemoveNode {
                             // is correct as node is locked and current thread is the only that can
                             // fetch event_id, so events for this node will have monotonic id's.
-                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            event_id: self.event_id.fetch_add(1, Ordering::AcqRel).into(),
                             max_value: max.clone(),
                         };
                         let node_insertion = ChangeEvent::CreateNode {
                             // same as for previous.
-                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            event_id: self.event_id.fetch_add(1, Ordering::AcqRel).into(),
                             max_value: value.clone(),
                         };
                         cdc.push(node_removal);
@@ -291,14 +291,14 @@ where
                         let node_element_removal = ChangeEvent::RemoveAt {
                             // is correct as node is locked and current thread is the only that can
                             // fetch event_id, so events for this node will have monotonic id's.
-                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            event_id: self.event_id.fetch_add(1, Ordering::AcqRel).into(),
                             max_value: max.clone(),
                             value: value.clone(),
                             index: idx,
                         };
                         let node_element_insertion = ChangeEvent::InsertAt {
                             // same as for previous.
-                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            event_id: self.event_id.fetch_add(1, Ordering::AcqRel).into(),
                             max_value: new_max.expect("length was checked so should be ok").clone(),
                             value: value.clone(),
                             index: idx,
@@ -309,14 +309,14 @@ where
                         let node_element_removal = ChangeEvent::RemoveAt {
                             // is correct as node is locked and current thread is the only that can
                             // fetch event_id, so events for this node will have monotonic id's.
-                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            event_id: self.event_id.fetch_add(1, Ordering::AcqRel).into(),
                             max_value: max.clone(),
                             value: value.clone(),
                             index: idx,
                         };
                         let node_element_insertion = ChangeEvent::InsertAt {
                             // same as for previous.
-                            event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                            event_id: self.event_id.fetch_add(1, Ordering::AcqRel).into(),
                             max_value: max.clone(),
                             value: value.clone(),
                             index: idx,
@@ -407,9 +407,6 @@ where
                 ))
             };
 
-            #[cfg(feature = "cdc")]
-            let operation_id = self.event_id.fetch_add(1, Ordering::Relaxed).into();
-
             drop(node_guard);
             drop(_global_guard);
 
@@ -417,10 +414,14 @@ where
 
             return if let Ok((_, value_cdc)) = operation.unwrap().commit(
                 &self.index,
-                #[cfg(feature = "cdc")]
-                operation_id,
             ) {
-                cdc.extend(value_cdc);
+                #[cfg(feature = "cdc")]
+                {
+                    for unassigned_event in value_cdc {
+                        let event_id = self.event_id.fetch_add(1, Ordering::AcqRel).into();
+                        cdc.push(unassigned_event.assign_id(event_id));
+                    }
+                }
                 (Some(deleted), cdc)
             } else {
                 (Some(deleted), cdc)

@@ -469,6 +469,7 @@ mod tests {
     use std::fmt::Debug;
     use std::sync::{Arc, Mutex};
     use std::thread;
+    use crate::core::constants::DEFAULT_INNER_SIZE;
 
     #[test]
     fn test_range_edge_cast() {
@@ -755,5 +756,182 @@ mod tests {
             .map(|e| (e.key().clone().key, e.value().lock_arc().clone()))
             .collect::<_>();
         assert_eq!(mock_state.nodes, expected_state);
+    }
+    
+    #[cfg(feature = "cdc")]
+    #[test]
+    fn test_cdc_event_ids_sequential_no_gaps() {
+        let map = BTreeMap::<usize, String>::new();
+        let mut all_events = Vec::new();
+        
+        for i in 0..100 {
+            let (_, events) = map.insert_cdc(i, format!("val{}", i));
+            all_events.extend(events);
+        }
+        all_events.sort_by_key(|e| e.id());
+
+        // Verify IDs are consecutive with no gaps
+        assert!(!all_events.is_empty(), "Should have at least one event");
+        for i in 1..all_events.len() {
+            let prev_id = all_events[i - 1].id().inner();
+            let curr_id = all_events[i].id().inner();
+            assert_eq!(
+                curr_id,
+                prev_id + 1,
+                "Event IDs should be consecutive: {} followed by {}, but got gap",
+                prev_id,
+                curr_id
+            );
+        }
+    }
+    
+    #[cfg(feature = "cdc")]
+    #[test]
+    fn test_cdc_remove_monotonicity() {
+        let map = BTreeMap::<usize, String>::new();
+        let mut all_events = Vec::new();
+        
+        for i in 0..50 {
+            let (_, events) = map.insert_cdc(i, format!("val{}", i));
+            all_events.extend(events);
+        }
+        
+        for i in 0..25 {
+            let (_, events) = map.remove_cdc(&i);
+            all_events.extend(events);
+        }
+        
+        all_events.sort_by_key(|e| e.id());
+
+        // Verify IDs are consecutive with no gaps
+        assert!(!all_events.is_empty(), "Should have at least one event");
+        for i in 1..all_events.len() {
+            let prev_id = all_events[i - 1].id().inner();
+            let curr_id = all_events[i].id().inner();
+            assert_eq!(
+                curr_id,
+                prev_id + 1,
+                "Event IDs should be consecutive across inserts and removes"
+            );
+        }
+    }
+    
+    #[cfg(feature = "cdc")]
+    #[test]
+    fn test_cdc_split_no_gaps() {
+        let map = BTreeMap::<usize, String>::new();
+        let mut all_events = Vec::new();
+        
+        let n = DEFAULT_INNER_SIZE + 200;
+        for i in 0..n {
+            let (_, events) = map.insert_cdc(i, format!("val{}", i));
+            all_events.extend(events);
+        }
+        
+        all_events.sort_by_key(|e| e.id());
+        
+        assert!(!all_events.is_empty(), "Should have at least one event");
+        for i in 1..all_events.len() {
+            let prev_id = all_events[i - 1].id().inner();
+            let curr_id = all_events[i].id().inner();
+            assert_eq!(
+                curr_id,
+                prev_id + 1,
+                "Event IDs should be consecutive even during splits"
+            );
+        }
+
+        // Verify splits actually occurred
+        let split_events: Vec<_> = all_events
+            .iter()
+            .filter(|e| matches!(e, ChangeEvent::SplitNode { .. }))
+            .collect();
+        assert!(
+            !split_events.is_empty(),
+            "Should have at least one split event"
+        );
+    }
+    
+    #[cfg(feature = "cdc")]
+    #[test]
+    fn test_concurrent_cdc_no_gaps() {
+        let map = Arc::new(BTreeMap::<usize, String>::new());
+        let num_threads = 16;
+        let operations_per_thread = 500;
+        let mut handles = vec![];
+
+        for thread_idx in 0..num_threads {
+            let map_clone = Arc::clone(&map);
+
+            let handle = thread::spawn(move || {
+                let mut events = Vec::new();
+                let base = thread_idx * 10000;
+                for i in 0..operations_per_thread {
+                    let value = base + i;
+                    let (_, evs) = map_clone.insert_cdc(value, format!("val{}", value));
+                    events.extend(evs);
+                }
+                events
+            });
+            handles.push(handle);
+        }
+        
+        let mut final_events = Vec::new();
+        for handle in handles {
+            let thread_events = handle.join().unwrap();
+            final_events.extend(thread_events);
+        }
+        
+        final_events.sort_by_key(|e| e.id());
+
+        // Verify no gaps in event IDs
+        assert!(!final_events.is_empty(), "Should have at least one event");
+        for i in 1..final_events.len() {
+            let prev_id = final_events[i - 1].id().inner();
+            let curr_id = final_events[i].id().inner();
+            assert_eq!(
+                curr_id,
+                prev_id + 1,
+                "Concurrent event IDs should be consecutive with no gaps: {} -> {}",
+                prev_id,
+                curr_id
+            );
+        }
+    }
+    
+    #[cfg(feature = "cdc")]
+    #[test]
+    fn test_cdc_mixed_operations() {
+        let map = BTreeMap::<usize, String>::new();
+        let mut all_events = Vec::new();
+        
+        for i in 0..100 {
+            let (_, events) = map.insert_cdc(i, format!("val{}", i));
+            all_events.extend(events);
+        }
+        
+        for i in 0..50 {
+            let (_, events) = map.remove_cdc(&i);
+            all_events.extend(events);
+        }
+        
+        for i in 100..125 {
+            let (_, events) = map.insert_cdc(i, format!("val{}", i));
+            all_events.extend(events);
+        }
+        
+        all_events.sort_by_key(|e| e.id());
+
+        // Verify IDs are consecutive with no gaps
+        assert!(!all_events.is_empty(), "Should have at least one event");
+        for i in 1..all_events.len() {
+            let prev_id = all_events[i - 1].id().inner();
+            let curr_id = all_events[i].id().inner();
+            assert_eq!(
+                curr_id,
+                prev_id + 1,
+                "Mixed operation event IDs should be consecutive"
+            );
+        }
     }
 }
