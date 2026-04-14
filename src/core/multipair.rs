@@ -9,7 +9,7 @@ use fastrand;
 use crate::core::pair::Pair;
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Default, Clone, Hash)]
+#[derive(Debug, Default, Clone)]
 pub struct MultiPair<K, V> {
     pub key: K,
     pub value: V,
@@ -20,9 +20,15 @@ impl<K: Ord, V: PartialEq> MultiPair<K, V> {
     pub fn new(key: K, value: V) -> Self {
         Self { key, value, discriminator: fastrand::u64(..) }
     }
+    // SAFETY: The `value` field is never read for sentinel values - only `key` and
+    // `discriminator` are used for ordering.
+    #[allow(clippy::uninit_assumed_init)]
     pub fn with_infimum(key: K) -> Self {
         Self { key, value: unsafe { MaybeUninit::uninit().assume_init() }, discriminator: INFIMUM }
     }
+    // SAFETY: The `value` field is never read for sentinel values - only `key` and
+    // `discriminator` are used for ordering.
+    #[allow(clippy::uninit_assumed_init)]
     pub fn with_supremum(key: K) -> Self {
         Self { key, value: unsafe { MaybeUninit::uninit().assume_init() }, discriminator: SUPREMUM }
     }
@@ -61,6 +67,17 @@ impl<K: Ord, V: PartialEq> Ord for MultiPair<K, V> {
 impl<K: Ord, V: PartialEq> PartialOrd for MultiPair<K, V> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl<K, V> std::hash::Hash for MultiPair<K, V>
+where
+    K: std::hash::Hash,
+    V: std::hash::Hash,
+{
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+        self.value.hash(state);
     }
 }
 

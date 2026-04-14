@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Default, Clone, Hash)]
+#[derive(Debug, Default, Clone)]
 pub struct Pair<K, V>
 {
     pub key: K,
@@ -27,7 +27,7 @@ where
     K: Ord,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.key.partial_cmp(&other.key)
+        Some(self.cmp(other))
     }
 }
 
@@ -37,6 +37,15 @@ where
 {
     fn cmp(&self, other: &Self) -> Ordering {
         self.key.cmp(&other.key)
+    }
+}
+
+impl<K, V> std::hash::Hash for Pair<K, V>
+where
+    K: std::hash::Hash,
+{
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
     }
 }
 

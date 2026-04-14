@@ -132,6 +132,7 @@ where
         self.index.insert(node_id, Arc::new(Mutex::new(node)));
     }
 
+    #[allow(clippy::type_complexity)]
     pub(crate) fn put_cdc_checked(
         &self,
         value: T,
@@ -153,7 +154,7 @@ where
                         let first_node = Arc::new(Mutex::new(first_node));
 
                         drop(_global_guard);
-                        if let Ok(_) = self.index_lock.try_write() {
+                        if self.index_lock.try_write().is_ok() {
                             #[cfg(feature = "cdc")]
                             {
                                 let node_insertion = ChangeEvent::CreateNode {
@@ -200,10 +201,10 @@ where
                         return Ok((None, cdc));
                     }
 
-                    if old_max.is_some() {
+                    if let Some(old_max) = old_max {
                         operation = Some(Operation::UpdateMax(
                             target_node_entry.value().clone(),
-                            old_max.unwrap(),
+                            old_max,
                         ))
                     } else {
                         return Ok((None, cdc));
@@ -362,71 +363,69 @@ where
         T: Borrow<Q>,
         Q: Ord + ?Sized,
     {
-        loop {
-            let mut cdc = vec![];
-            let _global_guard = self.index_lock.read();
-            if let Some(target_node_entry) =
-                self.index.lower_bound(Bound::Included(&value))
-            {
-                let mut node_guard = target_node_entry.value().lock_arc();
-                let old_max = node_guard.max().cloned();
-                let deleted = NodeLike::delete(&mut *node_guard, value);
-                if deleted.is_none() {
-                    return (None, cdc);
-                }
-                let (deleted, idx) = deleted.expect("should be ok as checked before");
-
-                let operation = if node_guard.len() > 0 {
-                    #[cfg(feature = "cdc")]
-                    {
-                        let node_element_removal = ChangeEvent::RemoveAt {
-                            // is correct as node is locked and current thread is the only that can
-                            // fetch event_id, so events for this node will have monotonic id's.
-                            event_id: self.event_id.fetch_add(1, Ordering::AcqRel).into(),
-                            max_value: old_max
-                                .clone()
-                                .expect("Max value should exist as Node is not empty"),
-                            value: deleted.clone(),
-                            index: idx,
-                        };
-                        cdc.push(node_element_removal);
-                    }
-
-                    if old_max.as_ref() == node_guard.max() {
-                        return (Some(deleted), cdc);
-                    }
-
-                    Some(Operation::UpdateMax(
-                        target_node_entry.value().clone(),
-                        old_max.unwrap(),
-                    ))
-                } else {
-                    Some(Operation::MakeUnreachable(
-                        target_node_entry.value().clone(),
-                        old_max.unwrap(),
-                    ))
-                };
-
-                drop(node_guard);
-                drop(_global_guard);
-
-                let _global_guard = self.index_lock.write();
-
-                return if let Ok((_, value_cdc)) = operation.unwrap().commit(&self.index) {
-                    #[cfg(feature = "cdc")]
-                    {
-                        for unassigned_event in value_cdc {
-                            let event_id = self.event_id.fetch_add(1, Ordering::AcqRel).into();
-                            cdc.push(unassigned_event.assign_id(event_id));
-                        }
-                    }
-                    (Some(deleted), cdc)
-                } else {
-                    (Some(deleted), cdc)
-                };
+        let mut cdc = vec![];
+        let _global_guard = self.index_lock.read();
+        if let Some(target_node_entry) =
+            self.index.lower_bound(std::ops::Bound::Included(value))
+        {
+            let mut node_guard = target_node_entry.value().lock_arc();
+            let old_max = node_guard.max().cloned();
+            let deleted = NodeLike::delete(&mut *node_guard, value);
+            if deleted.is_none() {
+                return (None, cdc);
             }
+            let (deleted, idx) = deleted.expect("should be ok as checked before");
 
-            break;
+            let operation = if node_guard.len() > 0 {
+                #[cfg(feature = "cdc")]
+                {
+                    let node_element_removal = ChangeEvent::RemoveAt {
+                        // is correct as node is locked and current thread is the only that can
+                        // fetch event_id, so events for this node will have monotonic id's.
+                        event_id: self.event_id.fetch_add(1, Ordering::Relaxed).into(),
+                        max_value: old_max
+                            .clone()
+                            .expect("Max value should exist as Node is not empty"),
+                        value: deleted.clone(),
+                        index: idx,
+                    };
+                    cdc.push(node_element_removal);
+                }
+
+                if old_max.as_ref() == node_guard.max() {
+                    return (Some(deleted), cdc);
+                }
+
+                Some(Operation::UpdateMax(
+                    target_node_entry.value().clone(),
+                    old_max.unwrap(),
+                ))
+            } else {
+                Some(Operation::MakeUnreachable(
+                    target_node_entry.value().clone(),
+                    old_max.unwrap(),
+                ))
+            };
+
+            drop(node_guard);
+            drop(_global_guard);
+
+            let _global_guard = self.index_lock.write();
+
+            return if let Ok((_, value_cdc)) = operation.unwrap().commit(
+                &self.index,
+            ) {
+                #[cfg(feature = "cdc")]
+                {
+                    for unassigned_event in value_cdc {
+                        let event_id = self.event_id.fetch_add(1, Ordering::AcqRel).into();
+                        cdc.push(unassigned_event.assign_id(event_id));
+                    }
+                }
+                (Some(deleted), cdc)
+            } else {
+                (Some(deleted), cdc)
+            };
         }
 
         (None, vec![])
@@ -462,7 +461,7 @@ where
         Q: Ord + ?Sized,
     {
         let _global_guard = self.index_lock.read();
-        match self.index.lower_bound(std::ops::Bound::Included(&value)) {
+        match self.index.lower_bound(std::ops::Bound::Included(value)) {
             Some(entry) => Some(entry.value().clone()),
             None => self
                 .index
@@ -522,6 +521,9 @@ where
             .iter()
             .map(|node| node.value().lock().len())
             .sum()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
     pub fn capacity(&self) -> usize {
         self.index
@@ -639,7 +641,7 @@ where
                                 .lock_arc(),
                         );
                         self.current_front_node_iter = Some(unsafe {
-                            std::mem::transmute(
+                            std::mem::transmute::<std::slice::Iter<'_, T>, std::slice::Iter<'a, T>>(
                                 self.current_front_node_guard
                                     .as_ref()
                                     .expect("was just set before")
@@ -700,7 +702,7 @@ where
                                     .lock_arc(),
                             );
                             self.current_front_node_iter = Some(unsafe {
-                                std::mem::transmute(
+                                std::mem::transmute::<std::slice::Iter<'_, T>, std::slice::Iter<'a, T>>(
                                     self.current_front_node_guard
                                         .as_ref()
                                         .expect("was just set before")
@@ -729,7 +731,7 @@ where
                         .lock_arc(),
                 );
                 self.current_front_node_iter = Some(unsafe {
-                    std::mem::transmute(
+                    std::mem::transmute::<std::slice::Iter<'_, T>, std::slice::Iter<'a, T>>(
                         self.current_front_node_guard
                             .as_ref()
                             .expect("was just set before")
@@ -797,7 +799,7 @@ where
                                 .lock_arc(),
                         );
                         self.current_back_node_iter = Some(unsafe {
-                            std::mem::transmute(
+                            std::mem::transmute::<std::slice::Iter<'_, T>, std::slice::Iter<'a, T>>(
                                 self.current_back_node_guard
                                     .as_ref()
                                     .expect("was just set before")
@@ -858,7 +860,7 @@ where
                                     .lock_arc(),
                             );
                             self.current_back_node_iter = Some(unsafe {
-                                std::mem::transmute(
+                                std::mem::transmute::<std::slice::Iter<'_, T>, std::slice::Iter<'a, T>>(
                                     self.current_back_node_guard
                                         .as_ref()
                                         .expect("was just set before")
@@ -887,7 +889,7 @@ where
                         .lock_arc(),
                 );
                 self.current_back_node_iter = Some(unsafe {
-                    std::mem::transmute(
+                    std::mem::transmute::<std::slice::Iter<'_, T>, std::slice::Iter<'a, T>>(
                         self.current_back_node_guard
                             .as_ref()
                             .expect("was just set before")
@@ -981,16 +983,14 @@ where
                 drop(front_guard);
 
                 front_value
-            } else {
-                if let Some(pre_front_entry) = front_entry.prev() {
-                    let pre_front_guard = pre_front_entry.value().lock_arc();
-                    let front_value = pre_front_guard.iter().last().cloned();
-                    drop(pre_front_guard);
+            } else if let Some(pre_front_entry) = front_entry.prev() {
+                let pre_front_guard = pre_front_entry.value().lock_arc();
+                let front_value = pre_front_guard.iter().last().cloned();
+                drop(pre_front_guard);
 
-                    front_value
-                } else {
-                    None
-                }
+                front_value
+            } else {
+                None
             }
         } else {
             None
@@ -1015,16 +1015,14 @@ where
                 drop(back_guard);
 
                 back_value
-            } else {
-                if let Some(prev_back_entry) = back_entry.next() {
-                    let prev_back_guard = prev_back_entry.value().lock_arc();
-                    let back_value = prev_back_guard.iter().next().cloned();
-                    drop(prev_back_guard);
+            } else if let Some(prev_back_entry) = back_entry.next() {
+                let prev_back_guard = prev_back_entry.value().lock_arc();
+                let back_value = prev_back_guard.iter().next().cloned();
+                drop(prev_back_guard);
 
-                    back_value
-                } else {
-                    None
-                }
+                back_value
+            } else {
+                None
             }
         } else {
             None
@@ -1233,16 +1231,13 @@ where
                         }
 
                         guard = Some(new_guard);
-                    } else {
-                        if let Some((len, position)) = potential_front_entry_guard
-                            .as_ref()
-                            .and_then(|g| Some((g.len(), g.rank(end_bound, true))))
-                        {
-                            if let Some(position) = position {
-                                back_position = position;
-                            } else {
-                                back_position = len;
-                            }
+                    } else if let Some((len, position)) = potential_front_entry_guard
+                        .as_ref().map(|g| (g.len(), g.rank(end_bound, true)))
+                    {
+                        if let Some(position) = position {
+                            back_position = position;
+                        } else {
+                            back_position = len;
                         }
                     }
                 }
@@ -1256,7 +1251,7 @@ where
         if let Some(mut front_entry_guard) = potential_front_entry_guard {
             let front_entry = potential_front_entry.unwrap();
             // But no back entry
-            if let None = potential_back_entry_guard {
+            if potential_back_entry_guard.is_none() {
                 // Then we drain the front entry
                 let adjusted_back_position = {
                     if potential_front_position > potential_back_position {
@@ -1277,21 +1272,15 @@ where
                 // Otherwise we insert it again with a new max
                 let new_max = front_entry_guard.last().unwrap().clone();
                 self.index.insert(new_max, old_entry_value);
-
-                return;
             } else if let Some(mut back_entry_guard) = potential_back_entry_guard {
                 let back_entry = potential_back_entry.unwrap();
                 // Otherwise we remove every single node between them
-                loop {
-                    if let Some(next_entry) = front_entry.next() {
-                        if next_entry.key().eq(back_entry.key()) {
-                            break;
-                        }
-
-                        next_entry.remove();
-                    } else {
+                while let Some(next_entry) = front_entry.next() {
+                    if next_entry.key().eq(back_entry.key()) {
                         break;
                     }
+
+                    next_entry.remove();
                 }
 
                 // And then trim the front from the left
@@ -1312,7 +1301,6 @@ where
                 }
 
                 // And that's it
-                return;
             }
         }
     }

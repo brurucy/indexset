@@ -255,8 +255,7 @@ where
 
         self.set
             .put_cdc(new_entry)
-            .0
-            .and_then(|pair| Some(pair.value))
+            .0.map(|pair| pair.value)
     }
     pub fn checked_insert(&self, key: K, value: V) -> Option<()> {
         let new_entry = Pair { key, value };
@@ -270,7 +269,7 @@ where
 
         let (old_value, cdc) = self.set.put_cdc(new_entry);
 
-        (old_value.and_then(|pair| Some(pair.value)), cdc)
+        (old_value.map(|pair| pair.value), cdc)
     }
     pub fn checked_insert_cdc(&self, key: K, value: V) -> Option<Vec<ChangeEvent<Pair<K, V>>>> {
         let new_entry = Pair { key, value };
@@ -300,12 +299,12 @@ where
         Q: Ord + ?Sized,
     {
         self.set
-            .remove(key)
-            .and_then(|pair| Some((pair.key, pair.value)))
+            .remove(key).map(|pair| (pair.key, pair.value))
     }
     /// Removes a key from the map, returning the key and the value if the key
     /// was previously in the map and [`ChangeEvent`]s describing changes caused
     /// by this action.
+    #[allow(clippy::type_complexity)]
     pub fn remove_cdc<Q>(&self, key: &Q) -> (Option<(K, V)>, Vec<ChangeEvent<Pair<K, V>>>)
     where
         Pair<K, V>: Borrow<Q> + Ord,
@@ -313,7 +312,7 @@ where
     {
         let (old_value, cdc) = self.set.remove_cdc(key);
 
-        (old_value.and_then(|pair| Some((pair.key, pair.value))), cdc)
+        (old_value.map(|pair| (pair.key, pair.value)), cdc)
     }
     /// Returns the number of elements in the map.
     ///
@@ -331,6 +330,23 @@ where
     /// ```
     pub fn len(&self) -> usize {
         self.set.len()
+    }
+    /// Returns `true` if the map contains no elements.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use indexset::concurrent::map::BTreeMap;
+    ///
+    /// let mut a = BTreeMap::<usize, &str>::new();
+    /// assert!(a.is_empty());
+    /// a.insert(1, "a");
+    /// assert!(!a.is_empty());
+    /// ```
+    pub fn is_empty(&self) -> bool {
+        self.set.is_empty()
     }
     /// Returns the total number of allocated slots across all internal nodes.
     ///

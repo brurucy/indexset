@@ -14,6 +14,8 @@ pub trait NodeLike<T: Ord> {
     #[allow(dead_code)]
     fn len(&self) -> usize;
     #[allow(dead_code)]
+    fn is_empty(&self) -> bool { self.len() == 0 }
+    #[allow(dead_code)]
     fn capacity(&self) -> usize;
     #[allow(dead_code)]
     fn insert(&mut self, value: T) -> (bool, usize);
@@ -44,7 +46,7 @@ pub trait NodeLike<T: Ord> {
 }
 
 #[inline]
-fn search<Q, T: Ord>(haystack: &[T], needle: &Q) -> Result<usize, usize>
+fn search<Q, T>(haystack: &[T], needle: &Q) -> Result<usize, usize>
 where
     T: Borrow<Q> + Ord,
     Q: Ord + ?Sized,
@@ -56,7 +58,7 @@ where
         let p = haystack.as_ptr().cast::<T>();
         let mut m = j >> 1;
         while i != j {
-            match (*p.add(m)).borrow().cmp(&needle) {
+            match (*p.add(m)).borrow().cmp(needle) {
                 Ordering::Equal => return Ok(m),
                 Ordering::Less => {
                     i = m + 1;
@@ -78,7 +80,7 @@ enum Direction<'a, T> {
 }
 
 #[inline]
-fn compute_positions_to_skip<Q, T: Ord>(haystack: &[T], bound: std::ops::Bound<&Q>, forward: bool) -> Option<usize>
+fn compute_positions_to_skip<Q, T>(haystack: &[T], bound: std::ops::Bound<&Q>, forward: bool) -> Option<usize>
 where
     T: Borrow<Q> + Ord,
     Q: Ord + ?Sized,
@@ -97,7 +99,7 @@ where
             match iter {
                 Direction::Forward(iter) => {
                     for item in iter {
-                        match item.borrow().cmp(&value) {
+                        match item.borrow().cmp(value) {
                             Ordering::Less => positions_to_skip += 1,
                                 Ordering::Equal => match bound {
                                 std::ops::Bound::Included(_) => break,
@@ -110,7 +112,7 @@ where
                 }
                 Direction::Backward(iter) => {
                     for item in iter {
-                        match item.borrow().cmp(&value) {
+                        match item.borrow().cmp(value) {
                             Ordering::Greater => positions_to_skip += 1,
                             Ordering::Equal => match bound {
                                 std::ops::Bound::Included(_) => break,
@@ -159,7 +161,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
     }
     #[inline]
     fn insert(&mut self, value: T) -> (bool, usize) {
-        match search(&self, &value) {
+        match search(self, &value) {
             Ok(idx) => (false, idx),
             Err(idx) => {
                 self.insert(idx, value);
@@ -173,10 +175,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         T: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        match search(&self, &value) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        search(self, value).is_ok()
     }
     #[inline]
     fn try_select<Q>(&self, value: &Q) -> Option<usize>
@@ -184,10 +183,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         T: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        match search(&self, &value) {
-            Ok(index) => Some(index),
-            Err(_) => None,
-        }
+        search(self, value).ok()
     }
     #[inline]
     fn rank<Q>(&self, bound: std::ops::Bound<&Q>, from_start: bool) -> Option<usize>
@@ -195,7 +191,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         T: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        compute_positions_to_skip(&self, bound, from_start)
+        compute_positions_to_skip(self, bound, from_start)
     }
     #[inline]
     fn delete<Q>(&mut self, value: &Q) -> Option<(T, usize)>
@@ -203,7 +199,7 @@ impl<T: Ord> NodeLike<T> for Vec<T> {
         T: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        match search(&self, value) {
+        match search(self, value) {
             Ok(idx) => Some((self.remove(idx), idx)),
             Err(_) => None,
         }
