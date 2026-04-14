@@ -1,8 +1,5 @@
 #[cfg(feature = "multimap")]
-use {
-    crate::core::multipair::MultiPair,
-    crate::core::pair::Pair,
-};
+use {crate::core::multipair::MultiPair, crate::core::pair::Pair};
 
 /// Unique event identifier.
 ///
@@ -96,43 +93,36 @@ impl<T> ChangeEvent<T> {
 #[derive(Debug, Clone)]
 pub enum ChangeEventUnassigned<T> {
     /// Unassigned [`ChangeEvent::InsertAt`].
-    InsertAt {
-        max_value: T,
-        value: T,
-        index: usize,
-    },
+    InsertAt { max_value: T, value: T, index: usize },
     /// Unassigned [`ChangeEvent::RemoveAt`].
-    RemoveAt {
-        max_value: T,
-        value: T,
-        index: usize,
-    },
+    RemoveAt { max_value: T, value: T, index: usize },
     /// Unassigned [`ChangeEvent::CreateNode`].
-    CreateNode {
-        max_value: T,
-    },
+    CreateNode { max_value: T },
     /// Unassigned [`ChangeEvent::RemoveNode`].
-    RemoveNode {
-        max_value: T,
-    },
+    RemoveNode { max_value: T },
     /// Unassigned [`ChangeEvent::SplitNode`].
-    SplitNode {
-        max_value: T,
-        split_index: usize,
-    },
+    SplitNode { max_value: T, split_index: usize },
 }
 
 impl<T> ChangeEventUnassigned<T> {
     /// Assign an event [`Id`] to this unassigned event, converting it to a [`ChangeEvent`].
     pub fn assign_id(self, event_id: Id) -> ChangeEvent<T> {
         match self {
-            Self::InsertAt { max_value, value, index } => ChangeEvent::InsertAt {
+            Self::InsertAt {
+                max_value,
+                value,
+                index,
+            } => ChangeEvent::InsertAt {
                 event_id,
                 max_value,
                 value,
                 index,
             },
-            Self::RemoveAt { max_value, value, index } => ChangeEvent::RemoveAt {
+            Self::RemoveAt {
+                max_value,
+                value,
+                index,
+            } => ChangeEvent::RemoveAt {
                 event_id,
                 max_value,
                 value,
@@ -140,13 +130,14 @@ impl<T> ChangeEventUnassigned<T> {
             },
             Self::CreateNode { max_value } => ChangeEvent::CreateNode { event_id, max_value },
             Self::RemoveNode { max_value } => ChangeEvent::RemoveNode { event_id, max_value },
-            Self::SplitNode { max_value, split_index } => {
-                ChangeEvent::SplitNode { event_id, max_value, split_index }
-            }
+            Self::SplitNode { max_value, split_index } => ChangeEvent::SplitNode {
+                event_id,
+                max_value,
+                split_index,
+            },
         }
     }
 }
-
 
 #[cfg(feature = "multimap")]
 impl<K: Ord, V: PartialEq> From<ChangeEvent<MultiPair<K, V>>> for ChangeEvent<Pair<K, V>> {

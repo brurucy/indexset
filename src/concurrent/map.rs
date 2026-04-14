@@ -253,10 +253,7 @@ where
     pub fn insert(&self, key: K, value: V) -> Option<V> {
         let new_entry = Pair { key, value };
 
-        self.set
-            .put_cdc(new_entry)
-            .0
-            .and_then(|pair| Some(pair.value))
+        self.set.put_cdc(new_entry).0.and_then(|pair| Some(pair.value))
     }
     pub fn checked_insert(&self, key: K, value: V) -> Option<()> {
         let new_entry = Pair { key, value };
@@ -299,9 +296,7 @@ where
         Pair<K, V>: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        self.set
-            .remove(key)
-            .and_then(|pair| Some((pair.key, pair.value)))
+        self.set.remove(key).and_then(|pair| Some((pair.key, pair.value)))
     }
     /// Removes a key from the map, returning the key and the value if the key
     /// was previously in the map and [`ChangeEvent`]s describing changes caused
@@ -397,9 +392,7 @@ where
     /// assert_eq!((*first_key, *first_value), (1, "a"));
     /// ```
     pub fn iter(&self) -> Iter<'_, K, V, Node> {
-        Iter {
-            inner: self.set.iter(),
-        }
+        Iter { inner: self.set.iter() }
     }
     /// Constructs a double-ended iterator over a sub-range of elements in the map.
     /// The simplest way is to use the range syntax `min..max`, thus `range(min..max)` will
@@ -447,13 +440,13 @@ mod tests {
     use super::BTreeMap;
     use super::ChangeEvent;
     use super::Pair;
+    use crate::core::constants::DEFAULT_INNER_SIZE;
     use crate::BTreeSet;
     use rand::Rng;
     use scc::HashMap;
     use std::fmt::Debug;
     use std::sync::{Arc, Mutex};
     use std::thread;
-    use crate::core::constants::DEFAULT_INNER_SIZE;
 
     #[test]
     fn test_range_edge_cast() {
@@ -492,17 +485,11 @@ mod tests {
     impl<K: Debug + Ord + Clone, V: Debug + Clone + PartialEq> PersistedBTreeMap<K, V> {
         fn persist(&mut self, event: &ChangeEvent<Pair<K, V>>) {
             match event {
-                ChangeEvent::CreateNode {
-                    max_value,
-                    event_id: _,
-                } => {
+                ChangeEvent::CreateNode { max_value, event_id: _ } => {
                     let node = vec![max_value.clone()];
                     self.nodes.insert(max_value.key.clone(), node);
                 }
-                ChangeEvent::RemoveNode {
-                    max_value,
-                    event_id: _,
-                } => {
+                ChangeEvent::RemoveNode { max_value, event_id: _ } => {
                     self.nodes.remove(&max_value.key);
                 }
                 ChangeEvent::InsertAt {
@@ -741,13 +728,13 @@ mod tests {
             .collect::<_>();
         assert_eq!(mock_state.nodes, expected_state);
     }
-    
+
     #[cfg(feature = "cdc")]
     #[test]
     fn test_cdc_event_ids_sequential_no_gaps() {
         let map = BTreeMap::<usize, String>::new();
         let mut all_events = Vec::new();
-        
+
         for i in 0..100 {
             let (_, events) = map.insert_cdc(i, format!("val{}", i));
             all_events.extend(events);
@@ -768,23 +755,23 @@ mod tests {
             );
         }
     }
-    
+
     #[cfg(feature = "cdc")]
     #[test]
     fn test_cdc_remove_monotonicity() {
         let map = BTreeMap::<usize, String>::new();
         let mut all_events = Vec::new();
-        
+
         for i in 0..50 {
             let (_, events) = map.insert_cdc(i, format!("val{}", i));
             all_events.extend(events);
         }
-        
+
         for i in 0..25 {
             let (_, events) = map.remove_cdc(&i);
             all_events.extend(events);
         }
-        
+
         all_events.sort_by_key(|e| e.id());
 
         // Verify IDs are consecutive with no gaps
@@ -799,21 +786,21 @@ mod tests {
             );
         }
     }
-    
+
     #[cfg(feature = "cdc")]
     #[test]
     fn test_cdc_split_no_gaps() {
         let map = BTreeMap::<usize, String>::new();
         let mut all_events = Vec::new();
-        
+
         let n = DEFAULT_INNER_SIZE + 200;
         for i in 0..n {
             let (_, events) = map.insert_cdc(i, format!("val{}", i));
             all_events.extend(events);
         }
-        
+
         all_events.sort_by_key(|e| e.id());
-        
+
         assert!(!all_events.is_empty(), "Should have at least one event");
         for i in 1..all_events.len() {
             let prev_id = all_events[i - 1].id().inner();
@@ -830,12 +817,9 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, ChangeEvent::SplitNode { .. }))
             .collect();
-        assert!(
-            !split_events.is_empty(),
-            "Should have at least one split event"
-        );
+        assert!(!split_events.is_empty(), "Should have at least one split event");
     }
-    
+
     #[cfg(feature = "cdc")]
     #[test]
     fn test_concurrent_cdc_no_gaps() {
@@ -859,13 +843,13 @@ mod tests {
             });
             handles.push(handle);
         }
-        
+
         let mut final_events = Vec::new();
         for handle in handles {
             let thread_events = handle.join().unwrap();
             final_events.extend(thread_events);
         }
-        
+
         final_events.sort_by_key(|e| e.id());
 
         // Verify no gaps in event IDs
@@ -882,28 +866,28 @@ mod tests {
             );
         }
     }
-    
+
     #[cfg(feature = "cdc")]
     #[test]
     fn test_cdc_mixed_operations() {
         let map = BTreeMap::<usize, String>::new();
         let mut all_events = Vec::new();
-        
+
         for i in 0..100 {
             let (_, events) = map.insert_cdc(i, format!("val{}", i));
             all_events.extend(events);
         }
-        
+
         for i in 0..50 {
             let (_, events) = map.remove_cdc(&i);
             all_events.extend(events);
         }
-        
+
         for i in 100..125 {
             let (_, events) = map.insert_cdc(i, format!("val{}", i));
             all_events.extend(events);
         }
-        
+
         all_events.sort_by_key(|e| e.id());
 
         // Verify IDs are consecutive with no gaps
@@ -911,11 +895,7 @@ mod tests {
         for i in 1..all_events.len() {
             let prev_id = all_events[i - 1].id().inner();
             let curr_id = all_events[i].id().inner();
-            assert_eq!(
-                curr_id,
-                prev_id + 1,
-                "Mixed operation event IDs should be consecutive"
-            );
+            assert_eq!(curr_id, prev_id + 1, "Mixed operation event IDs should be consecutive");
         }
     }
 }

@@ -32,10 +32,7 @@ where
                     if Arc::ptr_eq(entry.value(), &old_node) {
                         let mut cdc = vec![];
                         #[cfg(feature = "cdc")]
-                        let max_value = guard
-                            .max()
-                            .expect("node should be non empty if split")
-                            .clone();
+                        let max_value = guard.max().expect("node should be non empty if split").clone();
                         entry.remove();
                         let mut new_vec = guard.halve();
 
